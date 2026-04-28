@@ -240,20 +240,21 @@ export function ZotFlowRegionDecorationExtension(
                 for (const region of regions) {
                     const begLine = state.doc.lineAt(region.begFrom);
                     const endLine = state.doc.lineAt(region.endFrom);
+                    const typeClass = region.type.toLowerCase(); // "note" | "anno"
 
                     // BEG marker: accent background
                     ranges.push({
                         from: begLine.from,
                         to: begLine.from,
                         deco: Decoration.line({
-                            class: "cm-zotflow-beg-line",
+                            class: `cm-zotflow-beg-line cm-zotflow-beg-line-${typeClass}`,
                         }),
                     });
                     ranges.push({
                         from: region.begFrom,
                         to: region.begTo,
                         deco: Decoration.mark({
-                            class: "cm-zotflow-tag-text",
+                            class: `cm-zotflow-tag-text cm-zotflow-tag-text-${typeClass}`,
                             inclusive: true,
                         }),
                     });
@@ -278,14 +279,14 @@ export function ZotFlowRegionDecorationExtension(
                         from: endLine.from,
                         to: endLine.from,
                         deco: Decoration.line({
-                            class: "cm-zotflow-end-line",
+                            class: `cm-zotflow-end-line cm-zotflow-end-line-${typeClass}`,
                         }),
                     });
                     ranges.push({
                         from: region.endFrom,
                         to: region.endTo,
                         deco: Decoration.mark({
-                            class: "cm-zotflow-tag-text",
+                            class: `cm-zotflow-tag-text cm-zotflow-tag-text-${typeClass}`,
                             inclusive: true,
                         }),
                     });
@@ -304,7 +305,7 @@ export function ZotFlowRegionDecorationExtension(
                             from: region.metaFrom,
                             to: region.metaTo,
                             deco: Decoration.mark({
-                                class: "cm-zotflow-tag-text",
+                                class: `cm-zotflow-tag-text cm-zotflow-tag-text-${typeClass}`,
                                 inclusive: true,
                             }),
                         });

@@ -1884,3 +1884,19 @@
     text-align: center;
     font-style: italic;
 }
+
+/* ================================================================ */
+/*  Editable Region Markers                                         */
+/* ================================================================ */
+
+body.zotflow-hide-region-markers .cm-zotflow-tag-text-note {
+    display: none;
+}
+
+body.zotflow-hide-region-markers .cm-zotflow-end-line-note {
+    display: none;
+}
+
+body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
+    display: none;
+}

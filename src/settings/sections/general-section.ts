@@ -77,6 +77,23 @@ export class GeneralSection {
                 });
         });
 
+        zoteroSourceNote.addSetting((setting) => {
+            setting
+                .setName("Hide Editable Region Markers")
+                .setDesc(
+                    "Hide the ZF_NOTE_BEG / ZF_NOTE_META / ZF_NOTE_END comment tags in source notes. The lock icon and region border remain visible.",
+                )
+                .addToggle((toggle) => {
+                    toggle.setValue(
+                        this.plugin.settings.hideEditableRegionMarkers,
+                    );
+                    toggle.onChange(async (value) => {
+                        this.plugin.settings.hideEditableRegionMarkers = value;
+                        await this.plugin.saveSettings();
+                    });
+                });
+        });
+
         const localSourceNote = new SettingGroup(containerEl);
         localSourceNote.setHeading("Local Source Note");
 

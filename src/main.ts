@@ -63,6 +63,7 @@ export default class ZotFlow extends Plugin {
     async onload() {
         // Load settings
         await this.loadSettings();
+        this.applyEditableRegionMarkerVisibility();
 
         // Initialize local services
         services.initialize(this, this.settings);
@@ -363,6 +364,20 @@ export default class ZotFlow extends Plugin {
         await this.saveData(data);
         workerBridge.updateSettings(this.settings);
         services.updateSettings(this.settings);
+
+        this.applyEditableRegionMarkerVisibility();
+    }
+
+    /**
+     * Toggle a body-level CSS class so styles.css can hide the BEG/END/META
+     * marker tags inside CodeMirror without reconfiguring the editor extension.
+     * The lock icon widget and the region border overlay remain visible.
+     */
+    private applyEditableRegionMarkerVisibility() {
+        document.body.classList.toggle(
+            "zotflow-hide-region-markers",
+            this.settings.hideEditableRegionMarkers,
+        );
     }
 
     /**
