@@ -313,6 +313,9 @@ cd ~/Desktop
     },
 
     // ── 14. Task lists ──
+    // Zotero's note-editor schema strips `<input type="checkbox">`, so we
+    // round-trip task lists as literal `[x] ` / `[ ] ` text inside the
+    // `<li>` (Zotero-survivable, Obsidian-recognizable).
     {
         name: "task-lists",
         md: `- [x] This is a completed task.
@@ -320,19 +323,28 @@ cd ~/Desktop
         checks: [
             {
                 type: "html-contains",
-                label: "Checkbox input",
-                needle: '<input type="checkbox"',
-            },
-            { type: "html-contains", label: "Checked attr", needle: "checked" },
-            {
-                type: "rt-contains",
-                label: "Completed text",
-                needle: "completed task",
+                label: "Checked marker as text",
+                needle: "<li>[x] ",
             },
             {
+                type: "html-contains",
+                label: "Unchecked marker as text",
+                needle: "<li>[ ] ",
+            },
+            {
+                type: "html-not-contains",
+                label: "No checkbox input (Zotero strips it)",
+                needle: "<input",
+            },
+            {
                 type: "rt-contains",
-                label: "Incomplete text",
-                needle: "incomplete task",
+                label: "Checked task syntax preserved",
+                needle: "[x] This is a completed task.",
+            },
+            {
+                type: "rt-contains",
+                label: "Unchecked task syntax preserved",
+                needle: "[ ] This is an incomplete task.",
             },
         ],
     },
@@ -356,6 +368,10 @@ After`,
     },
 
     // ── 16. Footnotes ──
+    // Note: Zotero's note schema has no footnote nodes. We deliberately
+    // preserve `[^id]` syntax verbatim through both directions instead of
+    // letting remark-gfm convert it to <sup><a> + <section data-footnotes>
+    // (which is unrecoverable on the way back).
     {
         name: "footnotes",
         md: `You can add footnotes[^1] to your notes.
@@ -364,10 +380,29 @@ After`,
         checks: [
             {
                 type: "html-contains",
-                label: "Footnote section",
-                needle: "footnote",
+                label: "[^1] ref preserved in HTML",
+                needle: "[^1]",
             },
-            { type: "html-contains", label: "Sup link", needle: "<sup>" },
+            {
+                type: "html-not-contains",
+                label: "no <sup> footnote",
+                needle: "<sup",
+            },
+            {
+                type: "html-not-contains",
+                label: "no footnotes section",
+                needle: "data-footnotes",
+            },
+            {
+                type: "rt-contains",
+                label: "[^1] ref preserved in MD",
+                needle: "footnotes[^1]",
+            },
+            {
+                type: "rt-contains",
+                label: "[^1]: definition preserved in MD",
+                needle: "[^1]: This is a footnote.",
+            },
         ],
     },
 
@@ -546,6 +581,78 @@ This is a block comment.
                 needle: "Visible text",
             },
             // %% comments are stripped in HTML — that's expected
+        ],
+    },
+
+    // ── 26. Wikilinks (Obsidian-only) ──
+    {
+        name: "wikilinks",
+        md: `See [[Foo]] and [[Bar|Baz]] for details.`,
+        checks: [
+            {
+                type: "rt-contains",
+                label: "[[Foo]] preserved",
+                needle: "[[Foo]]",
+            },
+            {
+                type: "rt-contains",
+                label: "[[Bar|Baz]] preserved",
+                needle: "[[Bar|Baz]]",
+            },
+            {
+                type: "rt-not-contains",
+                label: "no escaped bracket",
+                needle: "\\[",
+            },
+        ],
+    },
+
+    // ── 27. Wikilinks inside list items ──
+    {
+        name: "wikilinks-in-list",
+        md: `- Refers to [[Alpha]]
+- Refers to [[Beta|Gamma]]`,
+        checks: [
+            {
+                type: "rt-contains",
+                label: "[[Alpha]] in list preserved",
+                needle: "[[Alpha]]",
+            },
+            {
+                type: "rt-contains",
+                label: "[[Beta|Gamma]] in list preserved",
+                needle: "[[Beta|Gamma]]",
+            },
+            {
+                type: "rt-not-contains",
+                label: "no escaped bracket",
+                needle: "\\[",
+            },
+        ],
+    },
+
+    // ── 28. Wikilinks across hard line breaks (strictLineBreaks=false) ──
+    {
+        name: "wikilinks-line-breaks",
+        md: `123
+[[link]]
+123`,
+        checks: [
+            {
+                type: "rt-contains",
+                label: "[[link]] preserved",
+                needle: "[[link]]",
+            },
+            {
+                type: "rt-contains",
+                label: "line break before [[link]] preserved",
+                needle: "123\n[[link]]",
+            },
+            {
+                type: "rt-contains",
+                label: "line break after [[link]] preserved",
+                needle: "[[link]]\n123",
+            },
         ],
     },
 ];

@@ -17,6 +17,7 @@ import { gfmStrikethroughToMarkdown } from "mdast-util-gfm-strikethrough";
 import { toHtml } from "hast-util-to-html";
 import { toText } from "hast-util-to-text";
 import { visitParents } from "unist-util-visit-parents";
+import { visit } from "unist-util-visit";
 import { h } from "hastscript";
 
 import type { Processor } from "unified";
@@ -205,8 +206,19 @@ const mdastStringifyHandlers: Record<string, (node: any) => string> = {
     inlineMath: (n) => `$${n.value}$`,
     math: (n) => `$$\n${n.value}\n$$`,
 
-    /* code block: fenced */
-    code: (n) => "```\n" + n.value + "\n```",
+    /* code block: fenced. Auto-bump fence width when the content
+     * itself contains a run of backticks, otherwise the inner ``` would
+     * close the outer fence (e.g. nested code samples). */
+    code: (n) => {
+        const value: string = n.value ?? "";
+        const runs = value.match(/`+/g) ?? [];
+        let longestRun = 0;
+        for (const r of runs) {
+            if (r.length > longestRun) longestRun = r.length;
+        }
+        const fence = "`".repeat(Math.max(3, longestRun + 1));
+        return `${fence}\n${value}\n${fence}`;
+    },
 };
 
 /* ---------- rehype → remark handlers (HTML AST → MD AST) --------- */
@@ -378,8 +390,12 @@ function buildRehype2RemarkHandlers(
             return { type: "html", value: toHtml(node) } as any;
         }
 
-        // — Generic wrapper <span> (from orphan-inline wrapping, etc.)
-        return { type: "paragraph", children: state.all(node) } as any;
+        // — Generic wrapper <span>: unwrap inline children. Returning
+        //   `state.all(node)` (an array) splices children into the parent
+        //   inline context. Wrapping in a `paragraph` here would force the
+        //   surrounding context (e.g. <li>, <td>) into block mode and
+        //   break GFM task lists / inline table cells.
+        return state.all(node) as any;
     };
 
     // <img>: images with Zotero annotation data → markdown image with
@@ -467,6 +483,117 @@ function buildRehype2RemarkHandlers(
 }
 
 /* ================================================================ */
+/*  Phase 2.5 — Protect Obsidian-only inline syntax                */
+/* ================================================================ */
+
+/**
+ * `mdast-util-to-markdown` escapes `[`, `!`, etc. in text nodes to
+ * prevent them from being re-parsed as link/image syntax. That escape
+ * pass mangles Obsidian-specific syntax that arrives as plain text:
+ *
+ *   [[Note]]      →  \[\[Note]]
+ *   [[A|B]]       →  \[\[A|B]]
+ *   [^1]          →  \[^1]
+ *
+ * To preserve them through the round-trip we walk the mdast tree and
+ * split any text node containing such patterns into a sequence of
+ * `text` and `html` nodes — `html` nodes are emitted verbatim by the
+ * stringifier, bypassing the escape rules.
+ *
+ * Adjacent newlines are folded into the `html` segment because a
+ * trailing `\n` in a text node followed by an html node is normalized
+ * to a single space by `mdast-util-to-markdown`'s `safe()` pass.
+ *
+ * Skipped inside `code`, `inlineCode`, and existing `html` contexts.
+ */
+const WIKILINK_RE = /(\n?)(\[\[[^\[\]\n]+?]]|\[\^[^\[\]\n]+?])(\n?)/g;
+
+/**
+ * Detect task-list markers preserved as plain text by `md2html`.
+ *
+ * Zotero's note-editor schema strips `<input type="checkbox">`, so we
+ * round-trip task lists as literal `[x] ` / `[ ] ` prefixes inside the
+ * `<li>`. After `rehype-remark` builds the mdast, walk every `listItem`
+ * whose first text child begins with such a marker, lift the state into
+ * `listItem.checked`, and strip the prefix from the text. The remarkGfm
+ * stringifier then re-emits the canonical `* [x] foo` syntax.
+ */
+const TASK_PREFIX_RE = /^\[([ xX])\]\s+/;
+
+function detectTaskListItems(tree: MRoot): void {
+    visit(tree as any, "listItem", (node: any) => {
+        if (typeof node.checked === "boolean") return;
+        const firstBlock = node.children?.[0];
+        if (!firstBlock) return;
+        // First text node may live directly in the listItem (loose list)
+        // or inside a wrapping paragraph.
+        const container =
+            firstBlock.type === "paragraph" ? firstBlock : firstBlock;
+        const firstText = container.children?.[0];
+        if (!firstText || firstText.type !== "text") return;
+        const m = TASK_PREFIX_RE.exec(firstText.value);
+        if (!m) return;
+        node.checked = m[1]!.toLowerCase() === "x";
+        firstText.value = firstText.value.slice(m[0].length);
+        // If stripping emptied the text node and there are no more
+        // children, drop it so the stringifier doesn't emit a stray
+        // empty paragraph.
+        if (!firstText.value && container.children.length === 1) {
+            container.children.shift();
+        }
+    });
+}
+
+function protectObsidianSyntax(tree: MRoot): void {
+    visitParents(
+        tree as any,
+        (n: any) => n.type === "text",
+        (node: any, ancestors: any[]) => {
+            for (const a of ancestors) {
+                if (
+                    a.type === "code" ||
+                    a.type === "inlineCode" ||
+                    a.type === "html"
+                ) {
+                    return;
+                }
+            }
+
+            const value: string = node.value;
+            if (!WIKILINK_RE.test(value)) return;
+            WIKILINK_RE.lastIndex = 0;
+
+            const parts: any[] = [];
+            let last = 0;
+            let m: RegExpExecArray | null;
+            while ((m = WIKILINK_RE.exec(value)) !== null) {
+                const [whole, leadingNl, link, trailingNl] = m;
+                if (m.index > last) {
+                    parts.push({
+                        type: "text",
+                        value: value.slice(last, m.index),
+                    });
+                }
+                parts.push({
+                    type: "html",
+                    value: `${leadingNl}${link}${trailingNl}`,
+                });
+                last = m.index + whole.length;
+            }
+            if (last < value.length) {
+                parts.push({ type: "text", value: value.slice(last) });
+            }
+
+            const parent = ancestors[ancestors.length - 1];
+            const idx = parent.children.indexOf(node);
+            if (idx >= 0) {
+                parent.children.splice(idx, 1, ...parts);
+            }
+        },
+    );
+}
+
+/* ================================================================ */
 /*  Phase 3 — remark → Markdown string                             */
 /* ================================================================ */
 
@@ -547,10 +674,25 @@ export async function html2mdWithProcessors(
     const { tree, wrapperAttrs } = parseNoteHtml(html, rehypeParser);
 
     const remark = (await unified()
-        .use(rehypeRemark, { handlers: buildRehype2RemarkHandlers(options) })
+        .use(rehypeRemark, {
+            // Preserve hand-written line breaks inside paragraphs so that
+            // `<p>123\n[[link]]\n123</p>` round-trips as three lines instead
+            // of being collapsed into `123 [[link]] 123` (the HTML default).
+            newlines: true,
+            handlers: buildRehype2RemarkHandlers(options),
+        })
         .run(tree as any)) as MRoot | null;
 
     if (!remark) return html; // fallback: return raw HTML if conversion fails
+
+    // Lift `[x] ` / `[ ] ` text prefixes (from md2html's task-list
+    // sentinels, or hand-written) into proper mdast `listItem.checked`
+    // state, so the stringifier emits canonical task-list markdown.
+    detectTaskListItems(remark);
+
+    // Protect Obsidian-only inline syntax (e.g. [[wikilinks]]) from
+    // mdast-util-to-markdown's text-node escape rules.
+    protectObsidianSyntax(remark);
 
     let md = remarkToMarkdown(remark, remarkStringifier);
 

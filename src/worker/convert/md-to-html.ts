@@ -64,6 +64,37 @@ function md2remark(
         /!\[\[(.*?)\]\]/g,
         (_s, path: string) => `![](${encodeURI(decodeURI(path))})`,
     );
+
+    // Preserve footnote syntax verbatim. remark-gfm bundles footnote support
+    // and there is no per-feature toggle, so we hide the syntax inside HTML
+    // comments before parsing. md2htmlWithProcessors restores them in the
+    // final HTML string. Without this, `[^1]` becomes `<sup><a>` and `[^1]:`
+    // becomes a `<section data-footnotes>` block — neither of which can be
+    // reversed by html2md, so the footnote semantics are lost on round-trip.
+    str = str.replace(
+        /^(\s*)\[\^([^\]\n]+)\]:/gm,
+        (_m, indent: string, id: string) => `${indent}<!--ZF_FN_DEF:${id}-->`,
+    );
+    str = str.replace(
+        /\[\^([^\]\n]+)\]/g,
+        (_m, id: string) => `<!--ZF_FN_REF:${id}-->`,
+    );
+
+    // Preserve task-list syntax as plain text. remark-gfm would render
+    // `- [x] foo` as `<input type="checkbox" checked> foo`, but Zotero's
+    // note-editor schema has no checkbox node and silently drops the input
+    // on import — losing the checked state. We rewrite the marker to an
+    // inline `<span>` sentinel so remark sees a regular bullet (an HTML
+    // *comment* would trigger a CommonMark block at the start of a list
+    // item and swallow the trailing text). The sentinel is replaced with
+    // literal `[x] ` / `[ ] ` text in the final HTML — Zotero preserves
+    // it verbatim, and Obsidian re-recognizes it as a task list.
+    str = str.replace(
+        /^(\s*[-*+]\s+)\[([ xX])\]\s+/gm,
+        (_m, prefix: string, state: string) =>
+            `${prefix}<span data-zf-task="${state.toLowerCase() === "x" ? "x" : "open"}"></span>`,
+    );
+
     const tree = remarkParser.parse(str);
 
     // When strict line breaks is off (Obsidian default), convert soft line
@@ -216,6 +247,7 @@ function rehype2note(rehype: HRoot, rehypeStringifier: AnyProcessor): string {
             node.children = node.children.filter(
                 (_n: { type: string; value: string }) =>
                     _n.type === "element" ||
+                    _n.type === "raw" ||
                     (_n.type === "text" && _n.value.replace(/[\r\n]/g, "")),
             );
         },
@@ -317,6 +349,24 @@ export async function md2htmlWithProcessors(
     const remark = md2remark(md, remarkParser, strict);
     const rehype = await remark2rehype(remark, remark2rehypeProcessor);
     let html = rehype2note(rehype, rehypeStringifier);
+
+    // Restore footnote sentinels stored as HTML comments back to literal
+    // `[^id]` / `[^id]:` text. See `md2remark` for the rewrite step.
+    html = html.replace(
+        /<!--ZF_FN_DEF:([^-]+?)-->/g,
+        (_m, id: string) => `[^${id}]:`,
+    );
+    html = html.replace(
+        /<!--ZF_FN_REF:([^-]+?)-->/g,
+        (_m, id: string) => `[^${id}]`,
+    );
+
+    // Restore task-list sentinels as literal `[x] ` / `[ ] ` text inside
+    // the surrounding `<li>`. See `md2remark` for the rewrite step.
+    html = html.replace(
+        /<span data-zf-task="(x|open)"><\/span>/g,
+        (_m, state: string) => (state === "x" ? "[x] " : "[ ] "),
+    );
 
     // Restore the wrapper div with original metadata attributes
     if (wrapperAttrs) {
