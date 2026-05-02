@@ -14,6 +14,8 @@ export interface LibraryRow {
     name: string;
     canRead: boolean;
     canWrite: boolean;
+    /** Whether the API key grants notes-read access for this library. */
+    hasNotesAccess: boolean;
     allowedModes: LibrarySyncMode[];
     defaultMode: LibrarySyncMode;
     /** The currently configured mode from settings (falls back to defaultMode). */
@@ -58,8 +60,9 @@ export class KeyService {
         // Personal library
         if (keyInfo.access.user) {
             const u = keyInfo.access.user;
-            const canRead = !!(u.library && u.files && u.notes);
+            const canRead = !!u.library;
             const canWrite = !!u.write;
+            const hasNotesAccess = !!(u.library && u.notes);
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(keyInfo.userID);
             const changedCount = await this.countChangedItems(keyInfo.userID);
@@ -70,6 +73,7 @@ export class KeyService {
                 name: "My Library",
                 canRead,
                 canWrite,
+                hasNotesAccess,
                 allowedModes: allowed,
                 defaultMode,
                 mode:
@@ -90,6 +94,9 @@ export class KeyService {
             const all = gAccess?.all;
             const canRead = specific?.library ?? all?.library ?? false;
             const canWrite = specific?.write ?? all?.write ?? false;
+            // Group libraries don't have a separate notes flag — notes access
+            // follows library access.
+            const hasNotesAccess = canRead;
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(group.id);
             const changedCount = await this.countChangedItems(group.id);
@@ -100,6 +107,7 @@ export class KeyService {
                 name: group.name,
                 canRead,
                 canWrite,
+                hasNotesAccess,
                 allowedModes: allowed,
                 defaultMode,
                 mode: settings.librariesConfig[group.id]?.mode ?? defaultMode,

@@ -12,6 +12,7 @@ import { LocalTemplateService } from "./services/local-template";
 import { ConflictService } from "./services/conflict";
 import { AnnotationService } from "./services/annotation";
 import { KeyService } from "./services/key";
+import { LibraryService } from "./services/library";
 import { DbHelperService } from "./services/db-helper";
 import { NotePathService } from "./services/note-path";
 import { ConvertService } from "./services/convert";
@@ -56,6 +57,7 @@ export interface WorkerAPI {
     conflict: ConflictService;
     annotation: AnnotationService;
     key: KeyService;
+    library: LibraryService;
     dbHelper: DbHelperServiceType;
     pdfProcessor: PDFProcessWorker;
     libraryTemplate: LibraryTemplateService;
@@ -97,6 +99,7 @@ let _localTemplate: LocalTemplateService | undefined;
 let _conflict: ConflictService | undefined;
 let _annotation: AnnotationService | undefined;
 let _key: KeyService | undefined;
+let _library: LibraryService | undefined;
 let _dbHelper: DbHelperService | undefined;
 let _notePath: NotePathService | undefined;
 let _convert: ConvertService | undefined;
@@ -120,6 +123,7 @@ function assertInitialized() {
         !_conflict ||
         !_annotation ||
         !_key ||
+        !_library ||
         !_dbHelper ||
         !_notePath ||
         !_convert ||
@@ -178,7 +182,8 @@ const exposedApi: WorkerAPI = {
 
         try {
             _zotero = new ZoteroAPIService(settings.zoteroapikey);
-            _dbHelper = new DbHelperService(settings, parentHost);
+            _library = new LibraryService(settings, parentHost);
+            _dbHelper = new DbHelperService(settings, parentHost, _library);
             _webdav = new WebDavService(settings, parentHost);
             _attachment = new AttachmentService(
                 _webdav,
@@ -186,8 +191,8 @@ const exposedApi: WorkerAPI = {
                 _zotero,
                 parentHost,
             );
-            _sync = new SyncService(_zotero, settings, parentHost);
-            _treeView = new TreeViewService(settings, parentHost);
+            _sync = new SyncService(_zotero, settings, parentHost, _library);
+            _treeView = new TreeViewService(settings, parentHost, _library);
 
             _pdfProcessor = new PDFProcessWorker(
                 settings,
@@ -366,6 +371,16 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_key);
     },
 
+    get library() {
+        if (!_library)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_library);
+    },
+
     get dbHelper() {
         if (!_dbHelper)
             throw new ZotFlowError(
@@ -497,6 +512,7 @@ const exposedApi: WorkerAPI = {
         _attachment!.updateSettings(settings);
         _sync!.updateSettings(settings);
         _treeView!.updateSettings(settings);
+        _library!.updateSettings(settings);
         _template!.updateSettings(settings);
         _libraryNote!.updateSettings(settings);
         _itemNote!.updateSettings(settings);

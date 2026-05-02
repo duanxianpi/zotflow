@@ -4,6 +4,7 @@ import { NotificationService } from "./notification-service";
 import { ViewStateService } from "./view-state-service";
 import { TaskMonitor } from "./task-monitor";
 import { CitationService } from "./citation-service";
+import { LibraryCache } from "./library-cache";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { App } from "obsidian";
@@ -22,6 +23,7 @@ class ServiceLocator {
     private _viewStateService: ViewStateService;
     private _taskMonitor: TaskMonitor;
     private _citationService: CitationService;
+    private _libraryCache: LibraryCache;
 
     initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
         this._plugin = plugin;
@@ -40,6 +42,10 @@ class ServiceLocator {
 
         this._taskMonitor = new TaskMonitor(this._app);
         this._citationService = new CitationService();
+        this._libraryCache = new LibraryCache(
+            () => this._settings,
+            this._logService,
+        );
 
         this._initialized = true;
         this._logService.info("Services initialized.", "LocalServiceLocator");
@@ -58,6 +64,9 @@ class ServiceLocator {
     updateSettings(newSettings: ZotFlowSettings) {
         this.assertInitialized();
         this._settings = newSettings;
+        // Library capabilities depend on the active API key + cached key info,
+        // both of which can change after a settings save. Refresh in background.
+        void this._libraryCache.refresh();
     }
 
     saveSettings() {
@@ -108,6 +117,11 @@ class ServiceLocator {
     get citationService() {
         this.assertInitialized();
         return this._citationService;
+    }
+
+    get libraryCache() {
+        this.assertInitialized();
+        return this._libraryCache;
     }
 }
 

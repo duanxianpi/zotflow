@@ -21,6 +21,7 @@ import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
 import type { AnnotationService } from "worker/services/annotation";
 import type { KeyService } from "worker/services/key";
+import type { LibraryService } from "worker/services/library";
 import type { DbHelperService } from "worker/services/db-helper";
 import type { PDFProcessWorker } from "worker/services/pdf-processor";
 import type { LibraryTemplateService } from "worker/services/library-template";
@@ -58,6 +59,7 @@ export class WorkerBridge {
     private _conflict: ConflictService;
     private _annotation: AnnotationService;
     private _key: KeyService;
+    private _library: LibraryService;
     private _dbHelper: DbHelperService;
     private _pdfProcessor: PDFProcessWorker;
     private _libraryTemplate: LibraryTemplateService;
@@ -97,6 +99,7 @@ export class WorkerBridge {
         this._conflict = await this._api.conflict;
         this._annotation = await this._api.annotation;
         this._key = await this._api.key;
+        this._library = await this._api.library;
         this._dbHelper = await this._api.dbHelper;
         this._pdfProcessor = await this._api.pdfProcessor;
         this._libraryTemplate = await this._api.libraryTemplate;
@@ -175,6 +178,11 @@ export class WorkerBridge {
     get key() {
         this.assertInitialized();
         return this._key;
+    }
+
+    get library() {
+        this.assertInitialized();
+        return this._library;
     }
 
     get dbHelper() {

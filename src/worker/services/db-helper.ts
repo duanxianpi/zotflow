@@ -3,6 +3,7 @@ import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
+import type { LibraryService } from "./library";
 import type {
     AnyIDBZoteroItem,
     IDBZoteroItem,
@@ -19,6 +20,7 @@ export class DbHelperService {
     constructor(
         public settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private library: LibraryService,
     ) {}
 
     updateSettings(settings: ZotFlowSettings) {
@@ -36,36 +38,7 @@ export class DbHelperService {
                 "API Key is missing in settings",
             );
         }
-
-        let keyInfo;
-        try {
-            keyInfo = await db.keys.get(this.settings.zoteroapikey);
-        } catch (e) {
-            throw ZotFlowError.wrap(
-                e,
-                ZotFlowErrorCode.DB_OPEN_FAILED,
-                "DbHelperService",
-                "Failed to read Key DB",
-            );
-        }
-
-        if (!keyInfo) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.AUTH_INVALID,
-                "DbHelperService",
-                "Invalid Zotero API key (not found in DB).",
-                { api_key: this.settings.zoteroapikey },
-            );
-        }
-
-        const filteredLibraryIDs = keyInfo.joinedGroups
-            .concat([keyInfo.userID])
-            .filter((id) => {
-                const mode = this.settings.librariesConfig[id]?.mode;
-                return mode && mode !== "ignored";
-            });
-
-        return filteredLibraryIDs;
+        return this.library.getActiveLibraryIDs();
     }
 
     /**

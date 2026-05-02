@@ -32,6 +32,7 @@ import { db, getCombinations } from "db/db";
 import type { AnyIDBZoteroItem, IDBZoteroCollection } from "types/db-schema";
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
+import type { LibraryService } from "./library";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -42,6 +43,7 @@ export class TreeViewService {
     constructor(
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private library: LibraryService,
     ) {
         this.treeTransferPayload = null;
     }
@@ -94,13 +96,7 @@ export class TreeViewService {
         }
 
         try {
-            const filteredLibraryIDs = keyInfo.joinedGroups
-                .concat([keyInfo.userID])
-                .filter(
-                    (id) =>
-                        this.settings.librariesConfig[id]?.mode &&
-                        this.settings.librariesConfig[id]?.mode !== "ignored",
-                );
+            const filteredLibraryIDs = await this.library.getActiveLibraryIDs();
 
             // Valid Item Types
             const validItemTypes = Zotero_Item_Types.filter(

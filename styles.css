@@ -252,6 +252,12 @@
     background-color: var(--background-modifier-border);
 }
 
+.zotflow-settings-access-notes {
+    margin-top: 2px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
 .zotflow-settings-lib-select {
     width: 100%;
 }

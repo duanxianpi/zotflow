@@ -73,6 +73,9 @@ export default class ZotFlow extends Plugin {
         // Initialize worker bridge
         try {
             await workerBridge.initialize(this.settings, this.app);
+            // Now that the worker is ready, populate per-library capabilities
+            // (notes/write access). Used by UI gates and the lock extension.
+            await services.libraryCache.refresh();
         } catch (e) {
             services.logService.error(
                 "Failed to initialize worker bridge",

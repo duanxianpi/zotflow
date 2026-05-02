@@ -1,5 +1,6 @@
 import { db } from "db/db";
 import { ZoteroAPIService } from "./zotero";
+import { LibraryService } from "./library";
 import { normalizeItem, normalizeCollection, toZoteroDate } from "db/normalize";
 import pLimit from "p-limit";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
@@ -17,6 +18,7 @@ export class SyncService {
         private zotero: ZoteroAPIService,
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
+        private library: LibraryService,
     ) {}
 
     public updateSettings(settings: ZotFlowSettings) {
@@ -726,16 +728,35 @@ export class SyncService {
             .anyOf(dirtyParams)
             .toArray();
 
+        // When the API key lacks notes write permission for this library,
+        // skip note items on push — Zotero would 403 anyway. Locally-modified
+        // notes stay dirty so they can sync later if permissions change.
+        const hasNotesAccess = await this.library.hasNotesAccess(libraryID);
+        let filteredItems = dirtyItems;
+        if (!hasNotesAccess) {
+            filteredItems = dirtyItems.filter((i) => i.itemType !== "note");
+            const skipped = dirtyItems.length - filteredItems.length;
+            if (skipped > 0) {
+                this.parentHost.log(
+                    "warn",
+                    `Skipping ${skipped} dirty note item(s) on push for library ${libraryID} (no notes permission).`,
+                    "SyncService",
+                );
+            }
+        }
+
         this.parentHost.log(
             "debug",
-            `Dirty items to push: ${dirtyItems.length}`,
+            `Dirty items to push: ${filteredItems.length}`,
             "SyncService",
         );
 
-        if (dirtyItems.length === 0) return { retryNeeded: false };
+        if (filteredItems.length === 0) return { retryNeeded: false };
 
-        const deletions = dirtyItems.filter((i) => i.syncStatus === "deleted");
-        const upserts = dirtyItems.filter(
+        const deletions = filteredItems.filter(
+            (i) => i.syncStatus === "deleted",
+        );
+        const upserts = filteredItems.filter(
             (i) => i.syncStatus === "created" || i.syncStatus === "updated",
         );
 

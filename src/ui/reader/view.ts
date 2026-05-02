@@ -288,11 +288,13 @@ export class ZoteroReaderView extends ItemView {
                         savedViewState?.darkTheme ?? themeDefaults.darkTheme,
                 };
 
-                const libraryConfig =
-                    services.settings.librariesConfig[
-                        String(this.attachmentItem.libraryID)
-                    ];
-                const isReadOnly = libraryConfig?.mode === "readonly";
+                const libID = this.attachmentItem.libraryID;
+                // Read-only when sync mode is read-only OR the API key lacks
+                // notes access for this library (annotations are scoped under
+                // the Zotero notes permission).
+                const isReadOnly =
+                    services.libraryCache.isReadOnly(libID) ||
+                    !services.libraryCache.hasNotesAccess(libID);
 
                 const opts: Partial<CreateReaderOptions> = {
                     annotations: annotationJson,

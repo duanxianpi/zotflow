@@ -171,6 +171,15 @@ export class SyncSection {
             const badge = accessCell.createSpan({ cls: badgeCls });
             badge.setText(lib.canWrite ? "Read/Write" : "Read Only");
 
+            // Surface notes permission separately so users can see why note
+            // edits may be disabled even on a Read/Write library.
+            const notesLine = accessCell.createDiv({
+                cls: "zotflow-settings-access-notes",
+            });
+            notesLine.setText(
+                `Notes: ${lib.hasNotesAccess ? "\u2713" : "\u2717"}`,
+            );
+
             const actionCell = row.createEl("td");
             const select = actionCell.createEl("select");
             select.className = "dropdown zotflow-settings-lib-select";

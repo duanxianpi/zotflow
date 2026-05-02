@@ -45,7 +45,8 @@ export class NoteEditorView extends ItemView {
     }
 
     getDisplayText() {
-        return this.noteItem?.title ?? "Zotero Note";
+        const base = this.noteItem?.title ?? "Zotero Note";
+        return this.isReadOnly() ? `${base} (READ ONLY)` : base;
     }
 
     getIcon() {
@@ -78,9 +79,7 @@ export class NoteEditorView extends ItemView {
         this.noteItem = item as IDBZoteroItem<NoteData>;
 
         // Update tab title
-        this.containerEl
-            .getElementsByClassName("view-header-title")[0]
-            ?.setText(this.noteItem.title || "Zotero Note");
+        this.updateTitle();
 
         await this.renderContent();
         this.subscribeToSyncEvents();
@@ -125,10 +124,13 @@ export class NoteEditorView extends ItemView {
                 cls: "zotflow-note-preview-content",
             });
 
+            const editable = !this.isReadOnly();
+
             this.editor = createEmbeddableMarkdownEditor(this.app, wrapper, {
                 value: editableContent,
                 readableLineLength: true,
-                onChange: () => this.scheduleSave(),
+                readOnly: !editable,
+                onChange: editable ? () => this.scheduleSave() : () => {},
             });
         } catch (e) {
             services.logService.error(
@@ -141,6 +143,15 @@ export class NoteEditorView extends ItemView {
                 "Failed to render note content",
             );
         }
+    }
+
+    /**
+     * True when this note's library is not editable (read-only sync mode
+     * or the API key lacks notes write permission).
+     */
+    private isReadOnly(): boolean {
+        if (!this.noteItem) return false;
+        return !services.libraryCache.canEditNotes(this.noteItem.libraryID);
     }
 
     /**
@@ -269,7 +280,8 @@ export class NoteEditorView extends ItemView {
     }
 
     private updateTitle() {
-        const title = this.noteItem?.title || "Zotero Note";
+        const base = this.noteItem?.title || "Zotero Note";
+        const title = this.isReadOnly() ? `${base} (READ ONLY)` : base;
         this.containerEl
             .getElementsByClassName("view-header-title")[0]
             ?.setText(title);
