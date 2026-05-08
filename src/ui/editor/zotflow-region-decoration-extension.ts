@@ -16,20 +16,27 @@ import {
     unlockedRegionsField,
     toggleRegionLockEffect,
 } from "./zotflow-editable-region-extension";
+import { services } from "services/services";
 
 /* ================================================================ */
 /*  Helpers                                                         */
 /* ================================================================ */
 
-/** Check whether `library-id` exists in frontmatter. */
-function hasLibraryId(state: EditorState): boolean {
-    if (state.doc.sliceString(0, 3) !== "---") return false;
+/** Extract `library-id` from frontmatter, if present. */
+function getLibraryId(state: EditorState): number | undefined {
+    if (state.doc.sliceString(0, 3) !== "---") return undefined;
     const head = state.doc.sliceString(0, 10000);
     const fmMatch = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(
         head,
     );
-    if (!fmMatch) return false;
-    return /^library-id:\s*\d+/m.test(fmMatch[0]);
+    if (!fmMatch) return undefined;
+    const m = /^library-id:\s*(\d+)/m.exec(fmMatch[0]);
+    return m ? Number(m[1]) : undefined;
+}
+
+/** Check whether `library-id` exists in frontmatter. */
+function hasLibraryId(state: EditorState): boolean {
+    return getLibraryId(state) !== undefined;
 }
 
 /* ================================================================ */
@@ -40,6 +47,7 @@ class UnlockIconWidget extends WidgetType {
     constructor(
         private regionKey: string,
         private unlocked: boolean,
+        private disabled: boolean,
     ) {
         super();
     }
@@ -48,10 +56,18 @@ class UnlockIconWidget extends WidgetType {
         const span = document.createElement("span");
         span.className = "cm-zotflow-unlock-icon";
         if (this.unlocked) span.classList.add("cm-zotflow-unlocked");
+        if (this.disabled) {
+            span.classList.add("cm-zotflow-unlock-icon-disabled");
+            span.setAttribute(
+                "aria-label",
+                "This note is read-only and cannot be unlocked.",
+            );
+        }
         setIcon(span, this.unlocked ? "lock-open" : "lock");
         span.addEventListener("mousedown", (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (this.disabled) return;
             view.dispatch({
                 effects: toggleRegionLockEffect.of(this.regionKey),
             });
@@ -62,7 +78,8 @@ class UnlockIconWidget extends WidgetType {
     eq(other: UnlockIconWidget): boolean {
         return (
             this.regionKey === other.regionKey &&
-            this.unlocked === other.unlocked
+            this.unlocked === other.unlocked &&
+            this.disabled === other.disabled
         );
     }
 
@@ -222,7 +239,8 @@ export function ZotFlowRegionDecorationExtension(
             [editableRegionsField, unlockedRegionsField],
             (state) => {
                 // No library-id → not a ZotFlow source note, skip all decorations
-                if (!hasLibraryId(state)) return Decoration.none;
+                const libraryId = getLibraryId(state);
+                if (libraryId === undefined) return Decoration.none;
 
                 const regions = state.field(editableRegionsField, false);
                 if (!regions) return Decoration.none;
@@ -230,6 +248,9 @@ export function ZotFlowRegionDecorationExtension(
                 const unlocked =
                     state.field(unlockedRegionsField, false) ??
                     new Set<string>();
+
+                const lockDisabled =
+                    !services.libraryCache.canEditNotes(libraryId);
 
                 const ranges: {
                     from: number;
@@ -269,6 +290,7 @@ export function ZotFlowRegionDecorationExtension(
                             widget: new UnlockIconWidget(
                                 region.key,
                                 regionUnlocked,
+                                lockDisabled,
                             ),
                             side: 1,
                         }),
@@ -382,6 +404,14 @@ export function ZotFlowRegionDecorationExtension(
             ".cm-zotflow-unlock-icon.cm-zotflow-unlocked": {
                 color: "var(--interactive-accent)",
                 opacity: "1",
+            },
+            ".cm-zotflow-unlock-icon.cm-zotflow-unlock-icon-disabled": {
+                cursor: "not-allowed",
+                opacity: "0.4",
+                color: "var(--text-muted)",
+            },
+            ".cm-zotflow-unlock-icon.cm-zotflow-unlock-icon-disabled:hover": {
+                opacity: "0.4",
             },
             ".cm-zotflow-unlock-icon svg": {
                 width: "1em",

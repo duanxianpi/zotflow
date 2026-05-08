@@ -8,7 +8,10 @@ import { services } from "services/services";
 import { AttachmentSelectModal } from "./attachment-suggest";
 import { ZoteroItemSuggest } from "./zotero-item-suggest";
 
-import type { SuggestionItem } from "./zotero-item-suggest";
+import type {
+    SuggestionItem,
+    SuggestionItemFilter,
+} from "./zotero-item-suggest";
 
 /**
  * Abstract base class for Zotero item search modals.
@@ -16,10 +19,15 @@ import type { SuggestionItem } from "./zotero-item-suggest";
  * Subclasses implement `handleItemSelected()` to define the action.
  */
 export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
-    protected readonly suggest = new ZoteroItemSuggest();
+    protected readonly suggest: ZoteroItemSuggest;
 
-    constructor(app: App, placeholder = "Search Zotero Library...") {
+    constructor(
+        app: App,
+        placeholder = "Search Zotero Library...",
+        itemFilter?: SuggestionItemFilter,
+    ) {
         super(app);
+        this.suggest = new ZoteroItemSuggest(itemFilter);
         this.setPlaceholder(placeholder);
         this.modalEl.addClass("zotflow-search-modal");
         this.limit = 20;
@@ -58,8 +66,12 @@ export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
 export class ZoteroSearchModal extends BaseItemSearchModal {
     private settings: ZotFlowSettings;
 
-    constructor(app: App, settings: ZotFlowSettings) {
-        super(app);
+    constructor(
+        app: App,
+        settings: ZotFlowSettings,
+        itemFilter?: SuggestionItemFilter,
+    ) {
+        super(app, "Search Zotero Library...", itemFilter);
         this.settings = settings;
     }
 

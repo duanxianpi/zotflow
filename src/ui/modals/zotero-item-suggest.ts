@@ -3,6 +3,8 @@ import { workerBridge } from "bridge";
 import { services } from "services/services";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 
+export type SuggestionItemFilter = (item: AnyIDBZoteroItem) => boolean;
+
 interface SearchHeader {
     isHeader: true;
     label: string;
@@ -22,6 +24,8 @@ export type SuggestionItem = AnyIDBZoteroItem | SearchHeader | SearchEmptyState;
  */
 export class ZoteroItemSuggest {
     itemPaths: Record<string, string[]> = {};
+
+    constructor(private readonly itemFilter?: SuggestionItemFilter) {}
 
     async getSuggestions(
         query: string,
@@ -66,9 +70,19 @@ export class ZoteroItemSuggest {
                 }
             }
 
-            const zItems = items.filter(
-                (i) => !("isHeader" in i),
-            ) as AnyIDBZoteroItem[];
+            const zItems = items
+                .filter((i) => !("isHeader" in i) && !("isEmpty" in i))
+                .map((i) => i as AnyIDBZoteroItem)
+                .filter((item) => this.shouldIncludeItem(item));
+
+            if (zItems.length > 0) {
+                const firstHeader = items.find((i) => "isHeader" in i) as
+                    | SearchHeader
+                    | undefined;
+                items = [...(firstHeader ? [firstHeader] : []), ...zItems];
+            } else {
+                items = [];
+            }
 
             if (zItems.length > 0) {
                 try {
@@ -102,6 +116,17 @@ export class ZoteroItemSuggest {
             services.logService.error("Search failed", "ZoteroItemSuggest", e);
             return [];
         }
+    }
+
+    private shouldIncludeItem(item: AnyIDBZoteroItem): boolean {
+        // Hide note items for libraries without notes permission.
+        if (
+            item.itemType === "note" &&
+            !services.libraryCache.hasNotesAccess(item.libraryID)
+        ) {
+            return false;
+        }
+        return this.itemFilter ? this.itemFilter(item) : true;
     }
 
     renderSuggestion(

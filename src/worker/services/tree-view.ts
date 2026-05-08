@@ -36,9 +36,15 @@ import type { LibraryService } from "./library";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
+export type TreeItemFilter = (
+    item: AnyIDBZoteroItem,
+    ctx: { hasNotesAccess: boolean },
+) => boolean;
+
 /** Builds the flattened tree topology (libraries → collections → items) for the sidebar tree view. */
 export class TreeViewService {
     private treeTransferPayload: TreeTransferPayload | null;
+    private itemFilter?: TreeItemFilter;
 
     constructor(
         private settings: ZotFlowSettings,
@@ -59,6 +65,16 @@ export class TreeViewService {
     public async refreshTree() {
         this.treeTransferPayload = null;
         await this.getOptimizedTree();
+    }
+
+    /**
+     * Optional custom filter hook for tree items.
+     * Useful when callers want additional filtering rules in addition to
+     * the built-in permission checks.
+     */
+    public setItemFilter(filter?: TreeItemFilter) {
+        this.itemFilter = filter;
+        this.treeTransferPayload = null;
     }
 
     public async getOptimizedTree(): Promise<TreeTransferPayload> {
@@ -97,6 +113,15 @@ export class TreeViewService {
 
         try {
             const filteredLibraryIDs = await this.library.getActiveLibraryIDs();
+            const notesAccessEntries = await Promise.all(
+                filteredLibraryIDs.map(
+                    async (id) =>
+                        [id, await this.library.hasNotesAccess(id)] as const,
+                ),
+            );
+            const hasNotesAccessByLibrary = new Map<number, boolean>(
+                notesAccessEntries,
+            );
 
             // Valid Item Types
             const validItemTypes = Zotero_Item_Types.filter(
@@ -137,6 +162,18 @@ export class TreeViewService {
             const subItemsByParent = new Map<string, AnyIDBZoteroItem[]>();
 
             allItems.forEach((item) => {
+                const hasNotesAccess =
+                    hasNotesAccessByLibrary.get(item.libraryID) ?? false;
+                if (item.itemType === "note" && !hasNotesAccess) {
+                    return;
+                }
+                if (
+                    this.itemFilter &&
+                    !this.itemFilter(item, { hasNotesAccess })
+                ) {
+                    return;
+                }
+
                 // Handle Sub-items
                 if (["attachment", "note"].includes(item.itemType)) {
                     if (item.parentItem) {
