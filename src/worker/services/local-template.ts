@@ -4,6 +4,7 @@ import type { ZotFlowSettings } from "settings/types";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { IParentProxy } from "bridge/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { getLocalSidecarPath } from "utils/utils";
 import type { AnnotationTemplateContext } from "types/template-context";
 
 /** Default LiquidJS template string for local vault file source notes. */
@@ -220,10 +221,10 @@ export class LocalTemplateService {
     private async loadSidecarAnnotations(
         file: TFileWithoutParentAndVault,
     ): Promise<AnnotationJSON[]> {
-        const lastDot = file.path.lastIndexOf(".");
-        const basePath =
-            lastDot !== -1 ? file.path.substring(0, lastDot) : file.path;
-        const jsonPath = `${basePath}.zf.json`;
+        const jsonPath = getLocalSidecarPath(
+            file.path,
+            this.settings.localSidecarFolder,
+        );
 
         try {
             const result = await this.parentHost.checkFile(jsonPath);

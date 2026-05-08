@@ -32,6 +32,7 @@ import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-regio
 import { handleEditorDrop } from "ui/editor/citation-helper";
 
 import { openAttachment } from "utils/viewer";
+import { getLocalSidecarPath } from "utils/utils";
 import { ActivityCenterModal } from "ui/activity-center/modal";
 import { ZoteroSearchModal } from "ui/modals/suggest";
 
@@ -499,22 +500,16 @@ export default class ZotFlow extends Plugin {
 
     /**
      * Derive sidecar `.zf.json` path from a raw file path string.
-     * `Papers/myPaper.pdf` → `Papers/myPaper.zf.json`
      */
     private getSidecarPath(filePath: string): string {
-        const lastDot = filePath.lastIndexOf(".");
-        const basePath =
-            lastDot !== -1 ? filePath.substring(0, lastDot) : filePath;
-        return `${basePath}.zf.json`;
+        return getLocalSidecarPath(filePath, this.settings.localSidecarFolder);
     }
 
     /**
      * Derive sidecar `.zf.json` path from a TFile.
      */
     private getSidecarPathFromFile(file: TFile): string {
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        const prefix = dir ? `${dir}/` : "";
-        return `${prefix}${file.basename}.zf.json`;
+        return getLocalSidecarPath(file.path, this.settings.localSidecarFolder);
     }
 
     async handleFileOpen(file: TFile | null) {

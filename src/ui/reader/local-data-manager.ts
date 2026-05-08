@@ -1,7 +1,8 @@
-import { TFile, normalizePath } from "obsidian";
+import { TFile } from "obsidian";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { readTextFile, saveTextFile, checkFile } from "utils/file";
+import { getLocalSidecarPath } from "utils/utils";
 
 import type { AnnotationJSON } from "types/zotero-reader";
 
@@ -119,15 +120,13 @@ export class LocalDataManager {
 
     /**
      * Derive the sidecar JSON path from the attachment file.
-     * `<attachment-folder>/<attachment-basename>.zf.json`
+     * Honors the `localSidecarFolder` setting; defaults to next-to-attachment.
      */
     private getJsonPath(): string {
-        const dir = this.localAttachmentFile.path.substring(
-            0,
-            this.localAttachmentFile.path.lastIndexOf("/"),
+        return getLocalSidecarPath(
+            this.localAttachmentFile.path,
+            services.settings.localSidecarFolder,
         );
-        const prefix = dir ? `${dir}/` : "";
-        return `${prefix}${this.localAttachmentFile.basename}.zf.json`;
     }
 
     private getLocalAttachmentDescriptor() {

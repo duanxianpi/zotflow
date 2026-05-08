@@ -48,6 +48,7 @@ export interface ZotFlowSettings {
     librarySourceNoteTemplatePath: string;
     localSourceNoteTemplatePath: string;
     localSourceNoteFolder: string;
+    localSidecarFolder: string;
     sourceNoteFolder: string;
     librarySourceNotePathTemplate: string;
     localSourceNotePathTemplate: string;
@@ -105,6 +106,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
         "Source/{{libraryName}}/@{{citationKey | default: title | default: key}}",
     localSourceNoteTemplatePath: "",
     localSourceNoteFolder: "",
+    localSidecarFolder: "",
     localSourceNotePathTemplate: "Source/Local/@{{basename}}",
     autoImportAnnotationImages: false,
     annotationImageFolder: "",

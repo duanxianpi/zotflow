@@ -139,6 +139,26 @@ export class GeneralSection {
                 });
         });
 
+        localSourceNote.addSetting((setting) => {
+            setting
+                .setName("Annotation Sidecar Folder")
+                .setDesc(
+                    "Folder for local annotation sidecar files (.zf.json), relative to vault root. " +
+                        "Leave empty to store sidecars next to each attachment. " +
+                        "When set, the original folder structure is mirrored under this folder " +
+                        "to avoid filename collisions.",
+                )
+                .addText((text) => {
+                    text.setPlaceholder("e.g. .zotflow/sidecars")
+                        .setValue(this.plugin.settings.localSidecarFolder)
+                        .onChange(async (value) => {
+                            this.plugin.settings.localSidecarFolder = value;
+                            await this.plugin.saveSettings();
+                        });
+                    text.inputEl.size = 40;
+                });
+        });
+
         const linkedAttachmentGroup = new SettingGroup(containerEl);
         linkedAttachmentGroup.setHeading("Linked Attachments");
 
