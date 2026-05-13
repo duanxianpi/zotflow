@@ -28,6 +28,9 @@ export type ItemSortOrder =
 /** Citation insertion format. */
 export type CitationFormat = "pandoc" | "footnote" | "wikilink" | "citekey";
 
+/** Auto-copy mode applied when a new annotation is created in the reader. */
+export type AutoCopyAnnotationMode = "off" | "embed" | "text" | "citation";
+
 /** Per-library sync configuration. */
 export interface LibraryConfig {
     mode: LibrarySyncMode;
@@ -69,6 +72,7 @@ export interface ZotFlowSettings {
     citationFootnoteRefTemplate: string;
     citationFootnoteTemplate: string;
     citationWikilinkTemplate: string;
+    autoCopyAnnotation: AutoCopyAnnotationMode;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -125,6 +129,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     citationFootnoteRefTemplate: "",
     citationFootnoteTemplate: "",
     citationWikilinkTemplate: "",
+    autoCopyAnnotation: "off",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

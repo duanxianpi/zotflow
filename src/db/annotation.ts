@@ -166,6 +166,7 @@ export async function getAnnotationJson(
         o.tags = processedTags;
 
         o.dateAdded = annotation.dateAdded;
+        o.dateCreated = annotation.dateAdded;
         o.dateModified = annotation.dateModified;
         annotationJson.push(o);
     }

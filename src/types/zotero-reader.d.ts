@@ -147,6 +147,7 @@ export interface AnnotationJSON {
     }>;
     dateModified: string;
     dateAdded: string;
+    dateCreated?: string;
 }
 
 /** User-defined reader color theme. */

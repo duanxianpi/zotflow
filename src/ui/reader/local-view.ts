@@ -2,6 +2,8 @@ import { FileView, WorkspaceLeaf, TFile, ItemView } from "obsidian";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
 import { LocalDataManager } from "./local-data-manager";
+import { copyAnnotationOnCreate, isNewlyCreated } from "./auto-copy";
+import { getLinkedLocalSourceNote } from "utils/file";
 
 import type {
     CreateReaderOptions,
@@ -330,6 +332,20 @@ export class LocalReaderView extends ItemView {
                         );
                 }
                 await this.dataManager.saveAnnotation(annotation);
+            }
+        }
+
+        // Auto-copy newly created annotations (creation only — skips edits).
+        if (this.file) {
+            const sourceNotePath = getLinkedLocalSourceNote(
+                services.app,
+                this.file,
+            )?.path;
+            for (const annotation of annotations) {
+                if (!isNewlyCreated(annotation as AnnotationJSON)) continue;
+                await copyAnnotationOnCreate(annotation as AnnotationJSON, {
+                    sourceNotePath,
+                });
             }
         }
     }

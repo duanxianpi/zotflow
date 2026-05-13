@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import SparkMD5 from "spark-md5";
 import { workerBridge } from "bridge";
 import { IframeReaderBridge } from "./bridge";
+import { copyAnnotationOnCreate, isNewlyCreated } from "./auto-copy";
 import { services } from "services/services";
 import { ViewStateService } from "services/view-state-service";
 
@@ -618,6 +619,24 @@ export class ZoteroReaderView extends ItemView {
                 "error",
                 "Failed to save annotations",
             );
+        }
+
+        // Auto-copy newly created annotations (creation only — skips edits).
+        const created = annotations.filter(isNewlyCreated);
+        if (created.length > 0) {
+            const parentKey =
+                this.attachmentItem.parentItem === ""
+                    ? this.attachmentItem.key
+                    : this.attachmentItem.parentItem;
+            const sourceNotePath =
+                services.indexService.getFileByKey(parentKey)?.path;
+            for (const annotation of created) {
+                await copyAnnotationOnCreate(annotation, {
+                    sourceNotePath,
+                    parentItemKey: parentKey,
+                    libraryID: this.attachmentItem.libraryID,
+                });
+            }
         }
     }
 

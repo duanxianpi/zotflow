@@ -1,7 +1,7 @@
 import { SettingGroup } from "obsidian";
 
 import type ZotFlow from "main";
-import type { CitationFormat } from "settings/types";
+import type { AutoCopyAnnotationMode, CitationFormat } from "settings/types";
 
 /** Settings section for citation insertion format. */
 export class CitationSection {
@@ -137,6 +137,28 @@ export class CitationSection {
                         });
                     ta.inputEl.rows = 5;
                     ta.inputEl.cols = 60;
+                });
+        });
+
+        citationGroup.addSetting((setting) => {
+            setting
+                .setName("Auto-copy New Annotation")
+                .setDesc(
+                    "When you create an annotation in the reader, automatically copy it to the clipboard. " +
+                        "Embed inserts ![[note#^id]]; Text copies the highlighted text; Citation uses the default citation format above.",
+                )
+                .addDropdown((dropdown) => {
+                    dropdown
+                        .addOption("off", "Off")
+                        .addOption("embed", "Embed")
+                        .addOption("text", "Text")
+                        .addOption("citation", "Citation")
+                        .setValue(this.plugin.settings.autoCopyAnnotation)
+                        .onChange(async (value) => {
+                            this.plugin.settings.autoCopyAnnotation =
+                                value as AutoCopyAnnotationMode;
+                            await this.plugin.saveSettings();
+                        });
                 });
         });
     }
