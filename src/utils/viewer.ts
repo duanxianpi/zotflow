@@ -1,4 +1,4 @@
-import { App } from "obsidian";
+import { App, MarkdownView, TFile } from "obsidian";
 import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "../ui/reader/view";
 import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "../ui/note-editor/view";
 import { workerBridge } from "../bridge";
@@ -57,6 +57,25 @@ export async function openAttachment(
             JSON.parse(navigationInfo),
         );
     }
+}
+
+/**
+ * Open a markdown source note. Reuses an existing leaf already showing the
+ * file; otherwise opens it in a new tab.
+ */
+export async function openSourceNote(file: TFile, app: App): Promise<void> {
+    const leaves = app.workspace.getLeavesOfType("markdown");
+    for (const leaf of leaves) {
+        const view = leaf.view;
+        if (view instanceof MarkdownView && view.file?.path === file.path) {
+            app.workspace.setActiveLeaf(leaf);
+            app.workspace.revealLeaf(leaf);
+            return;
+        }
+    }
+    const leaf = app.workspace.getLeaf("tab");
+    await leaf.openFile(file);
+    app.workspace.revealLeaf(leaf);
 }
 
 /**

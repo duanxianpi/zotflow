@@ -5,6 +5,7 @@ import { IframeReaderBridge } from "./bridge";
 import { copyAnnotationOnCreate, isNewlyCreated } from "./auto-copy";
 import { services } from "services/services";
 import { ViewStateService } from "services/view-state-service";
+import { openSourceNote } from "utils/viewer";
 
 import type { ViewStateResult } from "obsidian";
 import type { AttachmentData } from "types/zotero-item";
@@ -41,6 +42,31 @@ export class ZoteroReaderView extends ItemView {
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
+        this.addAction(
+            "notebook-text",
+            "Open source note",
+            this.handleOpenSourceNote.bind(this),
+        );
+    }
+
+    /**
+     * Resolve and open the source note linked to this attachment's parent item.
+     */
+    private async handleOpenSourceNote() {
+        if (!this.attachmentItem) return;
+        const parentKey =
+            this.attachmentItem.parentItem === ""
+                ? this.attachmentItem.key
+                : this.attachmentItem.parentItem;
+        const file = services.indexService.getFileByKey(parentKey);
+        if (!file) {
+            services.notificationService.notify(
+                "warning",
+                "No source note found for this item.",
+            );
+            return;
+        }
+        await openSourceNote(file, this.app);
     }
 
     getViewType() {

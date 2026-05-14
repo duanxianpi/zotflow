@@ -4,6 +4,7 @@ import { IframeReaderBridge } from "./bridge";
 import { LocalDataManager } from "./local-data-manager";
 import { copyAnnotationOnCreate, isNewlyCreated } from "./auto-copy";
 import { getLinkedLocalSourceNote } from "utils/file";
+import { openSourceNote } from "utils/viewer";
 
 import type {
     CreateReaderOptions,
@@ -26,6 +27,35 @@ export class LocalReaderView extends ItemView {
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
+        this.addAction(
+            "notebook-text",
+            "Open source note",
+            this.handleOpenSourceNote.bind(this),
+        );
+    }
+
+    /**
+     * Resolve and open the source note linked to this local attachment.
+     */
+    private async handleOpenSourceNote() {
+        if (!this.file) return;
+        const linked = getLinkedLocalSourceNote(services.app, this.file);
+        if (!linked) {
+            services.notificationService.notify(
+                "warning",
+                "No source note found for this file.",
+            );
+            return;
+        }
+        const file = services.app.vault.getAbstractFileByPath(linked.path);
+        if (!(file instanceof TFile)) {
+            services.notificationService.notify(
+                "warning",
+                "Source note file is missing from the vault.",
+            );
+            return;
+        }
+        await openSourceNote(file, this.app);
     }
 
     getViewType() {

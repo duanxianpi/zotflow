@@ -19,7 +19,7 @@ export class AttachmentSelectModal extends SuggestModal<ActionOption> {
         app: App,
         private parentItem: AnyIDBZoteroItem,
         private attachments: IDBZoteroItem<AttachmentData>[],
-        private parentModal: ZoteroSearchModal,
+        private parentModal?: ZoteroSearchModal,
     ) {
         super(app);
         this.setPlaceholder("Select file to open...");
@@ -28,17 +28,19 @@ export class AttachmentSelectModal extends SuggestModal<ActionOption> {
     // When modal opens, hide parent modal
     onOpen() {
         super.onOpen();
-        this.parentModal.containerEl.hide();
+        this.parentModal?.containerEl.hide();
     }
 
     // When modal closes, show parent modal
     onClose() {
         super.onClose();
 
+        if (!this.parentModal) return;
+
         if (this.didChoose) {
             this.parentModal.close();
         } else {
-            if (this.parentModal && this.parentModal.containerEl) {
+            if (this.parentModal.containerEl) {
                 this.parentModal.containerEl.show();
             }
         }

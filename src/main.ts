@@ -35,6 +35,7 @@ import { openAttachment } from "utils/viewer";
 import { getLocalSidecarPath } from "utils/utils";
 import { ActivityCenterModal } from "ui/activity-center/modal";
 import { ZoteroSearchModal } from "ui/modals/suggest";
+import { AttachmentSelectModal } from "ui/modals/attachment-suggest";
 
 import type {
     ZotFlowSettings,
@@ -42,6 +43,8 @@ import type {
     ViewStateEntry,
 } from "./settings/types";
 import type { CustomReaderTheme } from "types/zotero-reader";
+import type { AttachmentData } from "types/zotero-item";
+import type { IDBZoteroItem } from "types/db-schema";
 
 import {
     LOCAL_ZOTERO_READER_VIEW_TYPE,
@@ -60,6 +63,7 @@ export default class ZotFlow extends Plugin {
     viewStates: Record<string, ViewStateEntry>;
     customThemes: CustomReaderTheme[] = [];
     private citationSuggest: CitationSuggest;
+    private sourceNoteActionElements = new WeakMap<MarkdownView, HTMLElement>();
 
     async onload() {
         // Load settings
@@ -115,6 +119,14 @@ export default class ZotFlow extends Plugin {
         // this.registerEvent(
         //     this.app.workspace.on("file-open", this.handleFileOpen.bind(this)),
         // );
+
+        // Add "Open attachment" toggle action on source-note markdown views.
+        this.registerEvent(
+            this.app.workspace.on(
+                "file-open",
+                this.handleSourceNoteFileOpen.bind(this),
+            ),
+        );
 
         // Register editor extensions
         const isDefaultLocked = () => this.settings.defaultEditableRegionLocked;
@@ -510,6 +522,147 @@ export default class ZotFlow extends Plugin {
      */
     private getSidecarPathFromFile(file: TFile): string {
         return getLocalSidecarPath(file.path, this.settings.localSidecarFolder);
+    }
+
+    /**
+     * On every file-open, decide whether the active markdown view is a ZotFlow
+     * source note (library or local). If so, ensure an "Open attachment" action
+     * button is present in its view header.
+     */
+    private handleSourceNoteFileOpen(file: TFile | null) {
+        if (!file || file.extension !== "md") return;
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view || view.file?.path !== file.path) return;
+
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
+
+        const zoteroKey = fm?.["zotero-key"];
+        const libraryID = fm?.["library-id"];
+        const localAttachment = fm?.["zotflow-local-attachment"];
+
+        const isLibrarySourceNote =
+            typeof zoteroKey === "string" && typeof libraryID === "number";
+        const isLocalSourceNote = typeof localAttachment === "string";
+
+        // Remove any prior action so a single view doesn't accumulate buttons
+        // when its frontmatter changes.
+        const prior = this.sourceNoteActionElements.get(view);
+        if (prior) {
+            prior.remove();
+            this.sourceNoteActionElements.delete(view);
+        }
+
+        if (!isLibrarySourceNote && !isLocalSourceNote) return;
+
+        const action = view.addAction(
+            "paperclip",
+            "Open attachment",
+            async () => {
+                if (isLibrarySourceNote) {
+                    await this.openLibrarySourceNoteAttachment(
+                        libraryID as number,
+                        zoteroKey as string,
+                    );
+                } else {
+                    await this.openLocalSourceNoteAttachment(
+                        file,
+                        localAttachment as string,
+                    );
+                }
+            },
+        );
+        this.sourceNoteActionElements.set(view, action);
+    }
+
+    /**
+     * Open the attachment associated with a library-backed source note.
+     * - 0 attachments → warning notice
+     * - 1 attachment  → open it directly
+     * - >1 attachments → show the attachment picker modal
+     */
+    private async openLibrarySourceNoteAttachment(
+        libraryID: number,
+        zoteroKey: string,
+    ): Promise<void> {
+        const attachments = (await workerBridge.dbHelper.getAttachments(
+            libraryID,
+            zoteroKey,
+        )) as IDBZoteroItem<AttachmentData>[];
+
+        if (attachments.length === 0) {
+            services.notificationService.notify(
+                "warning",
+                "No attachments found for this item.",
+            );
+            return;
+        }
+
+        if (attachments.length === 1) {
+            await openAttachment(
+                attachments[0]!.libraryID,
+                attachments[0]!.key,
+                this.app,
+            );
+            return;
+        }
+
+        const parentItem = await workerBridge.dbHelper.getItem(
+            libraryID,
+            zoteroKey,
+        );
+        if (!parentItem) {
+            services.notificationService.notify(
+                "warning",
+                "Parent item not found in the local database.",
+            );
+            return;
+        }
+        new AttachmentSelectModal(this.app, parentItem, attachments).open();
+    }
+
+    /**
+     * Open the local vault file referenced by a local source note's
+     * `zotflow-local-attachment` frontmatter wikilink.
+     */
+    private async openLocalSourceNoteAttachment(
+        sourceNote: TFile,
+        link: string,
+    ): Promise<void> {
+        // Strip `[[ ... ]]` and any `|alias` suffix.
+        const linkPath = link
+            .replace(/\[\[|\]\]/g, "")
+            .split("|")[0]!
+            .trim();
+        const dest = this.app.metadataCache.getFirstLinkpathDest(
+            linkPath,
+            sourceNote.path,
+        );
+        if (!dest) {
+            services.notificationService.notify(
+                "warning",
+                "Linked attachment file not found in the vault.",
+            );
+            return;
+        }
+
+        // Reuse an existing local reader leaf already showing this file.
+        const existing = this.app.workspace
+            .getLeavesOfType(LOCAL_ZOTERO_READER_VIEW_TYPE)
+            .find(
+                (leaf) =>
+                    (leaf.view as LocalReaderView).getState()?.file ===
+                    dest.path,
+            );
+        if (existing) {
+            this.app.workspace.setActiveLeaf(existing);
+            this.app.workspace.revealLeaf(existing);
+            return;
+        }
+
+        const leaf = this.app.workspace.getLeaf("tab");
+        await leaf.openFile(dest);
+        this.app.workspace.revealLeaf(leaf);
     }
 
     async handleFileOpen(file: TFile | null) {
