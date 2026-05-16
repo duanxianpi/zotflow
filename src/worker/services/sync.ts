@@ -611,7 +611,11 @@ export class SyncService {
                 const deletedKeys = delResponse.getData().items;
 
                 if (deletedKeys && deletedKeys.length > 0) {
-                    await this.handlePullDeletions(libraryID, deletedKeys);
+                    await this.handlePullDeletions(
+                        libraryID,
+                        deletedKeys,
+                        changedItems,
+                    );
                 }
             }
 
@@ -639,6 +643,7 @@ export class SyncService {
     private async handlePullDeletions(
         libraryID: number,
         keysToDelete: string[],
+        changedItems?: ItemIdentifier[],
     ) {
         if (keysToDelete.length === 0) return;
 
@@ -673,6 +678,42 @@ export class SyncService {
                         serverCopyRaw: undefined,
                     });
                 } else {
+                    // Capture surviving top-level ancestor for post-sync
+                    // source-note refresh. Deleted annotations/notes/
+                    // attachments do not bump the parent's version, so
+                    // without this the parent's note would never refresh.
+                    if (changedItems && targetItem.parentItem) {
+                        const CHILD_TYPES = new Set([
+                            "annotation",
+                            "attachment",
+                            "note",
+                        ]);
+                        const MAX_DEPTH = 5;
+                        let ancestor = await db.items.get([
+                            libraryID,
+                            targetItem.parentItem,
+                        ]);
+                        let depth = 0;
+                        while (
+                            ancestor &&
+                            CHILD_TYPES.has(ancestor.itemType) &&
+                            ancestor.parentItem &&
+                            depth < MAX_DEPTH
+                        ) {
+                            ancestor = await db.items.get([
+                                libraryID,
+                                ancestor.parentItem,
+                            ]);
+                            depth++;
+                        }
+                        if (ancestor && !CHILD_TYPES.has(ancestor.itemType)) {
+                            changedItems.push({
+                                libraryID,
+                                itemKey: ancestor.key,
+                            });
+                        }
+                    }
+
                     const keysToRemove = family.map((i) => i.key);
                     await db.items.bulkDelete(
                         keysToRemove.map((k) => [libraryID, k]),
