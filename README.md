@@ -1,134 +1,144 @@
 # ZotFlow — Keep Your Research in Flow
 
-ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that deeply integrates [Zotero](https://www.zotero.org) into your note-taking workflow. It syncs your Zotero libraries, lets you read and annotate PDFs/EPUBs/snapshots directly inside Obsidian, and automatically generates richly-templated source notes — all without leaving your vault.
+> **Your Zotero library, your reader, your notes — one seamless workspace inside Obsidian.**
 
-If you have any of the following requirements, it will worth giving ZotFlow a try:
+ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that brings the full power of [Zotero](https://www.zotero.org) into your vault. Read papers, annotate PDFs, generate templated source notes, and cite literature — all without ever leaving Obsidian.
 
-- You want to keep your Zotero library in **sync** with Obsidian, including annotations and metadata.
-- You want to **read and annotate PDFs/EPUBs** without switching apps or breaking your flow.
-- You want to annotate attachments in **Obsidian Markdown format**, with support for text, highlights, images, and ink.
-- You want a immersive reading experience with your **Obsidian theme and custom CSS**.
-- You want your source notes to be **automatically generated** and updated based on your Zotero items and annotations.
-- You want to **cite** your literature in Obsidian with different formats (pandoc, wiki link, footnote).
-- ...
+<!-- TODO: replace with hero GIF -->
 
-## Features
+![ZotFlow Hero](docs/assets/hero-placeholder.gif)
 
-### Read & Annotate Inside Obsidian
+---
 
-Read PDFs, EPUBs, and HTML snapshots without leaving Obsidian. Highlight, underline, draw, add notes — all annotation types are supported, and everything stays in sync with your Zotero library. The built-in reader is fully themed to match your Obsidian setup.
+## Why ZotFlow?
+
+If any of these sound like you, ZotFlow was built for you:
+
+- 📚 You want to **read and annotate PDFs/EPUBs** without switching between Zotero, a PDF viewer, and Obsidian.
+- 🎨 You want your reader to **match your Obsidian theme** — dark mode, custom fonts, the works.
+- 🔄 You want **true bidirectional sync** — annotations made in Obsidian flow back to Zotero, and vice versa.
+- ✍️ You want every Zotero item to have an **auto-generated, template-driven source note** that always stays up to date.
+- 🔗 You want to **cite literature** in Pandoc, Wikilink, Footnote, or raw citekey format — by drag-and-drop, autocomplete, or hotkey.
+- 📂 You want to annotate **any PDF or EPUB already in your vault**, even ones that aren't in Zotero.
+- 🛡️ You want an **offline-first, privacy-respecting** tool with no telemetry and secure credential storage.
+
+---
+
+## What You Can Do With ZotFlow
+
+### 🪟 Read & Annotate Inside Obsidian
+
+A full-featured PDF/EPUB/HTML reader, embedded right in your workspace and **themed to match Obsidian**. Highlight, underline, draw, add sticky notes, capture image regions — every annotation type Zotero supports, in a window that finally feels like home.
 
 <!-- TODO: replace with actual GIF -->
 
 ![Built-in Reader](docs/assets/reader-placeholder.gif)
 
-### Annotate Local Vault Files
+### 🔄 True Bidirectional Sync
 
-Open **any** PDF or EPUB already in your vault with the same full-featured reader. Annotations are saved alongside the file — no Zotero account required.
-
-<!-- TODO: replace with actual GIF -->
-
-![Local Reader](docs/assets/local-reader-placeholder.gif)
-
-### Bidirectional Sync
-
-Pull items from Zotero **and push changes back** — annotations, metadata, everything. Configure each library as _Bidirectional_, _Read-Only_, or _Ignored_. When conflicts arise, a field-level diff viewer lets you pick _Keep Local_ or _Accept Remote_.
+Pull items, metadata, and annotations from Zotero — and push your changes back. Configure each library independently as **Bidirectional**, **Read-Only**, or **Ignored**. When conflicts happen, a field-level diff viewer lets you decide what to keep.
 
 <!-- TODO: replace with actual GIF -->
 
 ![Bidirectional Sync](docs/assets/sync-placeholder.gif)
 
-### Template-Powered Source Notes
+### ✨ Template-Powered Source Notes
 
-Each Zotero item gets one auto-generated source note, rendered with [LiquidJS](https://liquidjs.com) templates you fully control. Notes regenerate when annotations change and are locked to prevent accidental edits — your own ideas go in separate notes that link back.
+Every Zotero item gets one auto-generated Markdown note, rendered with [LiquidJS](https://liquidjs.com) templates you fully control. Notes regenerate whenever annotations change, and stay locked so your own thoughts live in separate notes that link back. Cleanly separates **what the author said** from **what you think**.
 
 <!-- TODO: replace with actual GIF -->
 
 ![Source Notes](docs/assets/source-notes-placeholder.gif)
 
-### Multi-Format Citations
+### 📝 Annotate Any Vault File
 
-Insert citations as **Pandoc** (`[@key]`), **Wikilinks** (`[[note]]`), **Footnotes**, or raw citekeys. Trigger them via command, autocomplete-as-you-type, or drag-and-drop from the tree view — with optional annotation context included.
+Have PDFs or EPUBs that aren't in Zotero? Open them with the same reader. Annotations save into a co-located `.zf.json` sidecar — no Zotero account required. Perfect for personal notes, downloaded papers, or books you're reading.
+
+<!-- TODO: replace with actual GIF -->
+
+![Local Reader](docs/assets/local-reader-placeholder.gif)
+
+### 📎 Multi-Format Citations
+
+Insert citations as **Pandoc** (`[@key]`), **Wikilink** (`[[Source/@key|Author (year)]]`), **Footnote**, or raw **citekey** — via drag-and-drop from the tree view, autocomplete with a trigger string (`@@`), or copy-from-reader hotkeys. Include annotation context (page numbers, quoted text) automatically.
 
 <!-- TODO: replace with actual GIF -->
 
 ![Citations](docs/assets/citations-placeholder.gif)
 
-### Zotero Tree View
+### 🌳 Zotero Tree View
 
-Browse your entire Zotero library — collections, items, attachments — in a sidebar tree. Sort by title, date added, or date modified. Open any attachment or source note with a single click.
+Browse your entire Zotero universe — libraries, collections, items, attachments — in a fast virtualized sidebar tree. Search, sort, drag, right-click. Click any attachment to open it; drag any item to cite it.
 
 <!-- TODO: replace with actual GIF -->
 
 ![Tree View](docs/assets/tree-view-placeholder.gif)
 
-### And More
+### 🛠️ And a Whole Lot More
 
-- **WebDAV Support** — download attachments from your self-hosted storage.
-- **Zotero LABD Support** — Support attachment which store in Zotero as a linked_file.
-- **Batch operations** — create all source notes, extract all annotation images, or re-render all templates in one go.
-- **Activity Center** — monitor sync progress, running tasks, and view a searchable log console.
-- **Offline-first** — all data cached in IndexedDB. Network is only used for Zotero API and WebDAV.
-- **Secure credentials** — API keys stored in Obsidian's `SecretStorage`, never in synced `data.json`.
-- **Mobile-safe** — works on both desktop and mobile (current mobile support is limited).
+- **WebDAV support** — download attachments from your self-hosted Zotero storage.
+- **Linked attachment base directory** — works with Zotero's external file storage feature.
+- **Batch operations** — generate every source note, extract every annotation image, re-render every template in one click.
+- **Activity Center** — a control panel for sync progress, running tasks, and a searchable log console.
+- **Offline-first** — everything cached locally in IndexedDB; the network is only used for Zotero and WebDAV.
+- **Secure credentials** — API keys stored in Obsidian's platform-native `SecretStorage`, never in synced `data.json`.
+- **Mobile-aware** — built to be mobile-safe (current mobile support is limited).
 
-## Installation
-
-> **Note:** This plugin is currently in beta and not available in the official Obsidian Community Plugins store yet.
-
-### From BRAT
-
-1. **Install BRAT Plugin**
-    - Open Obsidian Settings (⚙️)
-    - Go to **Community plugins**
-    - Click **Browse** and search for "BRAT"
-    - Install and enable the **BRAT** plugin
-
-2. **Add Beta Plugin**
-    - In Obsidian, open **Settings → Community plugins**
-    - Find **BRAT** in your installed plugins and click **Options**
-    - Click **Add Beta plugin**
-    - Enter the repository: `duanxianpi/obsidian-zotflow`
-    - Click **Add Plugin**
-
-3. **Enable Plugin**
-    - Go to **Settings → Community plugins**
-    - Find **Obsidian ZotFlow** in the list
-    - Toggle it on to enable
-
-4. Open **Settings → Community plugins → Browse**.
-5. Search for **ZotFlow**.
-6. Click **Install**, then **Enable**.
+---
 
 ## Quick Start
 
-1. **Get a Zotero API key** — go to [https://www.zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new) and create a key with read/write access to your personal library (and any groups you want to sync).
-2. **Enter the key** in **Settings → ZotFlow → Sync**.
-3. **Run your first sync** — open the Activity Center (ribbon icon or command palette) and click **Sync All**.
-4. **Browse your library** — open the Zotero Tree View from the command palette or the left sidebar.
-5. **Read & annotate** — click any attachment in the tree to open it in the built-in reader.
+New to ZotFlow? Start here:
+
+👉 **[Read the Getting Started guide](docs/getting-started.md)** — it introduces ZotFlow's key concepts and design philosophy first, then walks you through installation and your first sync.
+
+For the impatient:
+
+1. Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `duanxianpi/obsidian-zotflow` as a beta plugin.
+2. Create a [Zotero API key](https://www.zotero.org/settings/keys/new) with read/write access.
+3. Paste it into **Settings → ZotFlow → Sync** and click **Verify Key**.
+4. Open the **Activity Center** (ribbon icon) → **Sync All**.
+5. Open the **Zotero Tree View**, double-click an attachment, and start reading.
+
+---
 
 ## Documentation
 
-Check out the [full documentation](docs/README.md) for detailed guides, troubleshooting, and advanced features.
+Full guides live in [docs/](docs/README.md):
 
-<!-- ## Commands
+- **[Getting Started](docs/getting-started.md)** — Concepts, philosophy, installation, first sync.
+- **[Reading & Annotating](docs/reading-and-annotating.md)** — Using the built-in reader.
+- **[Source Notes](docs/source-notes.md)** — How auto-generated notes work and how to customize them.
+- **[Citation Guide](docs/citation-guide.md)** — Every way to insert a citation.
+- **[Template Guide](docs/template-guide.md)** — Full LiquidJS variable & filter reference.
 
-TODO
+---
 
-| Command                   | Description                              |
-| ------------------------- | ---------------------------------------- |
-| **Open Zotero Tree View** | Show the library browser in the sidebar. | -->
+## Installation
+
+> **Note:** ZotFlow is currently in beta and not yet in the official Obsidian Community Plugins store.
+
+Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat):
+
+1. Install and enable **BRAT** from Community Plugins.
+2. In BRAT's options, click **Add Beta plugin** and enter: `duanxianpi/obsidian-zotflow`
+3. Enable **ZotFlow** in Community Plugins.
+
+See the [Getting Started guide](docs/getting-started.md) for step-by-step setup.
+
+---
 
 ## Architecture
 
-ZotFlow uses a **Main Thread + Web Worker** split:
+ZotFlow uses a **Main Thread + Web Worker** split for responsiveness:
 
-- **Main thread** — Obsidian API interactions, UI rendering (React for complex views, native Obsidian APIs for settings).
-- **Web Worker** — Zotero API communication, sync engine, database (IndexedDB via Dexie), template rendering, PDF processing.
-- **Reader iframe** — Zotero's PDF/EPUB/HTML reader embedded via penpal for isolated, sandboxed rendering.
+- **Main thread** — Obsidian API, UI rendering (React for complex views, native APIs for settings).
+- **Web Worker** — Zotero API calls, sync engine, IndexedDB (Dexie), template rendering, PDF processing.
+- **Reader iframe** — Zotero's PDF/EPUB/HTML reader, embedded and sandboxed via penpal.
 
-Communication flows through [Comlink](https://github.com/GoogleChromeLabs/comlink) (main ↔ worker) and [Penpal](https://github.com/nicmeriano/penpal) (main ↔ reader iframe).
+Communication: [Comlink](https://github.com/GoogleChromeLabs/comlink) (main ↔ worker) and [Penpal](https://github.com/nicmeriano/penpal) (main ↔ reader iframe).
+
+---
 
 ## Development
 
@@ -149,22 +159,12 @@ npm install
 
 ```bash
 npm run build:ci       # Full CI build (PDF.js + reader + plugin)
-```
-
-### Development Mode
-
-```bash
 npm run dev:plugin     # esbuild watch mode (plugin)
 npm run dev:reader     # webpack watch mode (reader, separate terminal)
-```
-
-### Lint
-
-```bash
 npm run lint
 ```
 
-### Testing Locally
+### Local install
 
 Copy `main.js`, `manifest.json`, and `styles.css` to:
 
@@ -174,16 +174,22 @@ Copy `main.js`, `manifest.json`, and `styles.css` to:
 
 Reload Obsidian and enable the plugin.
 
+---
+
 ## Privacy
 
-- **No telemetry, no analytics, no tracking.**
+- **No telemetry. No analytics. No tracking.**
 - Network requests go only to the Zotero API and your configured WebDAV server.
-- Credentials are stored in Obsidian's platform-native `SecretStorage`.
-- The reader iframe communicates only via structured-clone messaging (no `eval`, no remote code).
+- Credentials live in Obsidian's platform-native `SecretStorage`.
+- The reader iframe communicates only via structured-clone messaging — no `eval`, no remote code.
+
+---
 
 ## License
 
 [AGPL-3.0-only](LICENSE)
+
+---
 
 ## Author
 
@@ -191,7 +197,7 @@ Reload Obsidian and enable the plugin.
 
 ## Sponsor
 
-Thanks for checking out the plugin! I’m currently a student and working on this plugin nights and weekends. If it’s useful to you, a small tip will help me keep shipping features.
+Thanks for checking out ZotFlow! I'm currently a student building this on nights and weekends. If it helps your research, a small tip keeps the features shipping.
 
 <div>
 	<a href="https://www.buymeacoffee.com/duanxianpi" target="_blank" title="buymeacoffee">
@@ -201,9 +207,10 @@ Thanks for checking out the plugin! I’m currently a student and working on thi
 
 ---
 
-## Roadmap / Feedback
+## Roadmap & Feedback
 
-Have ideas or found a bug? Please join the discord server!
+Have ideas or found a bug? Join the Discord!
+
 <a href="https://discord.gg/7vNrR6qhVr"> <img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white&style=for-the-badge"> </a>
 
 ## Star History
