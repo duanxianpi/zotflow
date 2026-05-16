@@ -4,9 +4,7 @@
 
 ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that brings the full power of [Zotero](https://www.zotero.org) into your vault. Read papers, annotate PDFs, generate templated source notes, and cite literature — all without ever leaving Obsidian.
 
-<!-- TODO: replace with hero GIF -->
-
-![ZotFlow Hero](docs/assets/hero-placeholder.gif)
+![ZotFlow Hero](docs/assets/hero.gif)
 
 ---
 
@@ -30,49 +28,45 @@ If any of these sound like you, ZotFlow was built for you:
 
 A full-featured PDF/EPUB/HTML reader, embedded right in your workspace and **themed to match Obsidian**. Highlight, underline, draw, add sticky notes, capture image regions — every annotation type Zotero supports, in a window that finally feels like home.
 
-<!-- TODO: replace with actual GIF -->
-
-![Built-in Reader](docs/assets/reader-placeholder.gif)
+![Built-in Reader](docs/assets/reader.gif)
 
 ### 🔄 True Bidirectional Sync
 
 Pull items, metadata, and annotations from Zotero — and push your changes back. Configure each library independently as **Bidirectional**, **Read-Only**, or **Ignored**. When conflicts happen, a field-level diff viewer lets you decide what to keep.
 
-<!-- TODO: replace with actual GIF -->
-
-![Bidirectional Sync](docs/assets/sync-placeholder.gif)
+![Bidirectional Sync](docs/assets/sync.gif)
 
 ### ✨ Template-Powered Source Notes
 
-Every Zotero item gets one auto-generated Markdown note, rendered with [LiquidJS](https://liquidjs.com) templates you fully control. Notes regenerate whenever annotations change, and stay locked so your own thoughts live in separate notes that link back. Cleanly separates **what the author said** from **what you think**.
+Every Zotero item gets one auto-generated Markdown note, rendered with [LiquidJS](https://liquidjs.com) templates you fully control.
 
-<!-- TODO: replace with actual GIF -->
+![Source Notes](docs/assets/source-notes.gif)
 
-![Source Notes](docs/assets/source-notes-placeholder.gif)
+### 🗒️ Native Zotero Item Notes
+
+Create, edit, and delete **Zotero child notes** without leaving Obsidian. Right-click any item in the Tree View to add a note, edit it in a dedicated tab with Obsidian's full Markdown editor, or unlock its region inside the parent source note and edit in place. Every change auto-saves and syncs back to Zotero.
+
+![Item Notes](docs/assets/item-notes.gif)
 
 ### 📝 Annotate Any Vault File
 
 Have PDFs or EPUBs that aren't in Zotero? Open them with the same reader. Annotations save into a co-located `.zf.json` sidecar — no Zotero account required. Perfect for personal notes, downloaded papers, or books you're reading.
 
-<!-- TODO: replace with actual GIF -->
-
-![Local Reader](docs/assets/local-reader-placeholder.gif)
+![Local Reader](docs/assets/local-reader.gif)
 
 ### 📎 Multi-Format Citations
 
 Insert citations as **Pandoc** (`[@key]`), **Wikilink** (`[[Source/@key|Author (year)]]`), **Footnote**, or raw **citekey** — via drag-and-drop from the tree view, autocomplete with a trigger string (`@@`), or copy-from-reader hotkeys. Include annotation context (page numbers, quoted text) automatically.
 
-<!-- TODO: replace with actual GIF -->
+![Citations](docs/assets/citations.gif)
 
-![Citations](docs/assets/citations-placeholder.gif)
-
-### 🌳 Zotero Tree View
+### 🌳 Zotero Tree View & Search Modal
 
 Browse your entire Zotero universe — libraries, collections, items, attachments — in a fast virtualized sidebar tree. Search, sort, drag, right-click. Click any attachment to open it; drag any item to cite it.
 
-<!-- TODO: replace with actual GIF -->
+Or open the search modal from the command palette, type to filter your library, and hit Enter to jump to an item or open its attachment.
 
-![Tree View](docs/assets/tree-view-placeholder.gif)
+![Tree View](docs/assets/tree-view.gif)
 
 ### 🛠️ And a Whole Lot More
 

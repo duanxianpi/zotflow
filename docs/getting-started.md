@@ -47,18 +47,18 @@ Source notes capture **what the author said**. Your own thinking — interpretat
 
 This is a Zettelkasten-flavored design: stable, atomic, never-rewritten reference nodes — surrounded by your own evolving, editable insight notes.
 
-#### Editable regions: Zotero notes & annotation comments
+#### Zotero Item Notes: editable regions & the standalone editor
 
-There are two narrow exceptions to the "locked" rule. Inside a source note, ZotFlow marks **Zotero child notes** and **annotation comments** as **editable regions** — fenced by hidden `ZF_NOTE_BEG_…` / `ZF_ANNO_BEG_…` HTML comments in the template. In Source / Live Preview mode, each region shows a small **🔒 lock icon** at its start; click it to unlock and edit that region directly.
+Zotero **child notes** (note items attached to a parent paper, book, etc.) are the most important exception to the "locked" rule. ZotFlow treats them as **first-class, editable objects** with two equivalent editing surfaces — both write to the same record in IndexedDB and both push back on the next bidirectional sync.
 
-What happens when you edit an unlocked region:
+- **Editable region inside the source note** — every child note rendered into a source note is fenced by hidden `ZF_NOTE_BEG_<key>` / `ZF_NOTE_END_<key>` HTML comments. In Source / Live Preview mode the region shows a small **🔒 lock icon** at its start; click to unlock and edit in place. Annotation comments work the same way (fenced by `ZF_ANNO_…` markers).
+- **Standalone Note Editor view** — double-click a `📝` note in the Tree View (or use the `Open note` action) to open the same child note in its own Obsidian tab, powered by the full embeddable Markdown editor. Right-click any non-attachment item to **Create child note** or right-click a note to **Delete note**.
 
-- **Zotero note region** → the Markdown content is converted back to Zotero-flavored HTML and the corresponding Zotero note in IndexedDB is updated.
-- **Annotation comment region** → the new comment text is written to the annotation in IndexedDB.
+In both surfaces, edits are debounced (~2 s), converted from Markdown back to Zotero-flavored HTML, written to IndexedDB, and pushed to Zotero on the next bidirectional sync. Everything else inside the source note body (the annotation excerpt itself, generated structure, headings) stays locked and template-driven. You can globally flip the default with **Settings → ZotFlow → General → Default Editable Region Locked**; libraries set to **Read-Only** disable the unlock icon and load the Note Editor in read-only mode.
 
-Edits are debounced (~2 s) and pushed back to Zotero on the next bidirectional sync. Everything else inside the body of the source note (the annotation excerpt itself, generated structure, headings) stays locked and template-driven. You can also globally flip the default with **Settings → ZotFlow → General → Default Editable Region Locked**; libraries set to **Read-Only** disable the unlock icon entirely.
+See the [Item Notes guide](item-notes.md) for the full create / edit / delete workflow.
 
-**Frontmatter is the exception.** The YAML frontmatter block at the top of a source note is **always editable** — you can add your own fields (tags, status, custom metadata) freely. On the next re-render, ZotFlow **merges**: template-defined fields are refreshed from Zotero, mandatory fields (`zotflow-locked`, `library-id`, `zotero-key`, `item-version`) are re-asserted, and any custom fields you added are preserved untouched.
+**Frontmatter is the other exception.** The YAML frontmatter block at the top of a source note is **always editable** — you can add your own fields (tags, status, custom metadata) freely. On the next re-render, ZotFlow **merges**: template-defined fields are refreshed from Zotero, mandatory fields (`zotflow-locked`, `library-id`, `zotero-key`, `item-version`) are re-asserted, and any custom fields you added are preserved untouched.
 
 ### 4. Two Reader Modes: Library vs Local
 
