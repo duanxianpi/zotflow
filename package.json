@@ -1,6 +1,6 @@
 {
     "name": "obsidian-zotflow",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "description": "Keep your research in flow!",
     "main": "main.js",
     "type": "module",
