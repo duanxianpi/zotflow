@@ -1,11 +1,11 @@
 {
-    "id": "zotflow-plugin",
-    "name": "ZotFlow-plugin",
-    "version": "1.0.3",
-    "minAppVersion": "1.11.4",
-    "description": "Keep your research in flow!",
-    "author": "Xianpi Duan",
-    "authorUrl": "https://github.com/duanxianpi/",
-    "fundingUrl": "https://buymeacoffee.com/duanxianpi",
-    "isDesktopOnly": false
+	"id": "zotflow-plugin",
+	"name": "ZotFlow-plugin",
+	"version": "1.0.4",
+	"minAppVersion": "1.11.4",
+	"description": "Keep your research in flow!",
+	"author": "Xianpi Duan",
+	"authorUrl": "https://github.com/duanxianpi/",
+	"fundingUrl": "https://buymeacoffee.com/duanxianpi",
+	"isDesktopOnly": false
 }
