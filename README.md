@@ -208,6 +208,18 @@ Thanks for checking out ZotFlow! I'm currently a student building this on nights
 
 ---
 
+## Acknowledgements
+
+ZotFlow stands on the shoulders of some incredible open-source work. Huge thanks to the teams and individuals behind these projects — they inspired the design, shaped the architecture, and in some cases provided the actual engine running inside ZotFlow:
+
+- **[Zotero Reader](https://github.com/zotero/reader)** — the PDF/EPUB/HTML reader engine embedded in ZotFlow. Without this, there's no reader.
+- **[Zotero Web Library](https://github.com/zotero/web-library)** — reference for understanding Zotero's data model and UI patterns.
+- **[Obsidian Zotero Integration](https://github.com/obsidian-community/obsidian-zotero-integration)** by mgmeyers — the battle-tested original that countless researchers rely on. ZotFlow owes a lot to its design decisions.
+- **[ZotLit](https://github.com/aidenlx/zotlit)** by aidenlx — a beautiful, thoughtfully built plugin that pushed the bar for what Zotero+Obsidian integration could look like.
+- **[Zotero Better Notes](https://github.com/windingwind/zotero-better-notes)** by windingwind — inspired ZotFlow's approach to seamless note editing and the tight Markdown↔HTML note sync loop.
+
+---
+
 ## Roadmap & Feedback
 
 Have ideas or found a bug? Join the Discord!
