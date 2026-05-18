@@ -6,6 +6,7 @@ import type {
     NoteTemplateContext,
     AnnotationTemplateContext,
     AttachmentTemplateContext,
+    RelatedItemTemplateContext,
 } from "types/template-context";
 import type { IParentProxy } from "bridge/types";
 import type {
@@ -106,6 +107,10 @@ const FALLBACK_FOOTNOTE_TEMPLATE = `{%- if item.creators.length > 1 -%}
 {{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}
  {{ item.creators[0].name }} {%- else -%}
 Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.date | slice: 0, 4 }}).`;
+
+// Matches http(s)://zotero.org/{users|groups}/<id>/items/<KEY>
+const ZOTERO_URI_RE =
+    /^https?:\/\/zotero\.org\/(?:users|groups)\/(\d+)\/items\/([A-Z0-9]+)$/i;
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
 export class LibraryTemplateService {
@@ -489,6 +494,8 @@ export class LibraryTemplateService {
             ])
             .then((paths) => paths[`${item.libraryID}:${item.key}`] || []);
 
+        const relatedItems = await this.mapToRelatedItems(data);
+
         return {
             key: item.key,
             version: item.version,
@@ -499,6 +506,7 @@ export class LibraryTemplateService {
             annotations,
             attachmentAnnotations,
             attachments,
+            relatedItems,
             itemType: item.itemType,
             title: item.title || "",
             creators: creatorsObj,
@@ -559,6 +567,65 @@ export class LibraryTemplateService {
 
             raw: annotation,
         };
+    }
+
+    private parseRelationUri(
+        uri: string,
+    ): { libraryID: number; key: string } | null {
+        const m = ZOTERO_URI_RE.exec(uri.trim());
+        if (!m) return null;
+        return { libraryID: Number(m[1]), key: m[2]! };
+    }
+
+    private async mapToRelatedItems(
+        data: any,
+    ): Promise<RelatedItemTemplateContext[]> {
+        const rels = data?.relations as
+            | { [k: string]: string | string[] }
+            | undefined;
+        if (!rels) return [];
+
+        const dc = rels["dc:relation"];
+        if (!dc) return [];
+        const uris = Array.isArray(dc) ? dc : [dc];
+
+        const parsed: { libraryID: number; key: string }[] = [];
+        for (const uri of uris) {
+            const p = this.parseRelationUri(uri);
+            if (p) parsed.push(p);
+        }
+        if (parsed.length === 0) return [];
+
+        const fetched = await db.items.bulkGet(
+            parsed.map((p) => [p.libraryID, p.key]),
+        );
+
+        const out: RelatedItemTemplateContext[] = [];
+        for (let i = 0; i < parsed.length; i++) {
+            const { libraryID, key } = parsed[i]!;
+            const hit = fetched[i];
+            if (!hit) {
+                out.push({ key, libraryID, resolved: false });
+                continue;
+            }
+            let notePath: string | undefined;
+            try {
+                notePath =
+                    await this.notePathService.resolveLibraryNotePath(hit);
+            } catch {
+                notePath = undefined;
+            }
+            out.push({
+                key,
+                libraryID,
+                resolved: true,
+                title: hit.title || "",
+                itemType: hit.itemType,
+                citationKey: hit.citationKey || "",
+                notePath,
+            });
+        }
+        return out;
     }
 
     private async mapToAttachmentContext(

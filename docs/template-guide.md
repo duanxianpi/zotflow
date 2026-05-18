@@ -138,6 +138,7 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `item.annotations`           | `AnnotationContext[]`     | Direct child annotations (for standalone attachment items)            |
 | `item.attachmentAnnotations` | `AnnotationContext[]`     | All annotations across all attachments (flattened)                    |
 | `item.notes`                 | `NoteContext[]`           | Child Zotero notes — see below                                        |
+| `item.relatedItems`          | `RelatedItemContext[]`    | Items linked via Zotero's "Related" tab (`dc:relation`) — see below   |
 
 #### `item.attachments[]` — Attachment Children
 
@@ -163,6 +164,22 @@ The template context is an object with two top-level keys: `item` and `settings`
 | `note.tags`         | `Array<{ tag, type? }>` | Tags                             |
 | `note.dateAdded`    | `string`                | ISO timestamp                    |
 | `note.dateModified` | `string`                | ISO timestamp                    |
+
+#### `item.relatedItems[]` — Related Items
+
+Items the current item is linked to via Zotero's **Related** tab (the `dc:relation` predicate). Each entry corresponds to one related item URI; `key` and `libraryID` are always populated by parsing the URI itself, while the remaining fields are only filled in when the related item is present in ZotFlow's local database.
+
+| Variable             | Type                  | Description                                                                                       |
+| -------------------- | --------------------- | ------------------------------------------------------------------------------------------------- |
+| `rel.key`            | `string`              | Zotero item key of the related item                                                               |
+| `rel.libraryID`      | `number`              | Library ID parsed from the relation URI                                                           |
+| `rel.resolved`       | `boolean`             | `true` if the item was found in the local DB, `false` for cross-library / unsynced / missing items |
+| `rel.title`          | `string \| undefined` | Title of the related item (only when `resolved`)                                                  |
+| `rel.itemType`       | `string \| undefined` | Zotero item type (only when `resolved`)                                                           |
+| `rel.citationKey`    | `string \| undefined` | Citation key, e.g. from Better BibTeX (only when `resolved`)                                      |
+| `rel.notePath`       | `string \| undefined` | Vault path of that item's ZotFlow source note (only when `resolved`)                              |
+
+Cross-library or unsynced relations still appear in the list with `resolved: false` so they can be referenced or surfaced as a placeholder. Guard with `{% if rel.title %}` (or `{% if rel.resolved %}`) when you only want fully-known entries.
 
 #### `item.annotations[]` / `attachment.annotations[]` — Annotations
 
@@ -768,6 +785,26 @@ tags:
 {%- endfor -%}
 {%- endif -%}
 ```
+
+### Listing Related Items
+
+```liquid
+{%- if item.relatedItems.size > 0 -%}
+## Related
+
+{% for rel in item.relatedItems -%}
+{% if rel.notePath -%}
+- [[{{ rel.notePath }}|{{ rel.title }}]]
+{%- elsif rel.title -%}
+- {{ rel.title }} (`{{ rel.key }}`)
+{%- else -%}
+- `{{ rel.key }}` *(not synced)*
+{%- endif %}
+{% endfor -%}
+{%- endif -%}
+```
+
+The three branches handle: items with a known source-note path (wikilink), items found locally but without a resolvable path (plain title + key), and unsynced/cross-library items (key only). Drop branches you don't need.
 
 ### Deep-Linking to Attachments
 
