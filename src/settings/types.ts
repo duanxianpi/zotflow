@@ -75,6 +75,7 @@ export interface ZotFlowSettings {
     autoCopyAnnotation: AutoCopyAnnotationMode;
     autoUpdateSourceNotesAfterSync: boolean;
     autoDisableNoteImageTextTools: boolean;
+    epubFontFamily: string;
 }
 
 /** Persisted reader view state for a single attachment (local or zotero). */
@@ -134,6 +135,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     autoCopyAnnotation: "off",
     autoUpdateSourceNotesAfterSync: true,
     autoDisableNoteImageTextTools: true,
+    epubFontFamily: "",
 };
 
 /** Default shape of the full `data.json` blob (settings + view states). */

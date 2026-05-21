@@ -260,6 +260,25 @@ export class GeneralSection {
 
         zoteroReaderSettingGroup.addSetting((setting) => {
             setting
+                .setName("Ebook Font")
+                .setDesc(
+                    "Custom font family for EPUB documents. Leave empty to use the book's own font. This description text renders in the selected font as a live preview. Requires restart Reader to apply.",
+                )
+                .addText((text) => {
+                    text.setPlaceholder("e.g. Georgia, serif");
+                    text.setValue(this.plugin.settings.epubFontFamily);
+                    text.onChange(async (value) => {
+                        this.plugin.settings.epubFontFamily = value;
+                        setting.descEl.style.fontFamily = value || "";
+                        await this.plugin.saveSettings();
+                    });
+                });
+            setting.descEl.style.fontFamily =
+                this.plugin.settings.epubFontFamily || "";
+        });
+
+        zoteroReaderSettingGroup.addSetting((setting) => {
+            setting
                 .setName("Reader UI Color Scheme")
                 .setDesc("Color scheme for the Zotero Reader UI.")
                 .addDropdown((dropdown) => {

@@ -30,6 +30,7 @@ export interface CreateReaderOptions {
     autoDisableNoteTool?: boolean;
     autoDisableTextTool?: boolean;
     autoDisableImageTool?: boolean;
+    fontFamily?: string;
 }
 
 /** Discriminated union of all events the reader iframe can emit to the parent. */

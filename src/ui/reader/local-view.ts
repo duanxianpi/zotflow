@@ -254,6 +254,7 @@ export class LocalReaderView extends ItemView {
                     autoDisableNoteTool: autoDisable,
                     autoDisableTextTool: autoDisable,
                     autoDisableImageTool: autoDisable,
+                    fontFamily: services.settings.epubFontFamily || undefined,
                     ...themeOverrides,
                 };
 
