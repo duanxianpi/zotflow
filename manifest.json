@@ -1,7 +1,7 @@
 {
 	"id": "zotflow",
 	"name": "ZotFlow",
-	"version": "1.0.10",
+	"version": "1.0.11",
 	"minAppVersion": "1.11.4",
 	"description": "Keep your research in flow!",
 	"author": "Xianpi Duan",
