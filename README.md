@@ -1,5 +1,7 @@
 # ZotFlow — Keep Your Research in Flow
 
+English | [简体中文](README.zh-CN.md)
+
 > **Your Zotero library, your reader, your notes — one seamless workspace inside Obsidian.**
 
 ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that brings the full power of [Zotero](https://www.zotero.org) into your vault. Read papers, annotate PDFs, generate templated source notes, and cite literature — all without ever leaving Obsidian.
@@ -84,7 +86,7 @@ Or open the search modal from the command palette, type to filter your library, 
 
 New to ZotFlow? Start here:
 
-👉 **[Read the Getting Started guide](docs/getting-started.md)** — it introduces ZotFlow's key concepts and design philosophy first, then walks you through installation and your first sync.
+👉 **[Read the docs website](https://zotflow.peterduan.dev/)** — the documentation site introduces ZotFlow's key concepts and design philosophy first, then walks you through installation and your first sync.
 
 For the impatient:
 
@@ -98,13 +100,12 @@ For the impatient:
 
 ## Documentation
 
-Full guides live in [docs/](docs/README.md):
+Read ZotFlow docs on the new website:
 
-- **[Getting Started](docs/getting-started.md)** — Concepts, philosophy, installation, first sync.
-- **[Reading & Annotating](docs/reading-and-annotating.md)** — Using the built-in reader.
-- **[Source Notes](docs/source-notes.md)** — How auto-generated notes work and how to customize them.
-- **[Citation Guide](docs/citation-guide.md)** — Every way to insert a citation.
-- **[Template Guide](docs/template-guide.md)** — Full LiquidJS variable & filter reference.
+- **English:** [https://zotflow.peterduan.dev/](https://zotflow.peterduan.dev/)
+- **简体中文:** [https://zotflow.peterduan.dev/zh](https://zotflow.peterduan.dev/zh)
+
+Legacy Markdown docs are still available in [docs/](docs/README.md), but the website is the source of truth.
 
 ---
 
@@ -125,7 +126,7 @@ For pre-release builds, install via [BRAT](https://github.com/TfTHacker/obsidian
 2. In BRAT's options, click **Add Beta plugin** and enter: `duanxianpi/obsidian-zotflow`
 3. Enable **ZotFlow** in Community Plugins.
 
-See the [Getting Started guide](docs/getting-started.md) for step-by-step setup.
+See the docs website for step-by-step setup: [https://zotflow.peterduan.dev/](https://zotflow.peterduan.dev/)
 
 ---
 
@@ -213,6 +214,7 @@ Thanks for checking out ZotFlow! I'm currently a student building this on nights
 ZotFlow stands on the shoulders of some incredible open-source work. Huge thanks to the teams and individuals behind these projects — they inspired the design, shaped the architecture, and in some cases provided the actual engine running inside ZotFlow:
 
 - **[Zotero Reader](https://github.com/zotero/reader)** — the PDF/EPUB/HTML reader engine embedded in ZotFlow. Without this, there's no reader.
+- **[Task Genius](https://github.com/taskgenius)** — the embeddable Markdown editor in ZotFlow is powered by Task Genius, which made it possible to have a full-featured editor without building one from scratch.
 - **[Zotero Web Library](https://github.com/zotero/web-library)** — reference for understanding Zotero's data model and UI patterns.
 - **[Obsidian Zotero Integration](https://github.com/obsidian-community/obsidian-zotero-integration)** by mgmeyers — the battle-tested original that countless researchers rely on. ZotFlow owes a lot to its design decisions.
 - **[ZotLit](https://github.com/aidenlx/zotlit)** by aidenlx — a beautiful, thoughtfully built plugin that pushed the bar for what Zotero+Obsidian integration could look like.
