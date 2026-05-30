@@ -91,6 +91,7 @@
 } */
 
 /* Suggestion Header */
+.suggestion-container .suggestion-item.zotflow-suggestion-header,
 .prompt-results .suggestion-item.zotflow-suggestion-header {
     background-color: transparent;
     padding: var(--size-2-2) var(--size-4-3);

@@ -22,6 +22,25 @@ export interface ZotFlowCitationPayload {
     annotations?: AnnotationJSON[];
 }
 
+function resolveInsertionAnchor(
+    editor: Editor,
+    preferredPos: EditorPosition,
+    baselineDoc: string,
+): EditorPosition {
+    return editor.getValue() === baselineDoc
+        ? preferredPos
+        : editor.getCursor();
+}
+
+function setCursorAfterInsertedText(
+    editor: Editor,
+    insertOffset: number,
+    insertedText: string,
+): void {
+    const endOffset = insertOffset + insertedText.length;
+    editor.setCursor(editor.offsetToPos(endOffset));
+}
+
 /**
  * Strip an AnnotationJSON down to the fields needed by citation templates.
  * Removes heavy/non-serializable data (image, position, sortIndex, etc.)
@@ -111,6 +130,7 @@ export function insertCitationResult(
     pos: EditorPosition,
     result: CitationResult,
 ): void {
+    const insertOffset = editor.posToOffset(pos);
     editor.replaceRange(result.citation, pos);
 
     if (result.footnoteDef) {
@@ -129,6 +149,8 @@ export function insertCitationResult(
             });
         }
     }
+
+    setCursorAfterInsertedText(editor, insertOffset, result.citation);
 }
 
 /**
@@ -152,13 +174,19 @@ export function handleEditorDrop(
     evt.preventDefault();
 
     const pos = editor.getCursor();
+    const baselineDoc = editor.getValue();
     const format = resolveFormatFromModifiers(evt);
 
     services.citationService
         .resolve(payload, format)
         .then((result) => {
             if (result) {
-                insertCitationResult(editor, pos, result);
+                const insertPos = resolveInsertionAnchor(
+                    editor,
+                    pos,
+                    baselineDoc,
+                );
+                insertCitationResult(editor, insertPos, result);
             }
         })
         .catch((error) => {

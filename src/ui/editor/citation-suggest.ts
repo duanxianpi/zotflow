@@ -28,6 +28,16 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
     private manualTriggerStart: EditorPosition | null = null;
     private readonly suggest = new ZoteroItemSuggest();
 
+    private resolveInsertionAnchor(
+        editor: Editor,
+        preferredPos: EditorPosition,
+        baselineDoc: string,
+    ): EditorPosition {
+        return editor.getValue() === baselineDoc
+            ? preferredPos
+            : editor.getCursor();
+    }
+
     private get triggerPrefix(): string {
         return services.settings.citationTrigger || DEFAULT_TRIGGER;
     }
@@ -198,12 +208,18 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
 
         // Clear the trigger text immediately, then async-resolve the citation
         editor.replaceRange("", replaceStart, end);
+        const baselineDoc = editor.getValue();
 
         services.citationService
             .resolve({ libraryID: item.libraryID, key: item.key }, format)
             .then((result) => {
                 if (result) {
-                    insertCitationResult(editor, replaceStart, result);
+                    const insertPos = this.resolveInsertionAnchor(
+                        editor,
+                        replaceStart,
+                        baselineDoc,
+                    );
+                    insertCitationResult(editor, insertPos, result);
                 }
             })
             .catch((error) => {
