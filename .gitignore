@@ -38,3 +38,6 @@ coverage/
 
 # Internal Docs
 docs/
+
+# Local note-editor checkout (not tracked as a submodule)
+note-editor/note-editor/
