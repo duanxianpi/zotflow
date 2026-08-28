@@ -1,0 +1,18 @@
+{
+    "schemaVersion": 1,
+    "documentWorker": {
+        "commit": "6d0c0ce45d96a4ed5b697927306b1e9207a02041",
+        "archiveUrl": "https://zotero-download.s3.amazonaws.com/ci/document-worker/6d0c0ce45d96a4ed5b697927306b1e9207a02041.zip",
+        "archiveSize": 14918942,
+        "archiveSha256": "1cdfc2f2a3cbb75b7df9f7c02fdb42b06a43c5df3c3b644d694820c5159ee56d"
+    },
+    "enhancementPack": {
+        "apiVersion": 1,
+        "include": [
+            "metadata.json",
+            "structured-document-text.js",
+            "block-seg/",
+            "onnx/"
+        ]
+    }
+}

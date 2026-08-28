@@ -1,0 +1,40 @@
+name: Notify Enhancement Pack
+
+on:
+    push:
+        branches:
+            - master
+        paths:
+            - document-worker.lock.json
+    workflow_dispatch:
+
+jobs:
+    notify:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Dispatch Document Worker update
+              uses: actions/github-script@v7
+              with:
+                  github-token: ${{ secrets.ENHANCEMENT_PACK_DISPATCH_TOKEN }}
+                  script: |
+                      const crypto = require("node:crypto");
+                      const fs = require("node:fs");
+                      const rawLock = fs.readFileSync("document-worker.lock.json");
+                      const lock = JSON.parse(rawLock.toString("utf8"));
+
+                      await github.rest.repos.createDispatchEvent({
+                          owner: "duanxianpi",
+                          repo: "zotflow-enhancement-pack",
+                          event_type: "document-worker-updated",
+                          client_payload: {
+                              zotflowCommit: context.sha,
+                              documentWorkerCommit: lock.documentWorker.commit,
+                              lockSha256: crypto
+                                  .createHash("sha256")
+                                  .update(rawLock)
+                                  .digest("hex"),
+                              packApiVersion: lock.enhancementPack.apiVersion,
+                          },
+                      });

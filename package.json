@@ -6,6 +6,7 @@
     "type": "module",
     "scripts": {
         "generate-zotero-item-schema": "node scripts/generate-zotero-item-schema.js",
+        "update:document-worker": "node scripts/update-document-worker-lock.mjs",
         "memory:watch": "node scripts/obsidian-memory-watch.mjs",
         "dev:reader": "cd reader/reader && npm install && webpack --config webpack.obsidian.js --mode development --watch",
         "dev:plugin": "node esbuild.config.mjs",

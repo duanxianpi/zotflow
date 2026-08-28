@@ -12,6 +12,7 @@ export default defineConfig(
         "coverage/**",
         "reader/reader/**",
         "note-editor/note-editor/**",
+        "zotflow-enhancement-pack/**",
         "versions.json",
         "main.js",
         "src/main.js",
