@@ -3,81 +3,74 @@ name: Release
 on:
     push:
         tags:
-            - "**"
-
-env:
-    PLUGIN_NAME: obsidian-zotflow
+            - "*"
 
 jobs:
     build:
         runs-on: ubuntu-latest
-
-        strategy:
-            matrix:
-                node-version: [22.x]
+        permissions:
+            contents: write
+            id-token: write
+            attestations: write
 
         steps:
             - uses: actions/checkout@v4
               with:
                   submodules: recursive
 
-            - name: Use Node.js ${{ matrix.node-version }}
+            - name: Use Node.js
               uses: actions/setup-node@v4
               with:
-                  node-version: ${{ matrix.node-version }}
+                  node-version: 22
                   cache: "npm"
-            - run: npm ci
-            - run: npm run build:ci --if-present
 
-            - name: Package
-              id: build
+            - name: Verify release version
               run: |
-                  mkdir ${{ env.PLUGIN_NAME }}
-                  cp main.js manifest.json styles.css ${{ env.PLUGIN_NAME }}
-                  zip -r ${{ env.PLUGIN_NAME }}.zip ${{ env.PLUGIN_NAME }}
-                  ls
-                  echo "tag_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+                  tag="${GITHUB_REF#refs/tags/}"
+                  package_version="$(node -p "require('./package.json').version")"
+                  manifest_version="$(node -p "require('./manifest.json').version")"
+                  manifest_min_app="$(node -p "require('./manifest.json').minAppVersion")"
+                  versions_min_app="$(node -p "require('./versions.json')[process.argv[1]] || ''" "$manifest_version")"
+                  if [ "$tag" != "$package_version" ] || \
+                     [ "$tag" != "$manifest_version" ] || \
+                     [ "$manifest_min_app" != "$versions_min_app" ]; then
+                    echo "Tag, package.json, manifest.json, and versions.json must agree" >&2
+                    exit 1
+                  fi
 
-            - name: Create Release
-              id: create_release
-              uses: actions/create-release@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  tag_name: ${{ github.ref_name }}
-                  release_name: ${{ github.ref_name }}
-                  draft: false
-                  prerelease: false
+            - name: Build plugin
+              run: |
+                  npm ci
+                  npm run build:ci
 
-            - name: Upload main.js
-              id: upload-main
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Upload workflow artifact
+              uses: actions/upload-artifact@v4
               with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./main.js
-                  asset_name: main.js
-                  asset_content_type: text/javascript
+                  name: obsidian-zotflow-${{ github.ref_name }}
+                  path: |
+                      main.js
+                      manifest.json
+                      styles.css
+                  if-no-files-found: error
+                  compression-level: 0
 
-            - name: Upload manifest.json
-              id: upload-manifest
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Attest build provenance
+              uses: actions/attest@v4
               with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./manifest.json
-                  asset_name: manifest.json
-                  asset_content_type: application/json
+                  subject-path: |
+                      main.js
+                      manifest.json
+                      styles.css
 
-            - name: Upload styles.css
-              id: upload-css
-              uses: actions/upload-release-asset@v1
+            - name: Create draft release
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  upload_url: ${{ steps.create_release.outputs.upload_url }}
-                  asset_path: ./styles.css
-                  asset_name: styles.css
-                  asset_content_type: text/css
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_TAG: ${{ github.ref_name }}
+              run: |
+                  gh release create "$RELEASE_TAG" \
+                    --verify-tag \
+                    --title "$RELEASE_TAG" \
+                    --draft \
+                    main.js \
+                    manifest.json \
+                    styles.css
