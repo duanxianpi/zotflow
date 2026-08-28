@@ -23,15 +23,13 @@ import type { KeyService } from "worker/services/key";
 import type { LibraryService } from "worker/services/library";
 import type { DbHelperService } from "worker/services/db-helper";
 import type { TagService } from "worker/services/tag";
-import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { LibraryTemplateService } from "worker/services/library-template";
 import type { LocalTemplateService } from "worker/services/local-template";
 import type { NotePathService } from "worker/services/note-path";
 import type { CslRenderWorkerService } from "worker/services/csl-render";
 import type { BatchNoteInput } from "worker/tasks/impl/batch-note-task";
-import type {
-    BatchExtractImagesInput,
-} from "worker/tasks/impl/batch-extract-images-task";
+import type { BatchExtractImagesInput } from "worker/tasks/impl/batch-extract-images-task";
 import type { IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
@@ -67,7 +65,7 @@ export class WorkerBridge {
     private _library: Comlink.Remote<LibraryService>;
     private _dbHelper: Comlink.Remote<DbHelperService>;
     private _tag: Comlink.Remote<TagService>;
-    private _pdfProcessor: Comlink.Remote<PDFProcessWorker>;
+    private _documentWorker: Comlink.Remote<DocumentWorkerService>;
     private _libraryTemplate: Comlink.Remote<LibraryTemplateService>;
     private _localTemplate: Comlink.Remote<LocalTemplateService>;
     private _notePath: Comlink.Remote<NotePathService>;
@@ -114,8 +112,8 @@ export class WorkerBridge {
         this._library = await materializeComlinkProxy(this._api.library);
         this._dbHelper = await materializeComlinkProxy(this._api.dbHelper);
         this._tag = await materializeComlinkProxy(this._api.tag);
-        this._pdfProcessor = await materializeComlinkProxy(
-            this._api.pdfProcessor,
+        this._documentWorker = await materializeComlinkProxy(
+            this._api.documentWorker,
         );
         this._libraryTemplate = await materializeComlinkProxy(
             this._api.libraryTemplate,
@@ -215,9 +213,9 @@ export class WorkerBridge {
         return this._tag;
     }
 
-    get pdfProcessWorker() {
+    get documentWorker() {
         this.assertInitialized();
-        return this._pdfProcessor;
+        return this._documentWorker;
     }
 
     get libraryTemplate() {

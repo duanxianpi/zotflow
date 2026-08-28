@@ -748,10 +748,7 @@ export class ZoteroReaderView extends ItemView {
             services.settings.zoteroapikey,
         );
 
-        ff(
-            this.bridge.refreshAnnotations(annotations),
-            "Failed to refresh reader annotations",
-        );
+        await this.bridge.refreshAnnotations(annotations);
     }
 
     /**
@@ -797,13 +794,10 @@ export class ZoteroReaderView extends ItemView {
                 },
             ]);
 
-            // Push extracted annotations to the reader iframe
-            for (const annotation of annotations) {
-                ff(
-                    this.bridge!.addAnnotation(annotation),
-                    "Failed to add an annotation to the reader",
-                );
-            }
+            // The worker has atomically reconciled imported/deleted rows and
+            // the source MD5. Replace the Reader snapshot from IDB so both
+            // additions and removals become visible together.
+            await this.refreshAnnotationsFromDB();
 
             // Refresh the in-memory extraction MD5 from IDB so subsequent
             // calls within the same session can skip via the fast pre-check.

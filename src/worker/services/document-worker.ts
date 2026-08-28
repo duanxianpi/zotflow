@@ -1,7 +1,7 @@
 /*
  * Ported from Zotero's `chrome/content/zotero/xpcom/pdfWorker/manager.js`
  * (AGPL-3.0). The transport protocol and queue semantics follow the worker
- * bundled from zotero/document-worker commit fd642b3.
+ * bundled from zotero/document-worker commit 6d0c0ce (Zotero 10.0.0).
  */
 import * as Comlink from "comlink";
 import { db } from "db/db";
@@ -12,12 +12,13 @@ import type { AnnotationData } from "types/zotero-item";
 import type { AnnotationJSON } from "types/zotero-reader";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
-interface PDFWorkerConfig {
-    pdfWorkerURL: string;
+interface DocumentWorkerConfig {
+    workerURL: string;
 }
 
 interface WorkerMessage {
     id?: number;
+    progressID?: number;
     responseID?: number;
     action?: string;
     data?: unknown;
@@ -27,7 +28,12 @@ interface WorkerMessage {
 type PromiseResolvers = {
     resolve: (value: unknown) => void;
     reject: (reason?: unknown) => void;
+    onProgress?: (progress: number) => void;
 };
+
+interface QueryOptions {
+    onProgress?: (progress: number) => void;
+}
 
 type QueueItem = () => Promise<void>;
 
@@ -57,16 +63,46 @@ type ImportedAnnotation = Omit<
     "id" | "isExternal" | "tags" | "dateModified" | "dateAdded"
 > &
     Partial<
-        Pick<
-            AnnotationJSON,
-            "id" | "isExternal" | "tags" | "dateModified" | "dateAdded"
-        >
-    >;
+        Pick<AnnotationJSON, "id" | "isExternal" | "dateModified" | "dateAdded">
+    > & {
+        /** Document Worker emits raw Zotero tag names, not Reader tag objects. */
+        tags?: string[];
+    };
 
 interface ImportResponse {
     imported: ImportedAnnotation[];
     deleted: string[];
     buf?: ArrayBuffer;
+}
+
+export interface ExistingPDFAnnotation {
+    id: string;
+    type: string;
+    position: unknown;
+    comment?: string;
+}
+
+export interface PDFImportOptions {
+    existingAnnotations?: ExistingPDFAnnotation[];
+    /** IDs already used by any annotation on the attachment. */
+    reservedIDs?: string[];
+    isPriority?: boolean;
+    password?: string;
+    transfer?: boolean;
+}
+
+export interface PDFImportResult {
+    imported: AnnotationJSON[];
+    deleted: string[];
+    buf?: ArrayBuffer;
+}
+
+export interface StructuredDocumentTextOptions {
+    contentType: string;
+    sourceHash: string;
+    isPriority?: boolean;
+    password?: string;
+    onProgress?: (progress: number) => void;
 }
 
 export interface PDFRecognizerData {
@@ -123,9 +159,21 @@ function parseJson(text: string): unknown {
     return JSON.parse(text) as unknown;
 }
 
-/** Manages a nested PDF.js Web Worker for PDF operations (export, import, annotation rendering). */
-export class PDFProcessWorker {
-    config: PDFWorkerConfig;
+function generateAnnotationKey(): string {
+    const characters = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ";
+    let key = "";
+    for (let i = 0; i < 8; i++) {
+        key += characters[Math.floor(Math.random() * characters.length)];
+    }
+    return key;
+}
+
+const DOCUMENT_WORKER_DIRECTORY = "document-worker";
+const DOCUMENT_WORKER_URL_KEY = `${DOCUMENT_WORKER_DIRECTORY}/worker.js`;
+
+/** Manages Zotero's nested Document Worker and its PDF/SDT operations. */
+export class DocumentWorkerService {
+    config: DocumentWorkerConfig;
     private _worker: Worker | null;
     private _lastPromiseID: number;
     private _waitingPromises: { [key: number]: PromiseResolvers };
@@ -146,29 +194,29 @@ export class PDFProcessWorker {
         this._blobUrls = blobUrls;
 
         try {
-            const workerUrl = this._blobUrls["pdf/zotero-pdf-worker.js"];
+            const workerUrl = this._blobUrls[DOCUMENT_WORKER_URL_KEY];
             if (!workerUrl) {
                 throw new ZotFlowError(
                     ZotFlowErrorCode.RESOURCE_MISSING,
-                    "PDFProcessWorker",
-                    "Worker URL not found in blobUrls",
+                    "DocumentWorkerService",
+                    `Document Worker resource not found: ${DOCUMENT_WORKER_URL_KEY}`,
                 );
             }
 
             this.config = {
-                pdfWorkerURL: workerUrl,
+                workerURL: workerUrl,
             };
             this.parentHost.log(
                 "debug",
-                "PdfWorkerService initialized",
-                "PDFProcessWorker",
+                "Document Worker initialized",
+                "DocumentWorkerService",
             );
         } catch (e) {
             throw ZotFlowError.wrap(
                 e,
                 ZotFlowErrorCode.RESOURCE_MISSING,
-                "PDFProcessWorker",
-                "Failed to initialize PdfWorkerService",
+                "DocumentWorkerService",
+                "Failed to initialize Document Worker",
             );
         }
     }
@@ -216,14 +264,15 @@ export class PDFProcessWorker {
         action: string,
         data: unknown,
         transfer?: Transferable[],
+        options: QueryOptions = {},
     ): Promise<T> {
         return new Promise((resolve, reject) => {
             if (!this._worker) {
                 reject(
                     new ZotFlowError(
                         ZotFlowErrorCode.RESOURCE_MISSING,
-                        "PDFProcessWorker",
-                        "PDF Worker not initialized",
+                        "DocumentWorkerService",
+                        "Document Worker not initialized",
                     ),
                 );
                 return;
@@ -232,6 +281,7 @@ export class PDFProcessWorker {
             this._waitingPromises[this._lastPromiseID] = {
                 resolve: (value) => resolve(value as T),
                 reject,
+                onProgress: options.onProgress,
             };
             this._worker.postMessage(
                 { id: this._lastPromiseID, action, data },
@@ -240,21 +290,52 @@ export class PDFProcessWorker {
         });
     }
 
+    private async _fetchDocumentWorkerResource(
+        resourcePath: string,
+    ): Promise<Uint8Array> {
+        if (
+            !resourcePath ||
+            resourcePath.startsWith("/") ||
+            resourcePath.includes("\\") ||
+            resourcePath.split("/").includes("..")
+        ) {
+            throw new Error(
+                `Invalid Document Worker resource path: ${resourcePath}`,
+            );
+        }
+
+        const resourceKey = `${DOCUMENT_WORKER_DIRECTORY}/${resourcePath}`;
+        const resourceUrl = this._blobUrls[resourceKey];
+        if (!resourceUrl) {
+            throw new Error(
+                `Document Worker resource not found: ${resourceKey}`,
+            );
+        }
+
+        const response = await getOriginalFetch()(resourceUrl);
+        if (!response.ok) {
+            throw new Error(
+                `Failed to load ${resourceKey}: ${response.status}`,
+            );
+        }
+        return new Uint8Array(await response.arrayBuffer());
+    }
+
     _init() {
         if (this._worker) return;
-        if (!this.config.pdfWorkerURL) {
+        if (!this.config.workerURL) {
             this.parentHost.log(
                 "error",
-                "PDF Worker URL not configured",
-                "PDFProcessWorker",
+                "Document Worker URL not configured",
+                "DocumentWorkerService",
             );
             throw new ZotFlowError(
                 ZotFlowErrorCode.RESOURCE_MISSING,
-                "PDFProcessWorker",
-                "PDF Worker URL not configured",
+                "DocumentWorkerService",
+                "Document Worker URL not configured",
             );
         }
-        const worker = new Worker(this.config.pdfWorkerURL);
+        const worker = new Worker(this.config.workerURL);
         this._worker = worker;
         worker.addEventListener(
             "message",
@@ -263,6 +344,33 @@ export class PDFProcessWorker {
                 // failures, so the promise is marked rather than returned.
                 void (async () => {
                     const message = event.data;
+
+                    // Progress notifications refer to the original request
+                    // without settling it. Zotero's Document Worker stores the
+                    // percentage in data.progress.
+                    if (message.progressID !== undefined) {
+                        const resolver =
+                            this._waitingPromises[message.progressID];
+                        const progress = isRecord(message.data)
+                            ? message.data.progress
+                            : undefined;
+                        if (
+                            resolver?.onProgress &&
+                            typeof progress === "number"
+                        ) {
+                            try {
+                                resolver.onProgress(progress);
+                            } catch (e) {
+                                this.parentHost.log(
+                                    "warn",
+                                    "Document Worker progress callback failed",
+                                    "DocumentWorkerService",
+                                    e,
+                                );
+                            }
+                        }
+                        return;
+                    }
 
                     // Handle Response (Worker -> Main Request)
                     if (message.responseID !== undefined) {
@@ -284,8 +392,9 @@ export class PDFProcessWorker {
                                 reject(
                                     new ZotFlowError(
                                         ZotFlowErrorCode.PARSE_ERROR,
-                                        "PDFProcessWorker",
-                                        `PDF Worker Error (${errorName}): ${errorMessage}`,
+                                        "DocumentWorkerService",
+                                        `Document Worker Error (${errorName}): ${errorMessage}`,
+                                        { workerErrorName: errorName },
                                     ),
                                 );
                             } else {
@@ -301,132 +410,86 @@ export class PDFProcessWorker {
                         let responseError: { message: string } | null = null;
 
                         try {
-                            if (message.action === "FetchBuiltInCMap") {
-                                if (typeof message.data !== "string") {
-                                    throw new Error(
-                                        "Invalid CMap request payload",
-                                    );
+                            switch (message.action) {
+                                case "FetchData": {
+                                    if (typeof message.data !== "string") {
+                                        throw new Error(
+                                            "Invalid resource request payload",
+                                        );
+                                    }
+                                    responseData =
+                                        await this._fetchDocumentWorkerResource(
+                                            message.data,
+                                        );
+                                    break;
                                 }
-                                const cMapUrl =
-                                    this._blobUrls[
-                                        `pdf/web/cmaps/${message.data}.bcmap`
-                                    ];
-                                if (cMapUrl) {
-                                    const response =
-                                        await getOriginalFetch()(cMapUrl);
-                                    const arrayBuffer =
-                                        await response.arrayBuffer();
-                                    responseData = {
-                                        isCompressed: true,
-                                        cMapData: new Uint8Array(arrayBuffer),
-                                    };
-                                } else {
-                                    this.parentHost.log(
-                                        "warn",
-                                        `CMap not found: ${message.data}`,
-                                        "PDFProcessWorker",
+
+                                case "SaveRenderedAnnotation": {
+                                    if (
+                                        !isSaveRenderedAnnotationRequest(
+                                            message.data,
+                                        )
+                                    ) {
+                                        throw new Error(
+                                            "Invalid rendered annotation payload",
+                                        );
+                                    }
+                                    const { libraryID, annotationKey, buf } =
+                                        message.data;
+
+                                    await db.items
+                                        .where({
+                                            libraryID,
+                                            key: annotationKey,
+                                        })
+                                        .modify((item) => {
+                                            item.annotationImageVersion =
+                                                Math.max(item.version, 1);
+                                        });
+                                    const folder =
+                                        this.settings.annotationImageFolder.replace(
+                                            /\/$/,
+                                            "",
+                                        );
+                                    const path = `${folder}/${annotationKey}.png`;
+
+                                    await this.parentHost.writeBinaryFile(
+                                        path,
+                                        Comlink.transfer(buf, [buf]),
                                     );
-                                    throw new Error(
-                                        `CMap not found: ${message.data}`,
-                                    );
+
+                                    responseData = true;
+                                    break;
                                 }
+
+                                default:
+                                    throw new Error(
+                                        `Unsupported Document Worker request: ${message.action ?? "unknown"}`,
+                                    );
                             }
                         } catch (e) {
                             this.parentHost.log(
                                 "error",
-                                "Failed to fetch CMap data:",
-                                "PDFProcessWorker",
+                                `Failed to handle Document Worker request (${message.action ?? "unknown"})`,
+                                "DocumentWorkerService",
                                 e,
                             );
                             responseError = { message: getErrorMessage(e) };
                         }
 
-                        try {
-                            if (message.action === "FetchStandardFontData") {
-                                if (typeof message.data !== "string") {
-                                    throw new Error(
-                                        "Invalid standard font request payload",
-                                    );
-                                }
-                                const fontUrl =
-                                    this._blobUrls[
-                                        `pdf/web/standard_fonts/${message.data}`
-                                    ];
-                                if (fontUrl) {
-                                    const response =
-                                        await getOriginalFetch()(fontUrl);
-                                    const arrayBuffer =
-                                        await response.arrayBuffer();
-                                    responseData = new Uint8Array(arrayBuffer);
-                                } else {
-                                    this.parentHost.log(
-                                        "warn",
-                                        `Standard font not found: ${message.data}`,
-                                        "PDFProcessWorker",
-                                    );
-                                    throw new Error(
-                                        `Standard font not found: ${message.data}`,
-                                    );
-                                }
-                            }
-                        } catch (e) {
-                            this.parentHost.log(
-                                "error",
-                                "Failed to fetch standard font data:",
-                                "PDFProcessWorker",
-                                e,
-                            );
-                            responseError = { message: getErrorMessage(e) };
-                        }
-
-                        try {
-                            if (message.action === "SaveRenderedAnnotation") {
-                                if (
-                                    !isSaveRenderedAnnotationRequest(
-                                        message.data,
-                                    )
-                                ) {
-                                    throw new Error(
-                                        "Invalid rendered annotation payload",
-                                    );
-                                }
-                                const { libraryID, annotationKey, buf } =
-                                    message.data;
-
-                                await db.items
-                                    .where({ libraryID, key: annotationKey })
-                                    .modify((item) => {
-                                        item.annotationImageVersion = item.version;
-                                    });
-                                const folder =
-                                    this.settings.annotationImageFolder.replace(
-                                        /\/$/,
-                                        "",
-                                    );
-                                const path = `${folder}/${annotationKey}.png`;
-
-                                await this.parentHost.writeBinaryFile(
-                                    path,
-                                    Comlink.transfer(buf, [buf]),
-                                );
-
-                                responseData = true;
-                            }
-                        } catch (e) {
-                            this.parentHost.log(
-                                "error",
-                                "Failed to render annotations:",
-                                "PDFProcessWorker",
-                                e,
-                            );
-                            responseError = { message: getErrorMessage(e) };
-                        }
-
-                        worker.postMessage({
-                            responseID: message.id,
-                            data: responseData,
-                            error: responseError,
-                        });
+                        const transfer: Transferable[] =
+                            responseData instanceof Uint8Array &&
+                            responseData.buffer instanceof ArrayBuffer
+                                ? [responseData.buffer]
+                                : [];
+                        worker.postMessage(
+                            {
+                                responseID: message.id,
+                                data: responseData,
+                                error: responseError,
+                            },
+                            transfer,
+                        );
                     }
                 })();
             },
@@ -434,8 +497,8 @@ export class PDFProcessWorker {
         worker.addEventListener("error", (event) => {
             this.parentHost.log(
                 "error",
-                `PDF Web Worker error (${event.filename}:${event.lineno}): ${event.message}`,
-                "PDFProcessWorker",
+                `Document Worker error (${event.filename}:${event.lineno}): ${event.message}`,
+                "DocumentWorkerService",
                 event,
             );
         });
@@ -485,7 +548,7 @@ export class PDFProcessWorker {
             let response: BufferResponse;
             try {
                 response = await this._query<BufferResponse>(
-                    "export",
+                    "pdf.writeAnnotations",
                     { buf, annotations },
                     [buf],
                 );
@@ -493,7 +556,7 @@ export class PDFProcessWorker {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,
-                    "PDFProcessWorker",
+                    "DocumentWorkerService",
                     "PDF Export failed",
                 );
             }
@@ -506,45 +569,109 @@ export class PDFProcessWorker {
      */
     async import(
         buf: ArrayBuffer,
-        isPriority?: boolean,
-    ): Promise<AnnotationJSON[]> {
+        options: PDFImportOptions = {},
+    ): Promise<PDFImportResult> {
         return this._enqueue(async () => {
-            let imported: ImportedAnnotation[];
+            let response: ImportResponse;
             try {
-                ({ imported } = await this._query<ImportResponse>(
-                    "import",
-                    { buf, existingAnnotations: [] },
+                response = await this._query<ImportResponse>(
+                    "pdf.importAnnotations",
+                    {
+                        buf,
+                        existingAnnotations: options.existingAnnotations ?? [],
+                        password: options.password,
+                        transfer: options.transfer ?? false,
+                    },
                     [buf],
-                ));
+                );
             } catch (e) {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,
-                    "PDFProcessWorker",
+                    "DocumentWorkerService",
                     "PDF Import failed",
                 );
             }
 
-            // The worker already emits the reader's annotation JSON, so this
-            // only supplies the fields a PDF has no source for.
+            // Document Worker emits raw PDF annotations. Normalize the fields
+            // whose representation differs from the Reader bridge contract.
             const annotations: AnnotationJSON[] = [];
-            for (const annotation of imported) {
+            const generatedKeys = new Set(options.reservedIDs ?? []);
+            for (const annotation of response.imported) {
                 const dateModified = annotation.dateModified ?? "";
                 // A PDF annotation records only a modification stamp.
                 const dateAdded = annotation.dateAdded ?? dateModified;
+                let id = generateAnnotationKey();
+                while (generatedKeys.has(id)) {
+                    id = generateAnnotationKey();
+                }
+                generatedKeys.add(id);
                 annotations.push({
                     ...annotation,
-                    id: Math.round(Math.random() * 4294967295)
-                        .toString()
-                        .slice(0, 8),
+                    id,
                     isExternal: true,
-                    tags: annotation.tags ?? [],
+                    tags: (annotation.tags ?? []).map((name) => ({ name })),
                     dateModified,
                     dateAdded,
                 });
             }
-            return annotations;
-        }, isPriority);
+            return {
+                imported: annotations,
+                deleted: response.deleted ?? [],
+                ...(response.buf ? { buf: response.buf } : {}),
+            };
+        }, options.isPriority);
+    }
+
+    /**
+     * Build Zotero's structured-document-text payload for a PDF or EPUB.
+     * The optional model/ONNX resources are resolved through FetchData, so a
+     * caller can install an Enhancement Pack without changing this protocol.
+     */
+    async getStructuredDocumentText(
+        buf: ArrayBuffer,
+        options: StructuredDocumentTextOptions,
+    ): Promise<ArrayBuffer> {
+        if (!options.contentType.trim()) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.CONFIG_MISSING,
+                "DocumentWorkerService",
+                "Structured document content type is required",
+            );
+        }
+        if (!/^[0-9a-f]{32}$/.test(options.sourceHash)) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.PARSE_ERROR,
+                "DocumentWorkerService",
+                "Structured document source hash must be a lowercase MD5",
+            );
+        }
+
+        return this._enqueue(async () => {
+            try {
+                const response = await this._query<BufferResponse>(
+                    "getStructuredDocumentText",
+                    {
+                        buf,
+                        contentType: options.contentType,
+                        password: options.password,
+                        sourceHash: options.sourceHash,
+                        reportProgress:
+                            typeof options.onProgress === "function",
+                    },
+                    [buf],
+                    { onProgress: options.onProgress },
+                );
+                return response.buf;
+            } catch (e) {
+                throw ZotFlowError.wrap(
+                    e,
+                    ZotFlowErrorCode.PARSE_ERROR,
+                    "DocumentWorkerService",
+                    "Structured document text generation failed",
+                );
+            }
+        }, options.isPriority);
     }
 
     /**
@@ -561,7 +688,7 @@ export class PDFProcessWorker {
             let modifiedBuf: ArrayBuffer;
             try {
                 ({ buf: modifiedBuf } = await this._query<BufferResponse>(
-                    "rotatePages",
+                    "pdf.rotatePages",
                     {
                         buf,
                         pageIndexes,
@@ -574,7 +701,7 @@ export class PDFProcessWorker {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,
-                    "PDFProcessWorker",
+                    "DocumentWorkerService",
                     "Rotate Pages failed",
                 );
             }
@@ -595,7 +722,7 @@ export class PDFProcessWorker {
             let result: PDFRecognizerData;
             try {
                 result = await this._query<PDFRecognizerData>(
-                    "getRecognizerData",
+                    "pdf.getRecognizerData",
                     { buf, password },
                     [buf],
                 );
@@ -603,7 +730,7 @@ export class PDFProcessWorker {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,
-                    "PDFProcessWorker",
+                    "DocumentWorkerService",
                     "Get Recognizer Data failed",
                 );
             }
@@ -624,7 +751,7 @@ export class PDFProcessWorker {
             let result: number;
             try {
                 result = await this._query<number>(
-                    "renderAnnotations",
+                    "pdf.renderAnnotations",
                     { libraryID, buf, annotations, password },
                     [buf],
                 );
@@ -632,7 +759,7 @@ export class PDFProcessWorker {
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,
-                    "PDFProcessWorker",
+                    "DocumentWorkerService",
                     "Render Annotations failed",
                 );
             }

@@ -70,7 +70,7 @@ processing.
 │       │     ├── library-template.ts (LiquidJS library templates) │
 │       │     ├── local-template.ts (LiquidJS local templates) │
 │       │     ├── tree-view.ts    (tree topology builder)      │
-│       │     ├── pdf-processor.ts (nested PDF.js Worker)      │
+│       │     ├── document-worker.ts (Zotero Document Worker)  │
 │       │     ├── annotation.ts   (reader annotation CRUD)     │
 │       │     ├── key.ts          (API key/library metadata)   │
 │       │     └── db-helper.ts        (general-purpose DB queries) │
@@ -97,7 +97,7 @@ processing.
 | Worker → Main        | `Comlink.proxy(parentHost)` callbacks | `bridge/parent-host.ts`                 |
 | Main → Reader iframe | `penpal` (connectToChild)             | `ui/reader/bridge.ts`                   |
 | Reader iframe → Main | `penpal` (connectToParent)            | `reader/reader/src/obsidian-adapter.js` |
-| Worker → PDF Worker  | raw `postMessage`/`onmessage`         | `worker/services/pdf-processor.ts`      |
+| Worker → Document Worker | raw `postMessage`/`onmessage`     | `worker/services/document-worker.ts`   |
 
 ### 2.2 Data flow (Sync example)
 
@@ -135,9 +135,7 @@ The sidecar format:
 ```json
 {
     "version": 1,
-    "annotations": [
-        /* AnnotationJSON[] */
-    ]
+    "annotations": [/* AnnotationJSON[] */]
 }
 ```
 
@@ -340,7 +338,7 @@ src/
 │   │   ├── library-template.ts     # LibraryTemplateService (LiquidJS for library items)
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)
-│   │   ├── pdf-processor.ts        # PDFProcessWorker (nested Worker for PDF.js)
+│   │   ├── document-worker.ts      # DocumentWorkerService (nested Zotero worker)
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)
 │   │   ├── csl-render.ts           # CslRenderWorkerService (CSL rendering; wraps worker/csl core)
@@ -414,14 +412,14 @@ decisions.
 
 Vitest, configured in `vitest.config.ts`. Everything lives under `tests/`:
 
-| Path                | Contents                                                        |
-| ------------------- | --------------------------------------------------------------- |
-| `tests/unit/`       | Pure functions and the convert pipeline                          |
-| `tests/integration/`| Worker services driven through fakes                             |
-| `tests/fakes/`      | `resetDb`, `createFakeParentHost`, `createFakeZoteroServer`      |
-| `tests/fixtures/`   | Real CSL styles/locales, cached in `tests/.csl-fixtures/`        |
-| `tests/stubs/`      | Inert `obsidian` module                                          |
-| `tests/setup.ts`    | fake-indexeddb, `navigator.onLine`, one IndexedDB spec workaround |
+| Path                 | Contents                                                          |
+| -------------------- | ----------------------------------------------------------------- |
+| `tests/unit/`        | Pure functions and the convert pipeline                           |
+| `tests/integration/` | Worker services driven through fakes                              |
+| `tests/fakes/`       | `resetDb`, `createFakeParentHost`, `createFakeZoteroServer`       |
+| `tests/fixtures/`    | Real CSL styles/locales, cached in `tests/.csl-fixtures/`         |
+| `tests/stubs/`       | Inert `obsidian` module                                           |
+| `tests/setup.ts`     | fake-indexeddb, `navigator.onLine`, one IndexedDB spec workaround |
 
 Two things worth knowing before writing a service test:
 
@@ -482,7 +480,6 @@ The `reader/reader` directory is **excluded** from TypeScript compilation. Do no
 - Use `for...of` for async iteration, **never** `Array.forEach` with async callbacks.
 - Use `ReturnType<typeof setTimeout>` for timer IDs, never `NodeJS.Timeout` (this runs in a browser/Worker, not Node).
 - Prefer specific types over `any`. If `any` is unavoidable, add a `// TODO: type this` comment.
-- Limit files to ~300 lines. Extract when growing beyond.
 
 ### 6.2 Import style
 
@@ -658,15 +655,15 @@ type parameters mirror them. **There is no `localID` column** — `items`,
 is why `db.items.get([libraryID, key])` and
 `db.items.update([libraryID, key], …)` are the correct way to address a row.
 
-| Table         | Primary key           | Secondary indexes                                                                                                                                             |
-| ------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keys`        | `&key`                | —                                                                                                                                                             |
-| `groups`      | `&id`                 | —                                                                                                                                                             |
-| `libraries`   | `&id`                 | —                                                                                                                                                             |
-| `items`       | `&[libraryID+key]`    | `[libraryID+syncStatus]`, `[libraryID+itemType+trashed]`, `[libraryID+parentItem+itemType+trashed]`, `*collections`, `*searchCreators`, `*searchTags`, `dateModified`, `lastAccessedAt` |
-| `collections` | `&[libraryID+key]`    | `[libraryID+trashed]`, `[libraryID+syncStatus]`, `[libraryID+parentCollection]`                                                                                |
-| `files`       | `&[libraryID+key]`    | `md5`, `lastAccessedAt`                                                                                                                                       |
-| `cslCache`    | `&key`                | — (string KV cache for CSL styles/locales/index)                                                                                                               |
+| Table         | Primary key        | Secondary indexes                                                                                                                                                                       |
+| ------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keys`        | `&key`             | —                                                                                                                                                                                       |
+| `groups`      | `&id`              | —                                                                                                                                                                                       |
+| `libraries`   | `&id`              | —                                                                                                                                                                                       |
+| `items`       | `&[libraryID+key]` | `[libraryID+syncStatus]`, `[libraryID+itemType+trashed]`, `[libraryID+parentItem+itemType+trashed]`, `*collections`, `*searchCreators`, `*searchTags`, `dateModified`, `lastAccessedAt` |
+| `collections` | `&[libraryID+key]` | `[libraryID+trashed]`, `[libraryID+syncStatus]`, `[libraryID+parentCollection]`                                                                                                         |
+| `files`       | `&[libraryID+key]` | `md5`, `lastAccessedAt`                                                                                                                                                                 |
+| `cslCache`    | `&key`             | — (string KV cache for CSL styles/locales/index)                                                                                                                                        |
 
 Version history: v1 base schema · v2 adds `[libraryID+parentCollection]` to
 `collections` · v3 adds `lastAccessedAt` to `items` · v4 clears `files` (cached

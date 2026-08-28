@@ -7,7 +7,7 @@ import { WebDavService } from "./services/webdav";
 import { TreeViewService } from "./services/tree-view";
 import { LibraryTemplateService } from "./services/library-template";
 import { LibraryNoteService } from "./services/library-note";
-import { PDFProcessWorker } from "./services/pdf-processor";
+import { DocumentWorkerService } from "./services/document-worker";
 import { LocalNoteService } from "./services/local-note";
 import { LocalTemplateService } from "./services/local-template";
 import { ConflictService } from "./services/conflict";
@@ -72,7 +72,7 @@ export interface WorkerAPI {
     library: Exposed<LibraryService>;
     dbHelper: Exposed<DbHelperServiceType>;
     tag: Exposed<TagServiceType>;
-    pdfProcessor: Exposed<PDFProcessWorker>;
+    documentWorker: Exposed<DocumentWorkerService>;
     libraryTemplate: Exposed<LibraryTemplateService>;
     localTemplate: Exposed<LocalTemplateService>;
     notePath: Exposed<NotePathService>;
@@ -120,7 +120,7 @@ let _search: SearchService | undefined;
 let _tag: TagService | undefined;
 let _notePath: NotePathService | undefined;
 let _convert: ConvertService | undefined;
-let _pdfProcessor: PDFProcessWorker | undefined;
+let _documentWorker: DocumentWorkerService | undefined;
 let _cslRender: CslRenderWorkerService | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -135,7 +135,7 @@ function assertInitialized() {
         !_template ||
         !_libraryNote ||
         !_itemNote ||
-        !_pdfProcessor ||
+        !_documentWorker ||
         !_localNote ||
         !_localTemplate ||
         !_conflict ||
@@ -238,7 +238,7 @@ const exposedApi: WorkerAPI = {
                 _search,
             );
 
-            _pdfProcessor = new PDFProcessWorker(
+            _documentWorker = new DocumentWorkerService(
                 settings,
                 parentHost,
                 blobUrls,
@@ -262,7 +262,7 @@ const exposedApi: WorkerAPI = {
                 _template,
                 parentHost,
                 _attachment,
-                _pdfProcessor,
+                _documentWorker,
                 _notePath,
             );
             _itemNote = new ItemNoteService(
@@ -293,8 +293,8 @@ const exposedApi: WorkerAPI = {
 
             _currentSettings = settings;
 
-            // Initialize PDF Worker
-            _pdfProcessor._init();
+            // Initialize the nested Document Worker.
+            _documentWorker._init();
 
             parentHost.log("info", "Services initialized.", "Worker");
         } catch (e) {
@@ -449,14 +449,14 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_tag);
     },
 
-    get pdfProcessor() {
-        if (!_pdfProcessor)
+    get documentWorker() {
+        if (!_documentWorker)
             throw new ZotFlowError(
                 ZotFlowErrorCode.UNKNOWN,
                 "Worker",
                 "Worker not initialized",
             );
-        return Comlink.proxy(_pdfProcessor);
+        return Comlink.proxy(_documentWorker);
     },
 
     get tasks() {
@@ -547,7 +547,7 @@ const exposedApi: WorkerAPI = {
         assertInitialized();
         return _taskManager!.createBatchExtractImagesTask(
             _attachment!,
-            _pdfProcessor!,
+            _documentWorker!,
             _currentSettings!,
             input,
         );
@@ -572,7 +572,8 @@ const exposedApi: WorkerAPI = {
         assertInitialized();
         return _taskManager!.createBatchExtractExternalAnnotationsTask(
             _attachment!,
-            _pdfProcessor!,
+            _documentWorker!,
+            _libraryNote!,
             { items },
         );
     },
@@ -600,7 +601,7 @@ const exposedApi: WorkerAPI = {
         _notePath!.updateSettings(settings);
         _dbHelper!.updateSettings(settings);
         _tag!.updateSettings(settings);
-        _pdfProcessor!.updateSettings(settings);
+        _documentWorker!.updateSettings(settings);
         _cslRender!.updateSettings(settings);
         _currentSettings = settings;
     },

@@ -7,7 +7,7 @@ import type { AttachmentData } from "types/zotero-item";
 import { getAnnotationJson } from "db/annotation";
 import type { IParentProxy } from "bridge/types";
 import type { AttachmentService } from "./attachment";
-import type { PDFProcessWorker } from "./pdf-processor";
+import type { DocumentWorkerService } from "./document-worker";
 import type { NotePathService } from "./note-path";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import {
@@ -47,7 +47,7 @@ export class LibraryNoteService {
         private templateService: LibraryTemplateService,
         private parentHost: IParentProxy,
         private attachmentService: AttachmentService,
-        private pdfProcessor: PDFProcessWorker,
+        private documentWorker: DocumentWorkerService,
         private notePathService: NotePathService,
     ) {}
 
@@ -606,7 +606,10 @@ export class LibraryNoteService {
 
             const spliced = reinsertPersistRegions(content, extracted);
 
-            await this.parentHost.writeTextFile(fileCheck.path, spliced.content);
+            await this.parentHost.writeTextFile(
+                fileCheck.path,
+                spliced.content,
+            );
 
             if (spliced.newOrphans.length > 0) {
                 this.reportNewOrphans(
@@ -691,7 +694,7 @@ export class LibraryNoteService {
 
                     if (fileBlob) {
                         const buffer = await fileBlob.arrayBuffer();
-                        await this.pdfProcessor.renderAnnotations(
+                        await this.documentWorker.renderAnnotations(
                             item.libraryID,
                             buffer,
                             annotations,

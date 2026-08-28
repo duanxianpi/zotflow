@@ -8,7 +8,7 @@ import type {
 } from "worker/services/library-note";
 import type { AttachmentService } from "worker/services/attachment";
 import type { ZoteroAPIService } from "worker/services/zotero";
-import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { ZotFlowSettings } from "settings/types";
 import type { BatchNoteInput } from "./impl/batch-note-task";
 import type { BatchExtractImagesInput } from "./impl/batch-extract-images-task";
@@ -178,7 +178,7 @@ export class TaskManager {
 
     public async createBatchExtractImagesTask(
         attachmentService: AttachmentService,
-        pdfProcessor: PDFProcessWorker,
+        documentWorker: DocumentWorkerService,
         settings: ZotFlowSettings,
         input: BatchExtractImagesInput,
     ) {
@@ -187,7 +187,7 @@ export class TaskManager {
         const task = new BatchExtractImagesTask(
             this.parentHost,
             attachmentService,
-            pdfProcessor,
+            documentWorker,
             settings,
             input,
         );
@@ -298,7 +298,8 @@ export class TaskManager {
      */
     public async createBatchExtractExternalAnnotationsTask(
         attachmentService: AttachmentService,
-        pdfProcessor: PDFProcessWorker,
+        documentWorker: DocumentWorkerService,
+        noteService: LibraryNoteService,
         input: BatchExtractExternalAnnotationsInput,
     ): Promise<AnnotationJSON[]> {
         // Dedup: if all requested items already have in-flight extractions,
@@ -317,7 +318,8 @@ export class TaskManager {
         const task = new BatchExtractExternalAnnotationsTask(
             this.parentHost,
             attachmentService,
-            pdfProcessor,
+            documentWorker,
+            noteService,
             input,
         );
 

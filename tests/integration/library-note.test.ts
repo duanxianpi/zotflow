@@ -22,7 +22,7 @@ import { createFakeParentHost } from "../fakes/parent-host";
 import type { FakeParentHost } from "../fakes/parent-host";
 import type { LibraryTemplateService } from "worker/services/library-template";
 import type { AttachmentService } from "worker/services/attachment";
-import type { PDFProcessWorker } from "worker/services/pdf-processor";
+import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 
@@ -72,7 +72,8 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
         ...over,
     };
 
-    rendered = "---\nzotero-key: PARENT01\nitem-version: 7\n---\nrendered body\n";
+    rendered =
+        "---\nzotero-key: PARENT01\nitem-version: 7\n---\nrendered body\n";
     renderCalls = [];
     renderedImages = [];
 
@@ -94,12 +95,16 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
         getFileBlob: () => Promise.resolve(new Blob(["pdf"])),
     } as unknown as AttachmentService;
 
-    const pdfProcessor = {
-        renderAnnotations: (libraryID: number, _buf: ArrayBuffer, annos: unknown[]) => {
+    const documentWorker = {
+        renderAnnotations: (
+            libraryID: number,
+            _buf: ArrayBuffer,
+            annos: unknown[],
+        ) => {
             renderedImages.push({ libraryID, count: annos.length });
             return Promise.resolve();
         },
-    } as unknown as PDFProcessWorker;
+    } as unknown as DocumentWorkerService;
 
     const library = new LibraryService(settings, host);
     const dbHelper = new DbHelperService(
@@ -114,7 +119,7 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
         templateService,
         host,
         attachmentService,
-        pdfProcessor,
+        documentWorker,
         new NotePathService(settings, dbHelper),
     );
 }
@@ -358,7 +363,11 @@ describe("persist regions", () => {
         const out = host.vault.get("Source/@PARENT01.md")!;
         expect(out).toContain("salvage me");
         expect(
-            host.logsAt("warn").some((l) => /orphaned in Source\/@PARENT01\.md/.test(l.message)),
+            host
+                .logsAt("warn")
+                .some((l) =>
+                    /orphaned in Source\/@PARENT01\.md/.test(l.message),
+                ),
         ).toBe(true);
     });
 
@@ -482,9 +491,9 @@ describe("ensureNotePath", () => {
     });
 
     test("an unknown item is refused", async () => {
-        await expect(
-            service.ensureNotePath(LIB, "MISSING1"),
-        ).rejects.toThrow(/Item not found/);
+        await expect(service.ensureNotePath(LIB, "MISSING1")).rejects.toThrow(
+            /Item not found/,
+        );
     });
 });
 
@@ -737,9 +746,9 @@ describe("annotation images", () => {
         host.vault.set("ZotFlow/images/ANNOTAT1.png", "bytes");
         host.deleteFile = () => Promise.reject(new Error("locked"));
 
-        await expect(
-            service.deleteAnnotationImage("ANNOTAT1"),
-        ).rejects.toThrow(/Failed to delete image/);
+        await expect(service.deleteAnnotationImage("ANNOTAT1")).rejects.toThrow(
+            /Failed to delete image/,
+        );
     });
 });
 
@@ -784,8 +793,17 @@ describe("extracting annotation images", () => {
         } as any);
     }
 
-    test("an unrendered image annotation is sent to the PDF processor", async () => {
+    test("an unrendered image annotation is sent to the Document Worker", async () => {
         await seedPdfWithImageAnnotation();
+        const item = (await db.items.get([LIB, "PARENT01"]))!;
+
+        await service.extractAnnotationImages(item, false);
+
+        expect(renderedImages).toEqual([{ libraryID: LIB, count: 1 }]);
+    });
+
+    test("an unrendered ink annotation is sent to the Document Worker", async () => {
+        await seedPdfWithImageAnnotation("ink");
         const item = (await db.items.get([LIB, "PARENT01"]))!;
 
         await service.extractAnnotationImages(item, false);
@@ -868,12 +886,14 @@ describe("extracting annotation images", () => {
             new Error("pdf.js blew up"),
         );
 
-        await expect(
-            service.ensureNote(LIB, "PARENT01", {}),
-        ).resolves.toBe("Source/@PARENT01.md");
+        await expect(service.ensureNote(LIB, "PARENT01", {})).resolves.toBe(
+            "Source/@PARENT01.md",
+        );
         expect(host.vault.has("Source/@PARENT01.md")).toBe(true);
         expect(
-            host.logsAt("warn").some((l) => /Initial image extraction failed/.test(l.message)),
+            host
+                .logsAt("warn")
+                .some((l) => /Initial image extraction failed/.test(l.message)),
         ).toBe(true);
     });
 });

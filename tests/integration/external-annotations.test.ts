@@ -9,48 +9,66 @@
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import SparkMD5 from "spark-md5";
-import { PDFProcessWorker } from "worker/services/pdf-processor";
+import { DocumentWorkerService } from "worker/services/document-worker";
 import { TaskManager } from "worker/tasks/manager";
 import { resetDb, seedItem, seedLibrary } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
 
 import type { FakeParentHost } from "../fakes/parent-host";
 import type { AttachmentService } from "worker/services/attachment";
+import type { LibraryNoteService } from "worker/services/library-note";
 import type { AnnotationJSON } from "types/zotero-reader";
 
 const LIB = 1;
 
 let host: FakeParentHost;
 let manager: TaskManager;
+let noteService: LibraryNoteService;
+let triggerUpdate: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
     await resetDb();
     await seedLibrary({ id: LIB });
     host = createFakeParentHost();
     manager = new TaskManager(host);
+    triggerUpdate = vi.fn(() => Promise.resolve());
+    noteService = { triggerUpdate } as unknown as LibraryNoteService;
 });
 
 afterEach(() => vi.restoreAllMocks());
 
 /**
- * A `PDFProcessWorker` with its transport replaced. The real constructor spins
+ * A `DocumentWorkerService` with its transport replaced. The real constructor spins
  * up a nested Worker from a blob URL, which a test has no way to provide, so
  * the queue and the query are stubbed and the `import()` logic runs on top.
  */
-function processorReplying(imported: unknown[]): PDFProcessWorker {
+function processorReplying(
+    imported: unknown[],
+    deleted: string[] = [],
+): DocumentWorkerService {
+    return processorQuerying(() => Promise.resolve({ imported, deleted }));
+}
+
+type QueryStub = (
+    action: string,
+    data: unknown,
+    transfer?: Transferable[],
+) => Promise<unknown>;
+
+function processorQuerying(query: QueryStub): DocumentWorkerService {
     const processor = Object.create(
-        PDFProcessWorker.prototype,
-    ) as PDFProcessWorker;
+        DocumentWorkerService.prototype,
+    ) as DocumentWorkerService;
     const internals = processor as unknown as {
         _enqueue: <T>(fn: () => Promise<T>) => Promise<T>;
-        _query: () => Promise<unknown>;
+        _query: QueryStub;
     };
     internals._enqueue = (fn) => fn();
-    internals._query = () => Promise.resolve({ imported });
+    internals._query = query;
     return processor;
 }
 
-/** What the vendored pdf-worker emits for one highlight. */
+/** What Zotero 10's Document Worker emits for one highlight. */
 const importedHighlight = (overrides: Record<string, unknown> = {}) => ({
     type: "highlight",
     text: "a quoted sentence",
@@ -59,7 +77,7 @@ const importedHighlight = (overrides: Record<string, unknown> = {}) => ({
     pageLabel: "12",
     sortIndex: "00000|000000|00000",
     position: { pageIndex: 11, rects: [[1, 2, 3, 4]] },
-    tags: [{ name: "method" }],
+    tags: ["method"],
     authorName: "A. Author",
     dateModified: "2026-01-02T03:04:05Z",
     ...overrides,
@@ -95,14 +113,58 @@ async function seedPdfAttachment(md5: string | null = "md5-of-the-pdf") {
     } as never);
 }
 
+async function seedStoredAnnotation(
+    key: string,
+    isExternal: boolean,
+    comment = "stored comment",
+) {
+    await seedItem({
+        libraryID: LIB,
+        key,
+        itemType: "annotation",
+        parentItem: "ATTACH01",
+        syncStatus: isExternal ? "ignore" : "synced",
+        raw: {
+            key,
+            version: 0,
+            library: { type: "user", id: LIB, name: "Library" },
+            data: {
+                key,
+                version: 0,
+                itemType: "annotation",
+                parentItem: "ATTACH01",
+                annotationType: "highlight",
+                annotationText: "stored text",
+                annotationComment: comment,
+                annotationColor: "#ffd400",
+                annotationPageLabel: "1",
+                annotationSortIndex: "00000|000000|00000",
+                annotationPosition: JSON.stringify({
+                    pageIndex: 0,
+                    rects: [[1, 2, 3, 4]],
+                }),
+                annotationIsExternal: isExternal,
+                dateAdded: "2026-01-01T00:00:00Z",
+                dateModified: "2026-01-01T00:00:00Z",
+                tags: [],
+                relations: {},
+                deleted: false,
+            },
+        },
+    } as never);
+}
+
 const attachmentServiceYielding = (blob: Blob) =>
-    ({ getFileBlob: () => Promise.resolve(blob) }) as unknown as AttachmentService;
+    ({
+        getFileBlob: () => Promise.resolve(blob),
+    }) as unknown as AttachmentService;
 
 async function extract(imported: unknown[]): Promise<AnnotationJSON[]> {
     await seedPdfAttachment();
     return manager.createBatchExtractExternalAnnotationsTask(
         attachmentServiceYielding(new Blob(["%PDF-1.7"])),
         processorReplying(imported),
+        noteService,
         { items: [{ libraryID: LIB, itemKey: "ATTACH01" }] },
     );
 }
@@ -119,27 +181,76 @@ async function extractAgainst(
     const spy = vi.spyOn(processor, "import");
     const attachmentService = attachmentServiceYielding(new Blob([bytes]));
     const readFile = vi.spyOn(attachmentService, "getFileBlob");
-    const annotations =
-        await manager.createBatchExtractExternalAnnotationsTask(
-            attachmentService,
-            processor,
-            {
-                items: [
-                    { libraryID: LIB, itemKey: "ATTACH01", precomputedMD5 },
-                ],
-            },
-        );
+    const annotations = await manager.createBatchExtractExternalAnnotationsTask(
+        attachmentService,
+        processor,
+        noteService,
+        {
+            items: [{ libraryID: LIB, itemKey: "ATTACH01", precomputedMD5 }],
+        },
+    );
     return { annotations, spy, readFile };
 }
 
-describe("PDFProcessWorker.import", () => {
-    test("hands back the worker's own annotation JSON, not a Zotero item", async () => {
-        // The reader reads `type`/`text`/`tags[].name`. A round trip through
-        // the Zotero item shape renames all three, and nothing downstream
-        // renames them back.
-        const [annotation] = await processorReplying([
+describe("DocumentWorkerService.import", () => {
+    test("uses the Zotero 10 Document Worker import action", async () => {
+        const query = vi
+            .fn<QueryStub>()
+            .mockResolvedValue({ imported: [], deleted: [] });
+        const processor = processorQuerying(query);
+        const buf = new ArrayBuffer(8);
+
+        await processor.import(buf);
+
+        expect(query).toHaveBeenCalledWith(
+            "pdf.importAnnotations",
+            {
+                buf,
+                existingAnnotations: [],
+                password: undefined,
+                transfer: false,
+            },
+            [buf],
+        );
+    });
+
+    test("passes existing annotations through and returns the worker delta", async () => {
+        const query = vi.fn<QueryStub>().mockResolvedValue({
+            imported: [],
+            deleted: ["EXTOLD01"],
+        });
+        const processor = processorQuerying(query);
+        const buf = new ArrayBuffer(8);
+        const existingAnnotations = [
+            {
+                id: "EXTOLD01",
+                type: "highlight",
+                position: { pageIndex: 0, rects: [[1, 2, 3, 4]] },
+                comment: "stored comment",
+            },
+        ];
+
+        const result = await processor.import(buf, { existingAnnotations });
+
+        expect(result.deleted).toEqual(["EXTOLD01"]);
+        expect(query).toHaveBeenCalledWith(
+            "pdf.importAnnotations",
+            {
+                buf,
+                existingAnnotations,
+                password: undefined,
+                transfer: false,
+            },
+            [buf],
+        );
+    });
+
+    test("normalizes the worker annotation for the Reader bridge", async () => {
+        // Document Worker emits tag names; the Reader consumes tag objects.
+        const { imported } = await processorReplying([
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation).toMatchObject({
             type: "highlight",
@@ -150,19 +261,21 @@ describe("PDFProcessWorker.import", () => {
     });
 
     test("marks everything it imports as external and gives it an id", async () => {
-        const [annotation] = await processorReplying([
+        const { imported } = await processorReplying([
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation!.isExternal).toBe(true);
-        expect(annotation!.id).toMatch(/^\d+$/);
+        expect(annotation!.id).toMatch(/^[23456789A-NP-Z]{8}$/);
     });
 
     test("keeps the position as an object the reader can use", async () => {
         // Stringifying it here would force the caller to parse it back.
-        const [annotation] = await processorReplying([
+        const { imported } = await processorReplying([
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation!.position).toEqual({
             pageIndex: 11,
@@ -171,9 +284,10 @@ describe("PDFProcessWorker.import", () => {
     });
 
     test("carries the modification stamp through", async () => {
-        const [annotation] = await processorReplying([
+        const { imported } = await processorReplying([
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation!.dateModified).toBe("2026-01-02T03:04:05Z");
     });
@@ -181,29 +295,51 @@ describe("PDFProcessWorker.import", () => {
     test("dates an annotation the PDF never dated", async () => {
         // A PDF annotation records only `/M`, so `dateAdded` has no source.
         // The reader requires both, so the modification stamp stands in.
-        const [annotation] = await processorReplying([
+        const { imported } = await processorReplying([
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation!.dateAdded).toBe("2026-01-02T03:04:05Z");
     });
 
     test("gives an untagged annotation an empty tag list, not undefined", async () => {
-        const [annotation] = await processorReplying([
+        const { imported } = await processorReplying([
             importedHighlight({ tags: undefined }),
         ]).import(new ArrayBuffer(8));
+        const [annotation] = imported;
 
         expect(annotation!.tags).toEqual([]);
     });
 
     test("gives each annotation a distinct id", async () => {
-        const annotations = await processorReplying([
+        const { imported: annotations } = await processorReplying([
             importedHighlight(),
             importedHighlight(),
             importedHighlight(),
         ]).import(new ArrayBuffer(8));
 
         expect(new Set(annotations.map((a) => a.id)).size).toBe(3);
+    });
+});
+
+describe("DocumentWorkerService.renderAnnotations", () => {
+    test("sends image and ink annotations through the Zotero 10 action", async () => {
+        const query = vi.fn<QueryStub>().mockResolvedValue(2);
+        const processor = processorQuerying(query);
+        const buf = new ArrayBuffer(8);
+        const annotations = [
+            importedHighlight({ type: "image" }),
+            importedHighlight({ type: "ink" }),
+        ] as unknown as AnnotationJSON[];
+
+        await processor.renderAnnotations(LIB, buf, annotations);
+
+        expect(query).toHaveBeenCalledWith(
+            "pdf.renderAnnotations",
+            { libraryID: LIB, buf, annotations, password: undefined },
+            [buf],
+        );
     });
 });
 
@@ -238,6 +374,102 @@ describe("BatchExtractExternalAnnotationsTask", () => {
 
         const row = await db.items.get([LIB, "ATTACH01"]);
         expect(row!.externalAnnotationExtractionFileMD5).toBe("md5-of-the-pdf");
+    });
+
+    test("persists imports as ignored external annotation rows", async () => {
+        const { db } = await import("../fakes/db");
+
+        await extract([importedHighlight()]);
+
+        const rows = await db.items
+            .where({
+                libraryID: LIB,
+                parentItem: "ATTACH01",
+                itemType: "annotation",
+            })
+            .toArray();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+            syncStatus: "ignore",
+            raw: {
+                data: {
+                    annotationIsExternal: true,
+                    annotationComment: "my note",
+                },
+            },
+        });
+        expect(rows[0]!.annotationImageVersion).toBeUndefined();
+    });
+
+    test("reconciles deleted and imported annotations only after worker success", async () => {
+        const { db } = await import("../fakes/db");
+        await seedPdfAttachment();
+        await seedStoredAnnotation("EXTOLD01", true);
+        await seedStoredAnnotation("EXTKEEP1", true, "unchanged");
+        await seedStoredAnnotation("INTERNAL", false);
+        const query = vi.fn<QueryStub>().mockResolvedValue({
+            imported: [importedHighlight({ comment: "new external" })],
+            // A compromised/broken worker must not delete a non-external row.
+            deleted: ["EXTOLD01", "INTERNAL"],
+        });
+
+        const annotations =
+            await manager.createBatchExtractExternalAnnotationsTask(
+                attachmentServiceYielding(new Blob(["%PDF-1.7"])),
+                processorQuerying(query),
+                noteService,
+                { items: [{ libraryID: LIB, itemKey: "ATTACH01" }] },
+            );
+
+        expect(annotations).toHaveLength(1);
+        expect(await db.items.get([LIB, "EXTOLD01"])).toBeUndefined();
+        expect(await db.items.get([LIB, "EXTKEEP1"])).toBeDefined();
+        expect(await db.items.get([LIB, "INTERNAL"])).toBeDefined();
+        const imported = await db.items.get([LIB, annotations[0]!.id]);
+        expect(imported).toMatchObject({
+            syncStatus: "ignore",
+            raw: { data: { annotationComment: "new external" } },
+        });
+        expect(query.mock.calls[0]?.[1]).toMatchObject({
+            existingAnnotations: expect.arrayContaining([
+                expect.objectContaining({
+                    id: "EXTOLD01",
+                    type: "highlight",
+                    comment: "stored comment",
+                    position: { pageIndex: 0, rects: [[1, 2, 3, 4]] },
+                }),
+                expect.objectContaining({ id: "EXTKEEP1" }),
+            ]),
+        });
+        expect(triggerUpdate).toHaveBeenCalledOnce();
+    });
+
+    test("preserves the old snapshot and MD5 when the worker fails", async () => {
+        const { db } = await import("../fakes/db");
+        await seedPdfAttachment("new-file-md5");
+        await seedStoredAnnotation("EXTOLD01", true);
+        await db.items.update([LIB, "ATTACH01"], {
+            externalAnnotationExtractionFileMD5: "old-file-md5",
+        });
+        const processor = processorQuerying(() =>
+            Promise.reject(new Error("worker failed")),
+        );
+
+        const annotations =
+            await manager.createBatchExtractExternalAnnotationsTask(
+                attachmentServiceYielding(new Blob(["%PDF-1.7"])),
+                processor,
+                noteService,
+                { items: [{ libraryID: LIB, itemKey: "ATTACH01" }] },
+            );
+
+        expect(annotations).toEqual([]);
+        expect(await db.items.get([LIB, "EXTOLD01"])).toBeDefined();
+        const attachment = await db.items.get([LIB, "ATTACH01"]);
+        expect(attachment!.externalAnnotationExtractionFileMD5).toBe(
+            "old-file-md5",
+        );
+        expect(triggerUpdate).not.toHaveBeenCalled();
     });
 
     test("skips a file whose server MD5 already matches the last extraction", async () => {
