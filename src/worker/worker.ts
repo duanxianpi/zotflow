@@ -1,4 +1,5 @@
 import * as Comlink from "comlink";
+import { EnhancementResourceService } from "./services/enhancement-resources";
 import { setProxiedFetch } from "./proxied-fetch";
 import { ZoteroAPIService } from "./services/zotero";
 import { SyncService } from "./services/sync";
@@ -73,6 +74,7 @@ export interface WorkerAPI {
     dbHelper: Exposed<DbHelperServiceType>;
     tag: Exposed<TagServiceType>;
     documentWorker: Exposed<DocumentWorkerService>;
+    enhancementResources: Exposed<EnhancementResourceService>;
     libraryTemplate: Exposed<LibraryTemplateService>;
     localTemplate: Exposed<LocalTemplateService>;
     notePath: Exposed<NotePathService>;
@@ -121,6 +123,7 @@ let _tag: TagService | undefined;
 let _notePath: NotePathService | undefined;
 let _convert: ConvertService | undefined;
 let _documentWorker: DocumentWorkerService | undefined;
+let _enhancementResources: EnhancementResourceService | undefined;
 let _cslRender: CslRenderWorkerService | undefined;
 let _taskManager: TaskManager | undefined;
 let _currentSettings: ZotFlowSettings | undefined;
@@ -238,10 +241,12 @@ const exposedApi: WorkerAPI = {
                 _search,
             );
 
+            _enhancementResources = new EnhancementResourceService();
             _documentWorker = new DocumentWorkerService(
                 settings,
                 parentHost,
                 blobUrls,
+                _enhancementResources,
             );
             _notePath = new NotePathService(settings, _dbHelper);
             _convert = new ConvertService();
@@ -449,6 +454,11 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_tag);
     },
 
+    get enhancementResources() {
+        if (!_enhancementResources) throw new Error("Worker not initialized");
+        return Comlink.proxy(_enhancementResources);
+    },
+
     get documentWorker() {
         if (!_documentWorker)
             throw new ZotFlowError(
@@ -513,6 +523,8 @@ const exposedApi: WorkerAPI = {
         _libraryNote?.dispose();
         _localNote?.dispose();
         _cslRender?.dispose();
+        _documentWorker?.dispose();
+        _enhancementResources?.dispose();
     },
 
     /* ================================================================ */

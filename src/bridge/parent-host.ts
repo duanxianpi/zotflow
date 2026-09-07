@@ -32,6 +32,13 @@ import type { ITaskInfo } from "types/tasks";
 export class ParentHost implements IParentProxy {
     constructor(private app: App) {}
 
+    async acquireEnhancementSdtResources() {
+        return services.enhancementPack.acquireSdtResources();
+    }
+    async releaseEnhancementResources(leaseId: string) {
+        services.enhancementPack.release(leaseId);
+    }
+
     public notify(type: NotificationType, message: string) {
         services.notificationService.notify(type, message);
     }

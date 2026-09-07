@@ -33,13 +33,7 @@ export default defineConfig(
                         "vitest.config.ts",
                         "esbuild.config.mjs",
                         "version-bump.mjs",
-                        // Build/dev tooling. Deliberately outside tsconfig.json,
-                        // which covers only the shipped `src` tree — but they
-                        // are tracked files, so they should still be linted
-                        // rather than silently skipped as parse errors.
-                        "scripts/*.js",
-                        "scripts/*.mjs",
-                        "scripts/*.ts",
+                        // Scripts use their own scripts/tsconfig.json.
                     ],
                 },
                 tsconfigRootDir: import.meta.dirname,

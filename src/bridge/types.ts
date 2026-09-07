@@ -1,3 +1,4 @@
+import type { PackLease } from "enhancement-pack/types";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { NotificationType } from "services/notification-service";
 import type { LogLevel } from "services/log-service";
@@ -25,6 +26,8 @@ export interface VaultConfig {
 }
 
 export interface IParentProxy {
+    acquireEnhancementSdtResources(): Promise<PackLease>;
+    releaseEnhancementResources(leaseId: string): Promise<void>;
     notify(type: NotificationType, message: string): void;
     log(
         level: LogLevel,

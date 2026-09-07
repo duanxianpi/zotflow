@@ -1,3 +1,6 @@
+import type { EnhancementResourceService } from "worker/services/enhancement-resources";
+import { sdtCompatibility } from "enhancement-pack/compatibility";
+import type { PackLease } from "enhancement-pack/types";
 /*
  * Ported from Zotero's `chrome/content/zotero/xpcom/pdfWorker/manager.js`
  * (AGPL-3.0). The transport protocol and queue semantics follow the worker
@@ -180,11 +183,18 @@ export class DocumentWorkerService {
     private _queue: QueueItem[];
     private _processingQueue: boolean;
     private _blobUrls: Record<string, string>;
+    private sdtLease?: Promise<PackLease>;
+    private workerEpoch = 0;
+    private disposed = false;
 
     constructor(
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
         blobUrls: Record<string, string>,
+        private enhancementResources: Pick<
+            EnhancementResourceService,
+            "getBlob"
+        >,
     ) {
         this._worker = null;
         this._lastPromiseID = 0;
@@ -226,22 +236,29 @@ export class DocumentWorkerService {
     }
 
     async _processQueue() {
-        this._init();
         if (this._processingQueue) {
             return;
         }
         this._processingQueue = true;
-        let queuedOperation: QueueItem | undefined;
-        while ((queuedOperation = this._queue.shift())) {
-            await queuedOperation();
+        try {
+            let queuedOperation: QueueItem | undefined;
+            while ((queuedOperation = this._queue.shift())) {
+                await queuedOperation();
+            }
+        } finally {
+            this._processingQueue = false;
         }
-        this._processingQueue = false;
     }
 
     async _enqueue<T>(fn: () => Promise<T>, isPriority?: boolean): Promise<T> {
+        if (this.disposed)
+            throw new Error("Document Worker service was disposed");
         return new Promise((resolve, reject) => {
             const queuedOperation = async () => {
                 try {
+                    if (this.disposed)
+                        throw new Error("Document Worker service was disposed");
+                    this._init();
                     resolve(await fn());
                 } catch (error) {
                     reject(
@@ -305,7 +322,39 @@ export class DocumentWorkerService {
         }
 
         const resourceKey = `${DOCUMENT_WORKER_DIRECTORY}/${resourcePath}`;
-        const resourceUrl = this._blobUrls[resourceKey];
+        let resourceUrl: string | undefined;
+        if (sdtCompatibility.resourcePaths.includes(resourcePath)) {
+            const epoch = this.workerEpoch;
+            this.sdtLease ??= this.parentHost
+                .acquireEnhancementSdtResources()
+                .then(async (lease) => {
+                    if (this.disposed || epoch !== this.workerEpoch) {
+                        await this.parentHost.releaseEnhancementResources(
+                            lease.leaseId,
+                        );
+                        throw new Error(
+                            "Document Worker resource session ended",
+                        );
+                    }
+                    return lease;
+                })
+                .catch((error: unknown) => {
+                    if (epoch === this.workerEpoch) this.sdtLease = undefined;
+                    throw error;
+                });
+            const lease = await this.sdtLease;
+            // Local service call: no main-thread URL creation, Blob fetch or extra Worker.
+            const blob = await this.enhancementResources.getBlob(
+                lease.snapshotId,
+                resourcePath,
+            );
+            const bytes = await blob.arrayBuffer();
+            if (this.disposed || epoch !== this.workerEpoch)
+                throw new Error("Document Worker resource session ended");
+            return new Uint8Array(bytes);
+        } else {
+            resourceUrl = this._blobUrls[resourceKey];
+        }
         if (!resourceUrl) {
             throw new Error(
                 `Document Worker resource not found: ${resourceKey}`,
@@ -343,6 +392,7 @@ export class DocumentWorkerService {
                 // The listener contract is void; the handler reports its own
                 // failures, so the promise is marked rather than returned.
                 void (async () => {
+                    if (this._worker !== worker) return;
                     const message = event.data;
 
                     // Progress notifications refer to the original request
@@ -477,6 +527,7 @@ export class DocumentWorkerService {
                             responseError = { message: getErrorMessage(e) };
                         }
 
+                        if (this._worker !== worker) return;
                         const transfer: Transferable[] =
                             responseData instanceof Uint8Array &&
                             responseData.buffer instanceof ArrayBuffer
@@ -495,6 +546,8 @@ export class DocumentWorkerService {
             },
         );
         worker.addEventListener("error", (event) => {
+            if (this._worker !== worker) return;
+            this.resetWorker();
             this.parentHost.log(
                 "error",
                 `Document Worker error (${event.filename}:${event.lineno}): ${event.message}`,
@@ -502,6 +555,35 @@ export class DocumentWorkerService {
                 event,
             );
         });
+    }
+
+    private resetWorker(): void {
+        this.workerEpoch++;
+        this._worker?.terminate();
+        this._worker = null;
+        for (const waiting of Object.values(this._waitingPromises))
+            waiting.reject(new Error("Document Worker stopped"));
+        this._waitingPromises = {};
+        const lease = this.sdtLease;
+        this.sdtLease = undefined;
+        if (lease)
+            void lease
+                .then((value) =>
+                    this.parentHost.releaseEnhancementResources(value.leaseId),
+                )
+                .catch((error: unknown) => {
+                    this.parentHost.log(
+                        "debug",
+                        "SDT resource session ended",
+                        "DocumentWorkerService",
+                        error,
+                    );
+                });
+    }
+
+    dispose(): void {
+        this.disposed = true;
+        this.resetWorker();
     }
 
     /**
@@ -664,6 +746,9 @@ export class DocumentWorkerService {
                 );
                 return response.buf;
             } catch (e) {
+                // A failed SDT run may leave partially initialized models. Rebuild
+                // its Worker before retrying so resources cannot mix generations.
+                this.resetWorker();
                 throw ZotFlowError.wrap(
                     e,
                     ZotFlowErrorCode.PARSE_ERROR,

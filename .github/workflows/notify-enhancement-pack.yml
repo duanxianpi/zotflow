@@ -19,7 +19,6 @@ jobs:
               with:
                   github-token: ${{ secrets.ENHANCEMENT_PACK_DISPATCH_TOKEN }}
                   script: |
-                      const crypto = require("node:crypto");
                       const fs = require("node:fs");
                       const rawLock = fs.readFileSync("document-worker.lock.json");
                       const lock = JSON.parse(rawLock.toString("utf8"));
@@ -31,10 +30,6 @@ jobs:
                           client_payload: {
                               zotflowCommit: context.sha,
                               documentWorkerCommit: lock.documentWorker.commit,
-                              lockSha256: crypto
-                                  .createHash("sha256")
-                                  .update(rawLock)
-                                  .digest("hex"),
-                              packApiVersion: lock.enhancementPack.apiVersion,
+                              protocol: lock.enhancementPack.protocol,
                           },
                       });

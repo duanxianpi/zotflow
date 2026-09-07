@@ -12,11 +12,7 @@
  * default — a service quietly depending on `readExternalBinaryFile` should
  * fail loudly, not read `undefined`.
  */
-import type {
-    IParentProxy,
-    IRequestResponse,
-    VaultConfig,
-} from "bridge/types";
+import type { IParentProxy, IRequestResponse, VaultConfig } from "bridge/types";
 import type { LogLevel } from "services/log-service";
 import type { NotificationType } from "services/notification-service";
 import type { ITaskInfo } from "types/tasks";
@@ -206,6 +202,11 @@ export function createFakeParentHost(
             return options.request(request);
         },
 
+        acquireEnhancementSdtResources: async () =>
+            unsupported("acquireEnhancementSdtResources"),
+        releaseEnhancementResources: async () =>
+            unsupported("releaseEnhancementResources"),
+
         // Platform
         isAndroidApp: async () => options.isAndroid ?? false,
         isDesktopApp: async () =>
@@ -228,7 +229,8 @@ export function createFakeParentHost(
             vault.delete(path);
             binaryVault.delete(path);
         },
-        readExternalBinaryFile: async () => unsupported("readExternalBinaryFile"),
+        readExternalBinaryFile: async () =>
+            unsupported("readExternalBinaryFile"),
         statExternalFile: async () => unsupported("statExternalFile"),
         openFile: async (path) => {
             opened.push(path);

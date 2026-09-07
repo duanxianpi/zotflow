@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 
+import { deriveEnhancementContract } from "./enhancement-contract.mjs";
+
 const LOCK_URL_PREFIX =
     "https://zotero-download.s3.amazonaws.com/ci/document-worker";
 const commit = process.argv[2];
@@ -29,6 +31,8 @@ lock.documentWorker = {
     archiveSize: archive.byteLength,
     archiveSha256: createHash("sha256").update(archive).digest("hex"),
 };
+
+lock.enhancementPack = deriveEnhancementContract(archive, lock.enhancementPack);
 
 await writeFile(lockUrl, `${JSON.stringify(lock, null, 4)}\n`, "utf8");
 console.log(

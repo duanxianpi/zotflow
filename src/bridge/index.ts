@@ -3,6 +3,7 @@ import workerCode from "virtual:worker";
 import { ParentHost } from "./parent-host";
 import { getBlobUrls } from "bundle-assets/inline-assets";
 
+import type { EnhancementResourceService } from "worker/services/enhancement-resources";
 import type { WorkerAPI } from "worker/worker";
 import type { TaskManager } from "worker/tasks/manager";
 import type { ZotFlowSettings } from "settings/types";
@@ -66,6 +67,7 @@ export class WorkerBridge {
     private _dbHelper: Comlink.Remote<DbHelperService>;
     private _tag: Comlink.Remote<TagService>;
     private _documentWorker: Comlink.Remote<DocumentWorkerService>;
+    private _enhancementResources: Comlink.Remote<EnhancementResourceService>;
     private _libraryTemplate: Comlink.Remote<LibraryTemplateService>;
     private _localTemplate: Comlink.Remote<LocalTemplateService>;
     private _notePath: Comlink.Remote<NotePathService>;
@@ -112,6 +114,9 @@ export class WorkerBridge {
         this._library = await materializeComlinkProxy(this._api.library);
         this._dbHelper = await materializeComlinkProxy(this._api.dbHelper);
         this._tag = await materializeComlinkProxy(this._api.tag);
+        this._enhancementResources = await materializeComlinkProxy(
+            this._api.enhancementResources,
+        );
         this._documentWorker = await materializeComlinkProxy(
             this._api.documentWorker,
         );
@@ -126,6 +131,13 @@ export class WorkerBridge {
         this._tasks = await materializeComlinkProxy(this._api.tasks);
 
         this._initialized = true;
+        // Native Worker failure supplies no RPC responses. Settle resource waiters locally.
+        this._worker.addEventListener("error", () =>
+            services.enhancementPack.dispose(),
+        );
+        this._worker.addEventListener("messageerror", () =>
+            services.enhancementPack.dispose(),
+        );
         services.logService.log(
             "info",
             "Worker Client initialized.",
@@ -211,6 +223,11 @@ export class WorkerBridge {
     get tag() {
         this.assertInitialized();
         return this._tag;
+    }
+
+    get enhancementResources() {
+        this.assertInitialized();
+        return this._enhancementResources;
     }
 
     get documentWorker() {

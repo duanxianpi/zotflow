@@ -1,3 +1,6 @@
+import { EnhancementPackService } from "services/enhancement-pack-service";
+import { workerBridge } from "bridge";
+import { sdtCompatibility } from "enhancement-pack/compatibility";
 import { IndexService } from "./index-service";
 import { LogService } from "./log-service";
 import { NotificationService } from "./notification-service";
@@ -26,6 +29,7 @@ class ServiceLocator {
     private _citationService: CitationService;
     private _libraryCache: LibraryCache;
     private _readerDocumentCache: ReaderDocumentCache;
+    private _enhancementPack: EnhancementPackService;
 
     initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
         this._plugin = plugin;
@@ -49,6 +53,18 @@ class ServiceLocator {
             this._logService,
         );
         this._readerDocumentCache = new ReaderDocumentCache();
+        this._enhancementPack = new EnhancementPackService(
+            this._app.vault.adapter,
+            this._app.vault.configDir,
+            sdtCompatibility,
+            () => workerBridge.enhancementResources,
+            (error) =>
+                this._logService.error(
+                    "Resource snapshot cleanup failed",
+                    "EnhancementPackService",
+                    error,
+                ),
+        );
 
         this._initialized = true;
         this._logService.info("Services initialized.", "LocalServiceLocator");
@@ -125,6 +141,11 @@ class ServiceLocator {
     get libraryCache() {
         this.assertInitialized();
         return this._libraryCache;
+    }
+
+    get enhancementPack() {
+        this.assertInitialized();
+        return this._enhancementPack;
     }
 
     get readerDocumentCache() {

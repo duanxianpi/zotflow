@@ -7,12 +7,61 @@
         "archiveSha256": "1cdfc2f2a3cbb75b7df9f7c02fdb42b06a43c5df3c3b644d694820c5159ee56d"
     },
     "enhancementPack": {
-        "apiVersion": 1,
+        "protocol": {
+            "major": 2,
+            "minor": 0
+        },
         "include": [
             "metadata.json",
             "structured-document-text.js",
             "block-seg/",
             "onnx/"
+        ],
+        "sdt": {
+            "packVersion": 1,
+            "schemaMajorVersion": 1
+        },
+        "resources": [
+            {
+                "path": "block-seg/classifier/model.onnx",
+                "size": 4367485,
+                "sha256": "572077354eea61583982a31a3f443c5abd8d92c04e2dbfd105299c1ca1d131f7"
+            },
+            {
+                "path": "block-seg/classifier/stats.bin",
+                "size": 4016,
+                "sha256": "abc86d6fa7cfb9aa18bafc2fd8cbcbf656350a7190b08fab2239efba5c673e95"
+            },
+            {
+                "path": "block-seg/clusterer/model.onnx",
+                "size": 4362638,
+                "sha256": "5cb6f8645a0f4c8f4396d5e8b1da70d9c8d8fff8c98f324889b8c6e271575350"
+            },
+            {
+                "path": "block-seg/clusterer/repair.onnx",
+                "size": 358150,
+                "sha256": "7fd29831c26f09cefa5a4f92c797e559bda5f513f6691d339d6c323bd563a789"
+            },
+            {
+                "path": "block-seg/clusterer/runtime.bin",
+                "size": 293284,
+                "sha256": "a0d71f9be6c63404393457ec31875ae799b5f4ba48dc17736112446a4f82ca26"
+            },
+            {
+                "path": "metadata.json",
+                "size": 143,
+                "sha256": "6909fdcfe5e6b8d699c5cec92f6e97a272e628cf189b10225061d6619b754dfe"
+            },
+            {
+                "path": "onnx/ort-wasm-simd-threaded.wasm",
+                "size": 13479978,
+                "sha256": "d1ab1b94b16a65b29d710d0b587b29e7bed336827577623913479b8afe8113e6"
+            },
+            {
+                "path": "structured-document-text.js",
+                "size": 23496,
+                "sha256": "340f44fea8d616eaac04b83ef6329eaad2753916b1d50342a8edc7a0b717bed4"
+            }
         ]
     }
 }

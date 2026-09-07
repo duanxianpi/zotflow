@@ -25,7 +25,8 @@
 			"ES6",
 			"ES7"
 		],
-		"verbatimModuleSyntax": true
+		"verbatimModuleSyntax": true,
+		"resolveJsonModule": true
 	},
 	"include": [
 		"src/**/*.ts",

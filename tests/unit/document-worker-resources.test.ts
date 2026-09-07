@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { EnhancementResourceService } from "worker/services/enhancement-resources";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { DocumentWorkerService } from "worker/services/document-worker";
 import { resetDb, seedItem } from "../fakes/db";
@@ -25,6 +26,8 @@ function createWorkerHarness() {
             if (type === "message") messageListeners.push(listener);
         }
 
+        terminate() {}
+
         postMessage(message: unknown, transfer?: Transferable[]) {
             postMessage(message, transfer);
         }
@@ -49,6 +52,82 @@ beforeEach(async () => {
 });
 
 describe("DocumentWorkerService resources", () => {
+    test("leases the disabled Pack on SDT resource demand and never shadows it with inline data", async () => {
+        createWorkerHarness();
+        const host = createFakeParentHost();
+        const acquire = (host.acquireEnhancementSdtResources = vi.fn(
+            async () => ({
+                leaseId: "lease",
+                generationId: "generation",
+                snapshotId: "snapshot",
+            }),
+        ));
+        const getBlob = vi.fn(async () => new Blob([new Uint8Array([1, 2])]));
+        const release = (host.releaseEnhancementResources = vi.fn(
+            async () => {},
+        ));
+        const nativeFetch = vi.fn(
+            async () => new Response(new Uint8Array([1, 2]).buffer),
+        );
+        vi.stubGlobal("self", { originalFetch: nativeFetch });
+        const processor = new DocumentWorkerService(
+            { ...DEFAULT_SETTINGS },
+            host,
+            {
+                "document-worker/worker.js": "blob:worker",
+                "document-worker/metadata.json": "blob:stale-inline",
+            },
+            { getBlob },
+        );
+        processor._init();
+        expect(acquire).not.toHaveBeenCalled();
+        const internals = processor as unknown as DocumentWorkerInternals;
+        await Promise.all([
+            internals._fetchDocumentWorkerResource("metadata.json"),
+            internals._fetchDocumentWorkerResource(
+                "structured-document-text.js",
+            ),
+        ]);
+        expect(acquire).toHaveBeenCalledTimes(1);
+        expect(getBlob).toHaveBeenCalledWith("snapshot", "metadata.json");
+        expect(nativeFetch).not.toHaveBeenCalled();
+        processor.dispose();
+        await vi.waitFor(() => expect(release).toHaveBeenCalledWith("lease"));
+    });
+
+    test("releases a lease that arrives after its Worker has been disposed", async () => {
+        const host = createFakeParentHost();
+        let resolveLease!: (lease: {
+            leaseId: string;
+            generationId: string;
+            snapshotId: string;
+        }) => void;
+        host.acquireEnhancementSdtResources = () =>
+            new Promise((resolve) => {
+                resolveLease = resolve;
+            });
+        const release = (host.releaseEnhancementResources = vi.fn(
+            async () => {},
+        ));
+        const processor = new DocumentWorkerService(
+            { ...DEFAULT_SETTINGS },
+            host,
+            { "document-worker/worker.js": "blob:worker" },
+            new EnhancementResourceService(),
+        );
+        const request = (
+            processor as unknown as DocumentWorkerInternals
+        )._fetchDocumentWorkerResource("metadata.json");
+        processor.dispose();
+        resolveLease({
+            leaseId: "late",
+            generationId: "generation",
+            snapshotId: "snapshot",
+        });
+        await expect(request).rejects.toThrow("session ended");
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
     test("uses the Document Worker namespace instead of Reader PDF.js assets", async () => {
         const nativeFetch = vi.fn(() =>
             Promise.resolve(
@@ -65,6 +144,7 @@ describe("DocumentWorkerService resources", () => {
                 "document-worker/cmaps/Test.bcmap": "blob:document-cmap",
                 "pdf/web/cmaps/Test.bcmap": "blob:reader-cmap",
             },
+            new EnhancementResourceService(),
         );
         const internals = processor as unknown as DocumentWorkerInternals;
 
@@ -84,6 +164,7 @@ describe("DocumentWorkerService resources", () => {
                 "document-worker/worker.js": "blob:document-worker",
                 "pdf/web/standard_fonts/FoxitSans.pfb": "blob:reader-font",
             },
+            new EnhancementResourceService(),
         );
         const internals = processor as unknown as DocumentWorkerInternals;
 
@@ -98,12 +179,51 @@ describe("DocumentWorkerService resources", () => {
 });
 
 describe("DocumentWorkerService structured document text", () => {
+    test("rejects a Worker startup failure without stranding the queue", async () => {
+        vi.stubGlobal(
+            "Worker",
+            class {
+                constructor() {
+                    throw new Error("Worker creation failed");
+                }
+            },
+        );
+        const processor = new DocumentWorkerService(
+            { ...DEFAULT_SETTINGS },
+            createFakeParentHost(),
+            { "document-worker/worker.js": "blob:worker" },
+            new EnhancementResourceService(),
+        );
+        const options = {
+            contentType: "application/pdf",
+            sourceHash: "0123456789abcdef0123456789abcdef",
+        };
+        await expect(
+            processor.getStructuredDocumentText(new ArrayBuffer(8), options),
+        ).rejects.toThrow("Worker creation failed");
+        const harness = createWorkerHarness();
+        const retried = processor.getStructuredDocumentText(
+            new ArrayBuffer(8),
+            options,
+        );
+        await vi.waitFor(() => expect(harness.postMessage).toHaveBeenCalled());
+        const request = harness.postMessage.mock
+            .calls[0]![0] as PostedWorkerMessage;
+        harness.emitMessage({
+            responseID: request.id,
+            data: { buf: new ArrayBuffer(4) },
+        });
+        await expect(retried).resolves.toBeInstanceOf(ArrayBuffer);
+        processor.dispose();
+    });
+
     test("sends the Zotero 10 payload and forwards progress", async () => {
         const harness = createWorkerHarness();
         const processor = new DocumentWorkerService(
             { ...DEFAULT_SETTINGS },
             createFakeParentHost(),
             { "document-worker/worker.js": "blob:document-worker" },
+            new EnhancementResourceService(),
         );
         const input = new ArrayBuffer(8);
         const output = new ArrayBuffer(4);
@@ -148,6 +268,7 @@ describe("DocumentWorkerService structured document text", () => {
             { ...DEFAULT_SETTINGS },
             createFakeParentHost(),
             { "document-worker/worker.js": "blob:document-worker" },
+            new EnhancementResourceService(),
         );
         const promise = processor.getStructuredDocumentText(
             new ArrayBuffer(8),
@@ -179,6 +300,7 @@ describe("DocumentWorkerService structured document text", () => {
             { ...DEFAULT_SETTINGS },
             createFakeParentHost(),
             { "document-worker/worker.js": "blob:document-worker" },
+            new EnhancementResourceService(),
         );
 
         await expect(
@@ -207,6 +329,7 @@ describe("DocumentWorkerService rendered annotation callback", () => {
             { ...DEFAULT_SETTINGS, annotationImageFolder: "Images" },
             host,
             { "document-worker/worker.js": "blob:document-worker" },
+            new EnhancementResourceService(),
         );
         processor._init();
         const buf = new ArrayBuffer(4);
