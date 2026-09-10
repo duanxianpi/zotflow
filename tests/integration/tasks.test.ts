@@ -725,6 +725,29 @@ describe("post-sync source-note refresh", () => {
         expect(calls[0]!.items).toEqual([{ libraryID: LIB, itemKey: "PARENT01" }]);
     });
 
+    test("a trashed top-level item is not refreshed", async () => {
+        await seedItem({ libraryID: LIB, key: "TRASHED1", trashed: 1 });
+
+        expect(await runWith([{ libraryID: LIB, itemKey: "TRASHED1" }])).toEqual(
+            [],
+        );
+    });
+
+    test("a trashed child still refreshes its live top-level item", async () => {
+        await seedItem({ libraryID: LIB, key: "PARENT01" });
+        await seedItem({
+            libraryID: LIB,
+            key: "TRASHATT",
+            itemType: "attachment",
+            parentItem: "PARENT01",
+            trashed: 1,
+        });
+
+        expect(
+            await runWith([{ libraryID: LIB, itemKey: "TRASHATT" }]),
+        ).toEqual([{ items: [{ libraryID: LIB, itemKey: "PARENT01" }] }]);
+    });
+
     test("an orphaned child is dropped rather than refreshed", async () => {
         await seedItem({
             libraryID: LIB,
@@ -967,6 +990,31 @@ describe("other task factories", () => {
         const info = manager.getTasks().find((x) => x.id === id)!;
         expect(info.type).toBe("batch-update-notes");
         expect(info.input).toEqual({ items: 1 });
+    });
+
+    test("a batch note task skips trashed items", async () => {
+        const processed: { libraryID: number; itemKey: string }[] = [];
+        const noteService = {
+            triggerUpdate: (libraryID: number, key: string) => {
+                processed.push({ libraryID, itemKey: key });
+                return Promise.resolve();
+            },
+        } as unknown as LibraryNoteService;
+        await seedItem({ libraryID: LIB, key: "TRASHED1", trashed: 1 });
+
+        const id = await manager.createBatchNoteTask(
+            noteService,
+            { items: [{ libraryID: LIB, itemKey: "TRASHED1" }] },
+            {},
+            true,
+        );
+
+        await vi.waitFor(() => {
+            expect(manager.getTasks().find((x) => x.id === id)!.status).toBe(
+                "completed",
+            );
+        });
+        expect(processed).toEqual([]);
     });
 
     test("a create-notes batch is typed differently from an update", async () => {

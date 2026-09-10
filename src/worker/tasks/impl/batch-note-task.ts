@@ -138,7 +138,9 @@ export class BatchNoteTask extends BaseTask {
         const items = [];
         for (const { libraryID, itemKey } of this.input.items) {
             const item = await db.items.get([libraryID, itemKey]);
-            if (item) {
+            // Batch note operations must never create or refresh source notes
+            // for top-level items that have moved to the Zotero trash.
+            if (item && !item.trashed) {
                 items.push(item);
             }
         }
