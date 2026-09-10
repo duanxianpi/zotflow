@@ -13,6 +13,7 @@
  * are what actually decide the outcome.)
  */
 import { beforeEach, describe, expect, it } from "vitest";
+import SparkMD5 from "spark-md5";
 
 import { WebDavService } from "worker/services/webdav";
 import { DEFAULT_SETTINGS } from "settings/types";
@@ -38,14 +39,38 @@ interface FetchCall {
 let host: FakeParentHost;
 let service: WebDavService;
 let calls: FetchCall[];
-let response: {
+interface MockResponse {
     ok: boolean;
     status: number;
     statusText: string;
     body: ArrayBuffer;
     contentLength: string | null;
-};
+    wwwAuthenticate: string | null;
+}
+
+let response: MockResponse;
+let responseQueue: MockResponse[];
 let fetchThrows: Error | null;
+
+function mockResponse(
+    status: number,
+    overrides: Partial<MockResponse> = {},
+): MockResponse {
+    return {
+        ...response,
+        ok: status >= 200 && status < 300,
+        status,
+        statusText: `status ${status}`,
+        ...overrides,
+    };
+}
+
+function digestParameter(header: string, name: string): string | null {
+    const match = new RegExp(`${name}=(?:"([^"]*)"|([^,\\s]+))`, "i").exec(
+        header,
+    );
+    return match?.[1] ?? match?.[2] ?? null;
+}
 
 function configure(overrides: Partial<ZotFlowSettings> = {}) {
     const settings: ZotFlowSettings = {
@@ -69,7 +94,9 @@ beforeEach(() => {
         statusText: "OK",
         body: new Uint8Array([1, 2, 3]).buffer,
         contentLength: "3",
+        wwwAuthenticate: null,
     };
+    responseQueue = [];
 
     globalThis.fetch = ((url: string, init?: RequestInit) => {
         calls.push({
@@ -78,16 +105,23 @@ beforeEach(() => {
             headers: (init?.headers ?? {}) as Record<string, string>,
         });
         if (fetchThrows) return Promise.reject(fetchThrows);
+        const currentResponse = responseQueue.shift() ?? response;
         return Promise.resolve({
-            ok: response.ok,
-            status: response.status,
-            statusText: response.statusText,
-            arrayBuffer: () => Promise.resolve(response.body),
+            ok: currentResponse.ok,
+            status: currentResponse.status,
+            statusText: currentResponse.statusText,
+            arrayBuffer: () => Promise.resolve(currentResponse.body),
             headers: {
-                get: (name: string) =>
-                    name.toLowerCase() === "content-length"
-                        ? response.contentLength
-                        : null,
+                get: (name: string) => {
+                    switch (name.toLowerCase()) {
+                        case "content-length":
+                            return currentResponse.contentLength;
+                        case "www-authenticate":
+                            return currentResponse.wwwAuthenticate;
+                        default:
+                            return null;
+                    }
+                },
             },
         });
     }) as unknown as typeof fetch;
@@ -218,9 +252,155 @@ describe("downloadFile", () => {
     it("logs the outcome for the activity centre", async () => {
         await service.downloadFile("a.zip");
 
+        expect(host.logs.some((l) => l.context === "WebDavService")).toBe(true);
+    });
+});
+
+/* ================================================================ */
+/*  Digest authentication                                           */
+/* ================================================================ */
+
+describe("Digest authentication", () => {
+    const firstChallenge =
+        'Basic realm="fallback", Digest realm="dav", qop="auth, auth-int", nonce="first", opaque="opaque-1", algorithm=MD5';
+
+    it("answers a Digest challenge and retries the request once", async () => {
+        responseQueue.push(
+            mockResponse(401, { wwwAuthenticate: firstChallenge }),
+            mockResponse(200),
+        );
+
+        await service.downloadFile("folder/中文.zip?version=1");
+
+        expect(calls).toHaveLength(2);
+        expect(calls[0]!.headers.Authorization).toBe(EXPECTED_AUTH);
+        const authorization = calls[1]!.headers.Authorization!;
+        expect(authorization).toMatch(/^Digest /);
+        expect(digestParameter(authorization, "realm")).toBe("dav");
+        expect(digestParameter(authorization, "nonce")).toBe("first");
+        expect(digestParameter(authorization, "uri")).toBe(
+            "/zotero/folder/%E4%B8%AD%E6%96%87.zip?version=1",
+        );
+        expect(digestParameter(authorization, "qop")).toBe("auth");
+        expect(digestParameter(authorization, "nc")).toBe("00000001");
+
+        const cnonce = digestParameter(authorization, "cnonce")!;
+        const ha1 = SparkMD5.hash(`${USER}:dav:${PASS}`);
+        const ha2 = SparkMD5.hash(
+            "GET:/zotero/folder/%E4%B8%AD%E6%96%87.zip?version=1",
+        );
+        expect(digestParameter(authorization, "response")).toBe(
+            SparkMD5.hash(`${ha1}:first:00000001:${cnonce}:auth:${ha2}`),
+        );
+    });
+
+    it("reuses a challenge, then refreshes an expired nonce on 401", async () => {
+        responseQueue.push(
+            mockResponse(401, { wwwAuthenticate: firstChallenge }),
+            mockResponse(200),
+        );
+        await service.downloadFile("a.zip");
+
+        responseQueue.push(
+            mockResponse(401, {
+                wwwAuthenticate:
+                    'Digest realm="dav", nonce="fresh", algorithm=MD5, stale=true, qop="auth"',
+            }),
+            mockResponse(200, { contentLength: "3" }),
+        );
+        await service.getContentLength("a.zip");
+
+        expect(calls).toHaveLength(4);
+        expect(digestParameter(calls[1]!.headers.Authorization!, "nonce")).toBe(
+            "first",
+        );
+        expect(digestParameter(calls[2]!.headers.Authorization!, "nonce")).toBe(
+            "first",
+        );
+        expect(digestParameter(calls[2]!.headers.Authorization!, "nc")).toBe(
+            "00000002",
+        );
+        expect(digestParameter(calls[3]!.headers.Authorization!, "nonce")).toBe(
+            "fresh",
+        );
+        expect(digestParameter(calls[3]!.headers.Authorization!, "nc")).toBe(
+            "00000001",
+        );
         expect(
-            host.logs.some((l) => l.context === "WebDavService"),
+            host.logs.some(
+                (entry) =>
+                    entry.message === "WebDAV Digest challenge adopted." &&
+                    (entry.details as { stale?: boolean }).stale === true,
+            ),
         ).toBe(true);
+    });
+
+    it("stops after one rejected Digest retry", async () => {
+        responseQueue.push(
+            mockResponse(401, { wwwAuthenticate: firstChallenge }),
+            mockResponse(401, { wwwAuthenticate: firstChallenge }),
+        );
+
+        await expect(service.downloadFile("a.zip")).rejects.toThrow(
+            /WebDAV Auth Failed/,
+        );
+        expect(calls).toHaveLength(2);
+    });
+
+    it("does not retry an unsupported Digest algorithm", async () => {
+        response = mockResponse(401, {
+            wwwAuthenticate:
+                'Digest realm="dav", nonce="sha", algorithm=SHA-256, qop="auth"',
+        });
+
+        await expect(service.downloadFile("a.zip")).rejects.toThrow(
+            /WebDAV Auth Failed/,
+        );
+        expect(calls).toHaveLength(1);
+    });
+
+    it("supports MD5-sess without qop", async () => {
+        responseQueue.push(
+            mockResponse(401, {
+                wwwAuthenticate:
+                    'Digest realm="dav", nonce="session", algorithm=MD5-sess',
+            }),
+            mockResponse(207),
+        );
+
+        await service.verify(URL_BASE, USER, PASS);
+
+        const authorization = calls[1]!.headers.Authorization!;
+        const cnonce = digestParameter(authorization, "cnonce")!;
+        const baseHa1 = SparkMD5.hash(`${USER}:dav:${PASS}`);
+        const ha1 = SparkMD5.hash(`${baseHa1}:session:${cnonce}`);
+        const ha2 = SparkMD5.hash("PROPFIND:/zotero/");
+        expect(digestParameter(authorization, "algorithm")).toBe("MD5-sess");
+        expect(digestParameter(authorization, "qop")).toBeNull();
+        expect(digestParameter(authorization, "nc")).toBeNull();
+        expect(digestParameter(authorization, "response")).toBe(
+            SparkMD5.hash(`${ha1}:session:${ha2}`),
+        );
+    });
+
+    it("clears a cached challenge when credentials change", async () => {
+        responseQueue.push(
+            mockResponse(401, { wwwAuthenticate: firstChallenge }),
+            mockResponse(200),
+        );
+        await service.downloadFile("a.zip");
+
+        service.updateSettings({
+            ...DEFAULT_SETTINGS,
+            webDavUrl: URL_BASE,
+            webDavUser: USER,
+            webdavpassword: "replacement",
+        });
+        await service.downloadFile("b.zip");
+
+        expect(calls[2]!.headers.Authorization).toBe(
+            `Basic ${btoa(`${USER}:replacement`)}`,
+        );
     });
 });
 
@@ -307,6 +487,7 @@ describe("verify", () => {
         // whether the root resource is reachable.
         await service.verify(URL_BASE, USER, PASS);
 
+        expect(calls[0]!.url).toBe(`${URL_BASE}/`);
         expect(calls[0]!.method).toBe("PROPFIND");
         expect(calls[0]!.headers["Depth"]).toBe("0");
         expect(calls[0]!.headers["Authorization"]).toBe(EXPECTED_AUTH);

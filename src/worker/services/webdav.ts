@@ -1,17 +1,320 @@
+import SparkMD5 from "spark-md5";
+
 import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { proxiedFetch } from "worker/proxied-fetch";
 
+interface WebDavCredentials {
+    user: string;
+    password: string;
+}
+
+interface DigestChallenge {
+    realm: string;
+    nonce: string;
+    qop: "auth" | null;
+    opaque: string | null;
+    algorithm: "MD5" | "MD5-sess";
+    stale: boolean;
+    origin: string;
+}
+
+interface DigestChallengeInfo {
+    realm: string;
+    qop: "auth" | null;
+    algorithm: "MD5" | "MD5-sess";
+    stale: boolean;
+}
+
+type ChallengeListener = (challenge: DigestChallengeInfo) => void;
+
+/** Split an HTTP authentication header without splitting commas inside quotes. */
+function splitHeaderFields(header: string): string[] {
+    const fields: string[] = [];
+    let start = 0;
+    let quoted = false;
+    let escaped = false;
+
+    for (let index = 0; index < header.length; index++) {
+        const character = header[index]!;
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quoted && character === "\\") {
+            escaped = true;
+            continue;
+        }
+        if (character === '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (!quoted && character === ",") {
+            fields.push(header.slice(start, index).trim());
+            start = index + 1;
+        }
+    }
+    fields.push(header.slice(start).trim());
+    return fields.filter(Boolean);
+}
+
+function parseParameters(fields: string[]): Map<string, string> {
+    const parameters = new Map<string, string>();
+    const parameterPattern =
+        /^([!#$%&'*+.^_`|~\w-]+)\s*=\s*(?:"((?:\\.|[^"])*)"|(.+))$/;
+
+    for (const field of fields) {
+        const match = parameterPattern.exec(field);
+        const name = match?.[1];
+        const rawValue = match?.[2] ?? match?.[3];
+        if (!name || rawValue === undefined) continue;
+        parameters.set(
+            name.toLowerCase(),
+            rawValue.replace(/\\(["\\])/g, "$1").trim(),
+        );
+    }
+    return parameters;
+}
+
+/** Return the first Digest challenge this client can answer. */
+function parseDigestChallenge(
+    header: string | null,
+    url: string,
+): DigestChallenge | null {
+    if (!header) return null;
+
+    const digestGroups: string[][] = [];
+    let current: string[] | null = null;
+
+    for (const field of splitHeaderFields(header)) {
+        const scheme = /^([!#$%&'*+.^_`|~\w-]+)\s+(.+)$/.exec(field);
+        if (scheme) {
+            if (current) digestGroups.push(current);
+            current =
+                scheme[1]!.toLowerCase() === "digest" ? [scheme[2]!] : null;
+        } else if (current) {
+            current.push(field);
+        }
+    }
+    if (current) digestGroups.push(current);
+
+    for (const fields of digestGroups) {
+        const parameters = parseParameters(fields);
+        const realm = parameters.get("realm");
+        const nonce = parameters.get("nonce");
+        if (!realm || !nonce) continue;
+
+        const rawAlgorithm = parameters.get("algorithm")?.toLowerCase();
+        let algorithm: DigestChallenge["algorithm"];
+        if (!rawAlgorithm || rawAlgorithm === "md5") {
+            algorithm = "MD5";
+        } else if (rawAlgorithm === "md5-sess") {
+            algorithm = "MD5-sess";
+        } else {
+            continue;
+        }
+
+        const rawQop = parameters.get("qop");
+        const qopOptions = rawQop
+            ?.split(",")
+            .map((option) => option.trim().toLowerCase());
+        if (qopOptions && !qopOptions.includes("auth")) continue;
+
+        return {
+            realm,
+            nonce,
+            qop: qopOptions ? "auth" : null,
+            opaque: parameters.get("opaque") ?? null,
+            algorithm,
+            stale: parameters.get("stale")?.toLowerCase() === "true",
+            origin: new URL(url).origin,
+        };
+    }
+    return null;
+}
+
+function escapeQuoted(value: string): string {
+    return value.replace(/["\\]/g, "\\$&");
+}
+
+function createCnonce(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(8));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+    );
+}
+
+function basicAuthorization(credentials: WebDavCredentials): string {
+    const bytes = new TextEncoder().encode(
+        `${credentials.user}:${credentials.password}`,
+    );
+    return `Basic ${btoa(String.fromCharCode(...bytes))}`;
+}
+
+function requestHeaders(headers?: HeadersInit): Record<string, string> {
+    if (!headers) return {};
+    if (headers instanceof Headers) {
+        const record: Record<string, string> = {};
+        headers.forEach((value, name) => {
+            record[name] = value;
+        });
+        return record;
+    }
+    if (Array.isArray(headers)) {
+        return Object.fromEntries(headers);
+    }
+    return { ...headers };
+}
+
+/**
+ * Authentication state shared by requests to one configured WebDAV endpoint.
+ *
+ * Digest nonces are opaque and have no client-side TTL. A cached challenge is
+ * reused until the server answers 401 with a replacement, at which point the
+ * nonce count is reset and that request is retried exactly once.
+ */
+class WebDavAuthSession {
+    private challenge: DigestChallenge | null = null;
+    private nonceCount = 0;
+
+    constructor(private readonly onChallenge?: ChallengeListener) {}
+
+    reset(): void {
+        this.challenge = null;
+        this.nonceCount = 0;
+    }
+
+    async request(
+        url: string,
+        init: RequestInit,
+        credentials: WebDavCredentials,
+    ): Promise<Response> {
+        let retriedAuthentication = false;
+
+        while (true) {
+            const headers = requestHeaders(init.headers);
+            for (const name of Object.keys(headers)) {
+                if (name.toLowerCase() === "authorization") {
+                    delete headers[name];
+                }
+            }
+            headers.Authorization = this.authorization(
+                init.method ?? "GET",
+                url,
+                credentials,
+            );
+
+            const response = await proxiedFetch(url, { ...init, headers });
+            if (response.status !== 401 || retriedAuthentication) {
+                return response;
+            }
+
+            const challenge = parseDigestChallenge(
+                response.headers.get("www-authenticate"),
+                url,
+            );
+            if (!challenge) return response;
+
+            this.challenge = challenge;
+            this.nonceCount = 0;
+            retriedAuthentication = true;
+            this.onChallenge?.({
+                realm: challenge.realm,
+                qop: challenge.qop,
+                algorithm: challenge.algorithm,
+                stale: challenge.stale,
+            });
+        }
+    }
+
+    private authorization(
+        method: string,
+        url: string,
+        credentials: WebDavCredentials,
+    ): string {
+        const challenge = this.challenge;
+        if (!challenge || challenge.origin !== new URL(url).origin) {
+            return basicAuthorization(credentials);
+        }
+
+        const uri = new URL(url);
+        const digestUri = `${uri.pathname}${uri.search}`;
+        const nonceCount = (++this.nonceCount).toString(16).padStart(8, "0");
+        const cnonce = createCnonce();
+        const baseHa1 = SparkMD5.hash(
+            `${credentials.user}:${challenge.realm}:${credentials.password}`,
+        );
+        const ha1 =
+            challenge.algorithm === "MD5-sess"
+                ? SparkMD5.hash(`${baseHa1}:${challenge.nonce}:${cnonce}`)
+                : baseHa1;
+        const ha2 = SparkMD5.hash(`${method.toUpperCase()}:${digestUri}`);
+        const response = challenge.qop
+            ? SparkMD5.hash(
+                  `${ha1}:${challenge.nonce}:${nonceCount}:${cnonce}:${challenge.qop}:${ha2}`,
+              )
+            : SparkMD5.hash(`${ha1}:${challenge.nonce}:${ha2}`);
+
+        const parts = [
+            `username="${escapeQuoted(credentials.user)}"`,
+            `realm="${escapeQuoted(challenge.realm)}"`,
+            `nonce="${escapeQuoted(challenge.nonce)}"`,
+            `uri="${escapeQuoted(digestUri)}"`,
+            `response="${response}"`,
+            `algorithm=${challenge.algorithm}`,
+        ];
+        if (challenge.opaque !== null) {
+            parts.push(`opaque="${escapeQuoted(challenge.opaque)}"`);
+        }
+        if (challenge.qop) {
+            parts.push(
+                `qop=${challenge.qop}`,
+                `nc=${nonceCount}`,
+                `cnonce="${cnonce}"`,
+            );
+        } else if (challenge.algorithm === "MD5-sess") {
+            parts.push(`cnonce="${cnonce}"`);
+        }
+        return `Digest ${parts.join(", ")}`;
+    }
+}
+
 /** WebDAV file download service for fetching Zotero attachments from a user-configured server. */
 export class WebDavService {
+    private readonly authSession: WebDavAuthSession;
+
     constructor(
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
-    ) {}
+    ) {
+        this.authSession = this.createAuthSession();
+    }
 
     updateSettings(settings: ZotFlowSettings) {
+        if (
+            settings.webDavUrl !== this.settings.webDavUrl ||
+            settings.webDavUser !== this.settings.webDavUser ||
+            settings.webdavpassword !== this.settings.webdavpassword
+        ) {
+            this.authSession.reset();
+        }
         this.settings = settings;
+    }
+
+    private createAuthSession(): WebDavAuthSession {
+        return new WebDavAuthSession((challenge) => {
+            this.logDigestChallenge(challenge);
+        });
+    }
+
+    private logDigestChallenge(challenge: DigestChallengeInfo): void {
+        this.parentHost.log(
+            "debug",
+            "WebDAV Digest challenge adopted.",
+            "WebDavService",
+            challenge,
+        );
     }
 
     /**
@@ -56,17 +359,13 @@ export class WebDavService {
             fullUrl,
         });
 
-        const credentials = btoa(
-            `${this.settings.webDavUser}:${this.settings.webdavpassword}`,
-        );
+        const credentials: WebDavCredentials = {
+            user: this.settings.webDavUser,
+            password: this.settings.webdavpassword,
+        };
 
         try {
-            const req = {
-                method: "GET",
-                headers: {
-                    Authorization: `Basic ${credentials}`,
-                },
-            };
+            const req = { method: "GET" };
 
             this.parentHost.log(
                 "debug",
@@ -78,7 +377,11 @@ export class WebDavService {
                 },
             );
 
-            const response = await proxiedFetch(fullUrl, req);
+            const response = await this.authSession.request(
+                fullUrl,
+                req,
+                credentials,
+            );
             const responseMs = Date.now() - startedAt;
             this.parentHost.log(
                 "debug",
@@ -207,17 +510,17 @@ export class WebDavService {
         }
         const fullUrl = baseUrl + remotePath.replace(/^\//, "");
 
-        const credentials = btoa(
-            `${this.settings.webDavUser}:${this.settings.webdavpassword}`,
-        );
+        const credentials: WebDavCredentials = {
+            user: this.settings.webDavUser,
+            password: this.settings.webdavpassword,
+        };
 
         try {
-            const response = await proxiedFetch(fullUrl, {
-                method: "HEAD",
-                headers: {
-                    Authorization: `Basic ${credentials}`,
-                },
-            });
+            const response = await this.authSession.request(
+                fullUrl,
+                { method: "HEAD" },
+                credentials,
+            );
 
             if (!response.ok) {
                 this.parentHost.log(
@@ -229,6 +532,13 @@ export class WebDavService {
                         fullUrl,
                     },
                 );
+                if (response.status === 401 || response.status === 403) {
+                    throw new ZotFlowError(
+                        ZotFlowErrorCode.AUTH_INVALID,
+                        "WebDavService",
+                        `WebDAV Auth Failed: ${response.status}`,
+                    );
+                }
                 throw new ZotFlowError(
                     ZotFlowErrorCode.NETWORK_ERROR,
                     "WebDavService",
@@ -280,20 +590,28 @@ export class WebDavService {
             );
         }
 
-        // basic auth
-        const credentials = btoa(`${user}:${pass}`);
+        const credentials: WebDavCredentials = { user, password: pass };
+        const authSession = this.createAuthSession();
 
         try {
+            const target = new URL(url);
+            if (!target.pathname.endsWith("/")) {
+                target.pathname += "/";
+            }
+            const targetUrl = target.toString();
             const req = {
                 method: "PROPFIND",
                 headers: {
-                    Authorization: `Basic ${credentials}`,
                     Depth: "0", // Only check the root resource
                 },
                 throw: false,
             };
 
-            const response = await proxiedFetch(url, req);
+            const response = await authSession.request(
+                targetUrl,
+                req,
+                credentials,
+            );
 
             if (response.status >= 200 && response.status < 300) {
                 return true;
