@@ -30,43 +30,43 @@ ZotFlow 是一个 [Obsidian](https://obsidian.md) 社区插件，可将 [Zotero]
 
 完整功能的 PDF/EPUB/HTML 阅读器，直接嵌入工作区并与 Obsidian 主题一致。高亮、下划线、手写、便签、区域截图等 Zotero 支持的标注类型都可用。
 
-![Built-in Reader](docs/assets/reader.gif)
+![Built-in Reader](assets/reader.gif)
 
 ### 🔄 真正的双向同步
 
 从 Zotero 拉取条目、元数据和标注，也可将改动回推到 Zotero。每个文献库可独立设置为 **双向**、**只读** 或 **忽略**。发生冲突时，可用字段级差异视图手动决策。
 
-![Bidirectional Sync](docs/assets/sync.gif)
+![Bidirectional Sync](assets/sync.gif)
 
 ### ✨ 模板驱动来源笔记
 
 每个 Zotero 条目都可生成一份 Markdown 来源笔记，并通过 [LiquidJS](https://liquidjs.com) 模板完全自定义。
 
-![Source Notes](docs/assets/source-notes.gif)
+![Source Notes](assets/source-notes.gif)
 
 ### 🗒️ 原生 Zotero 条目笔记支持
 
 无需离开 Obsidian，即可创建、编辑、删除 **Zotero 子笔记**。可在树视图右键创建，也可在专用标签页编辑，或在来源笔记可编辑区域内原位修改；改动自动保存并回写 Zotero。
 
-![Item Notes](docs/assets/item-notes.gif)
+![Item Notes](assets/item-notes.gif)
 
 ### 📝 标注任意库内文件
 
 如果你的 PDF/EPUB 不在 Zotero 中，也能用同一个阅读器打开。标注会保存到同目录 `.zf.json` 边车文件，无需 Zotero 账号。
 
-![Local Reader](docs/assets/local-reader.gif)
+![Local Reader](assets/local-reader.gif)
 
 ### 📎 多格式引用
 
 可插入 **Pandoc** (`[@key]`)、**Wikilink** (`[[Source/@key|Author (year)]]`)、**脚注** 或原始 **citekey**。支持从树视图拖拽、触发字符串自动补全（`@@`）以及阅读器快捷键复制；还可自动带入页码与摘录内容。
 
-![Citations](docs/assets/citations.gif)
+![Citations](assets/citations.gif)
 
 ### 🌳 Zotero 树视图与搜索弹窗
 
 在高性能虚拟树中浏览你的全部 Zotero 内容：文献库、集合、条目、附件。支持搜索、排序、拖拽、右键操作。双击附件即可打开，拖拽条目即可引用。
 
-![Tree View](docs/assets/tree-view.gif)
+![Tree View](assets/tree-view.gif)
 
 ### 🛠️ 还有更多
 
