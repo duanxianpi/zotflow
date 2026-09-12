@@ -1,10 +1,10 @@
 {
     "schemaVersion": 1,
     "documentWorker": {
-        "commit": "6d0c0ce45d96a4ed5b697927306b1e9207a02041",
-        "archiveUrl": "https://zotero-download.s3.amazonaws.com/ci/document-worker/6d0c0ce45d96a4ed5b697927306b1e9207a02041.zip",
-        "archiveSize": 14918942,
-        "archiveSha256": "1cdfc2f2a3cbb75b7df9f7c02fdb42b06a43c5df3c3b644d694820c5159ee56d"
+        "commit": "8fb70af4000873561c82b2f4eb88be190efb9979",
+        "archiveUrl": "https://zotero-download.s3.amazonaws.com/ci/document-worker/8fb70af4000873561c82b2f4eb88be190efb9979.zip",
+        "archiveSize": 14948524,
+        "archiveSha256": "c267a4aee1eb6114dcc30f24d352e76cc28bae6fe380d0ce6ddab85fb4265c71"
     },
     "enhancementPack": {
         "protocol": {
@@ -49,8 +49,8 @@
             },
             {
                 "path": "metadata.json",
-                "size": 143,
-                "sha256": "6909fdcfe5e6b8d699c5cec92f6e97a272e628cf189b10225061d6619b754dfe"
+                "size": 144,
+                "sha256": "74fb1d0e414fb8ba06bb106a3d43b15fe12898ad73ff876f0c08fc5ed7ac2186"
             },
             {
                 "path": "onnx/ort-wasm-simd-threaded.wasm",
@@ -60,7 +60,7 @@
             {
                 "path": "structured-document-text.js",
                 "size": 23496,
-                "sha256": "340f44fea8d616eaac04b83ef6329eaad2753916b1d50342a8edc7a0b717bed4"
+                "sha256": "5807fbd35c95e3c583d6261517ffba6cfc2daa760fc37ea4753524a77eb71e8c"
             }
         ]
     }
