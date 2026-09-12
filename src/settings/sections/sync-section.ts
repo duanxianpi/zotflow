@@ -22,6 +22,7 @@ export class SyncSection {
     private keyInfoLoaded = false;
     private keyLoadPromise: Promise<void> | undefined;
     private keyLoadVersion = 0;
+    private apiKeyDraft: string | undefined;
 
     constructor(
         private readonly plugin: ZotFlow,
@@ -42,11 +43,13 @@ export class SyncSection {
                             const loading = !this.keyInfoLoaded;
                             setting.addText((text) => {
                                 text.setPlaceholder("Enter API Key")
-                                    .setValue(this.plugin.settings.zoteroapikey)
+                                    .setValue(
+                                        this.apiKeyDraft ??
+                                            this.plugin.settings.zoteroapikey,
+                                    )
                                     .setDisabled(loading || !!this.keyInfo)
                                     .onChange((value) => {
-                                        this.plugin.settings.zoteroapikey =
-                                            value.trim();
+                                        this.apiKeyDraft = value.trim();
                                     });
                                 text.inputEl.type = this.keyInfo
                                     ? "password"
@@ -84,6 +87,7 @@ export class SyncSection {
                                     .onClick(async () => {
                                         const oldKey =
                                             this.plugin.settings.zoteroapikey;
+                                        this.apiKeyDraft = undefined;
                                         this.plugin.settings.zoteroapikey = "";
                                         this.plugin.settings.librariesConfig =
                                             {};
@@ -154,6 +158,7 @@ export class SyncSection {
         this.keyInfoLoaded = false;
         this.keyLoadPromise = undefined;
         this.keyLoadVersion += 1;
+        this.apiKeyDraft = undefined;
     }
 
     private createApiDescription(): DocumentFragment {
@@ -349,7 +354,10 @@ export class SyncSection {
         button: ButtonComponent,
         mode: "verify" | "refresh",
     ): Promise<void> {
-        const apiKey = this.plugin.settings.zoteroapikey;
+        const apiKey =
+            mode === "verify"
+                ? (this.apiKeyDraft ?? this.plugin.settings.zoteroapikey)
+                : this.plugin.settings.zoteroapikey;
         if (!apiKey) {
             services.notificationService.notify(
                 "warning",
@@ -366,13 +374,16 @@ export class SyncSection {
 
         try {
             const result = await workerBridge.key.verifyAndPersistKey(apiKey);
+            if (mode === "verify") {
+                this.plugin.settings.zoteroapikey = apiKey;
+            }
+            await this.plugin.saveSettings();
             services.notificationService.notify(
                 "success",
                 mode === "verify"
                     ? `Verified as ${result.username}`
                     : "Libraries refreshed.",
             );
-            await this.plugin.saveSettings();
             this.reset();
             this.ensureKeyInfoLoaded();
         } catch (error) {

@@ -78,9 +78,14 @@ export class ZoteroAPIService {
     /**
      * Fetch User Groups
      */
-    async getGroups(userID: number): Promise<ZoteroGroup[]> {
+    async getGroups(
+        userID: number,
+        apiKey?: string,
+    ): Promise<ZoteroGroup[]> {
         try {
-            const response = await this._client
+            const client =
+                apiKey === undefined ? this._client : createApiClient(apiKey);
+            const response = await client
                 .library("user", userID)
                 .groups()
                 .get();

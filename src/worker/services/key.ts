@@ -142,6 +142,7 @@ export class KeyService {
 
         const groups: ZoteroGroup[] = await this.zoteroApi.getGroups(
             verifiedKeyInfo.userID,
+            apiKey,
         );
 
         // Persist key + groups
