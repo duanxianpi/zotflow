@@ -4,7 +4,8 @@ import type { PackLease } from "enhancement-pack/types";
 /*
  * Ported from Zotero's `chrome/content/zotero/xpcom/pdfWorker/manager.js`
  * (AGPL-3.0). The transport protocol and queue semantics follow the worker
- * bundled from zotero/document-worker commit 6d0c0ce (Zotero 10.0.0).
+ * bundled from zotero/document-worker commit 8fb70af (used by Zotero 10.0.2
+ * and 10.0.3).
  */
 import * as Comlink from "comlink";
 import SparkMD5 from "spark-md5";
