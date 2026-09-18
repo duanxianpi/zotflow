@@ -38,10 +38,6 @@ coverage/
 
 # Internal Docs
 docs/
-!docs/
-docs/*
-!docs/development-release-workflow.md
-!docs/development-release-workflow-plan.md
 
 # Local note-editor checkout (not tracked as a submodule)
 note-editor/note-editor/
