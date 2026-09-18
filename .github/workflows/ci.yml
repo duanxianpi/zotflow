@@ -39,5 +39,5 @@ jobs:
             - name: Test
               run: npm test
 
-            - name: Build plugin
-              run: npm run build:plugin
+            - name: Build release artifacts
+              run: npm run build:ci
