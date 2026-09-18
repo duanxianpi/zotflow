@@ -28,9 +28,41 @@ export interface SearchableRecord {
 /** Separator used when concatenating fields into a single fuzzy haystack. */
 const HAYSTACK_SEP = " \u00b7 ";
 
+/** Words supported by uFuzzy's default Latin matcher after diacritic folding. */
+const ASCII_FUZZY_TERM_RE = /^[A-Za-z\d']+$/;
+
+/** Unicode words, excluding punctuation that should remain a separator. */
+const SEARCH_WORD_RE = /[\p{L}\p{N}\p{M}']+/gu;
+
 /** Normalize common Latin diacritics without changing stored/displayed text. */
 function foldForSearch(value: string): string {
     return uFuzzy.latinize(value.normalize("NFC"));
+}
+
+/**
+ * Keep uFuzzy's fast Latin matcher, but extract other scripts for literal
+ * substring matching. uFuzzy's default regexes discard non-Latin words, which
+ * otherwise turns a query such as `湖南` into an empty search.
+ */
+function partitionFreeText(query: ParsedQuery): {
+    fuzzy: string;
+    literal: string[];
+} {
+    const fuzzy: string[] = [];
+    const literal: string[] = [];
+
+    for (const token of query.freeTokens) {
+        const words = foldForSearch(token).match(SEARCH_WORD_RE) ?? [];
+        for (const word of words) {
+            if (ASCII_FUZZY_TERM_RE.test(word)) {
+                fuzzy.push(word);
+            } else {
+                literal.push(word.toLowerCase());
+            }
+        }
+    }
+
+    return { fuzzy: fuzzy.join(" "), literal };
 }
 
 /**
@@ -71,14 +103,34 @@ export class SearchService {
             return limit != null ? filtered.slice(0, limit) : filtered;
         }
 
-        const haystack = filtered.map((r) =>
-            foldForSearch(this.buildHaystack(r)),
-        );
+        const terms = partitionFreeText(query);
+        if (!terms.fuzzy && terms.literal.length === 0) return [];
+
+        const searchable = filtered.map((record) => ({
+            record,
+            haystack: foldForSearch(this.buildHaystack(record)),
+        }));
+        const candidates = terms.literal.length
+            ? searchable.filter(({ haystack }) => {
+                  const normalized = haystack.toLowerCase();
+                  return terms.literal.every((term) =>
+                      normalized.includes(term),
+                  );
+              })
+            : searchable;
+
+        if (candidates.length === 0) return [];
+        if (!terms.fuzzy) {
+            const matched = candidates.map(({ record }) => record);
+            return limit != null ? matched.slice(0, limit) : matched;
+        }
+
+        const haystack = candidates.map((candidate) => candidate.haystack);
         // outOfOrder permutation cap enables cross-field term reordering
         // (e.g. "smith attention" matching a title + a separate author field).
         const [idxs, info, order] = this.uf.search(
             haystack,
-            foldForSearch(query.free),
+            terms.fuzzy,
             4,
         );
 
@@ -86,10 +138,10 @@ export class SearchService {
 
         let ranked: SearchableRecord[];
         if (order && info) {
-            ranked = order.map((o) => filtered[info.idx[o]!]!);
+            ranked = order.map((o) => candidates[info.idx[o]!]!.record);
         } else {
             // Ranking was skipped (threshold exceeded) — preserve filter order.
-            ranked = idxs.map((i) => filtered[i]!);
+            ranked = idxs.map((i) => candidates[i]!.record);
         }
 
         return limit != null ? ranked.slice(0, limit) : ranked;
