@@ -118,6 +118,10 @@ export class CacheSection {
     }
 
     private renderUsage(containerEl: HTMLElement): () => void {
+        containerEl
+            .querySelectorAll(":scope > .zotflow-settings-cache-usage")
+            .forEach((element) => element.remove());
+
         const usageContainer = containerEl.createDiv({
             cls: "zotflow-settings-cache-usage",
         });
@@ -178,6 +182,7 @@ export class CacheSection {
         return () => {
             if (this.updateUsage === update) this.updateUsage = undefined;
             if (loadVersion === this.loadVersion) this.loadVersion += 1;
+            usageContainer.remove();
         };
     }
 }

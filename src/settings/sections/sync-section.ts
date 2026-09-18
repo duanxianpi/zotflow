@@ -22,6 +22,7 @@ export class SyncSection {
     private keyInfoLoaded = false;
     private keyLoadPromise: Promise<void> | undefined;
     private keyLoadVersion = 0;
+    private libraryRenderVersion = 0;
     private apiKeyDraft: string | undefined;
 
     constructor(
@@ -131,6 +132,13 @@ export class SyncSection {
                         desc: "Manage the sync settings for each library.",
                         visible: () => this.keyInfoLoaded && !!this.keyInfo,
                         render: (setting) => {
+                            const renderVersion = ++this.libraryRenderVersion;
+                            setting.infoEl
+                                .querySelectorAll(
+                                    ":scope > .zotflow-settings-library-container",
+                                )
+                                .forEach((element) => element.remove());
+
                             let disposed = false;
                             const container = setting.infoEl.createDiv({
                                 cls: "zotflow-settings-library-container",
@@ -141,10 +149,14 @@ export class SyncSection {
                             });
                             void this.renderLibrariesTable(
                                 container,
-                                () => disposed,
+                                () =>
+                                    disposed ||
+                                    renderVersion !==
+                                        this.libraryRenderVersion,
                             );
                             return () => {
                                 disposed = true;
+                                container.remove();
                             };
                         },
                     },
@@ -158,6 +170,7 @@ export class SyncSection {
         this.keyInfoLoaded = false;
         this.keyLoadPromise = undefined;
         this.keyLoadVersion += 1;
+        this.libraryRenderVersion += 1;
         this.apiKeyDraft = undefined;
     }
 
