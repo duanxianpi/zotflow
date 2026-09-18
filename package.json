@@ -8,6 +8,8 @@
         "generate-zotero-item-schema": "node scripts/generate-zotero-item-schema.js",
         "update:document-worker": "node scripts/update-document-worker-lock.mjs",
         "memory:watch": "node scripts/obsidian-memory-watch.mjs",
+        "release:prepare": "node scripts/release-version.mjs prepare",
+        "release:verify": "node scripts/release-version.mjs verify",
         "dev:reader": "cd reader/reader && npm install && webpack --config webpack.obsidian.js --mode development --watch",
         "dev:plugin": "node esbuild.config.mjs",
         "build": "npm run build:reader && npm run build:plugin",
@@ -21,7 +23,8 @@
         "test:vitest": "vitest run",
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
-        "test": "npm run lint && npm run typecheck:tests && npm run test:vitest"
+        "test:release-scripts": "node --test scripts/release-version.test.mjs",
+        "test": "npm run lint && npm run typecheck:tests && npm run test:vitest && npm run test:release-scripts"
     },
     "keywords": [],
     "license": "AGPL-3.0-only",

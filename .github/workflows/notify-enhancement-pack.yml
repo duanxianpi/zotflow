@@ -28,6 +28,7 @@ jobs:
                           repo: "zotflow-enhancement-pack",
                           event_type: "document-worker-updated",
                           client_payload: {
+                              channel: "stable",
                               zotflowCommit: context.sha,
                               documentWorkerCommit: lock.documentWorker.commit,
                               protocol: lock.enhancementPack.protocol,

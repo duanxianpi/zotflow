@@ -1,0 +1,154 @@
+name: Beta Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            version:
+                description: Beta version in x.y.z-beta.N format
+                required: true
+                type: string
+            source_ref:
+                description: Commit or ref contained in staging
+                required: true
+                default: staging
+                type: string
+
+concurrency:
+    group: zotflow-beta-release
+    cancel-in-progress: false
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ inputs.source_ref }}
+                  fetch-depth: 0
+                  submodules: recursive
+
+            - name: Use Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+
+            - name: Verify source and release target
+              id: source
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_VERSION: ${{ inputs.version }}
+              run: |
+                  node scripts/release-version.mjs prepare \
+                    --version "$RELEASE_VERSION" \
+                    --channel beta
+                  node scripts/release-version.mjs verify \
+                    --version "$RELEASE_VERSION" \
+                    --channel beta
+                  git restore package.json package-lock.json manifest.json versions.json
+
+                  git fetch origin staging:refs/remotes/origin/staging
+                  source_sha="$(git rev-parse HEAD)"
+                  if ! git merge-base --is-ancestor "$source_sha" refs/remotes/origin/staging; then
+                    echo "Beta source must be contained in origin/staging" >&2
+                    exit 1
+                  fi
+                  if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_VERSION" >/dev/null 2>&1 || \
+                     gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+                    echo "Release $RELEASE_VERSION already exists" >&2
+                    exit 1
+                  fi
+                  echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Test source
+              run: npm test
+
+            - name: Prepare beta version
+              env:
+                  RELEASE_VERSION: ${{ inputs.version }}
+              run: |
+                  node scripts/release-version.mjs prepare \
+                    --version "$RELEASE_VERSION" \
+                    --channel beta
+                  node scripts/release-version.mjs verify \
+                    --version "$RELEASE_VERSION" \
+                    --channel beta
+
+            - name: Build plugin
+              run: npm run build:ci
+
+            - name: Verify release assets
+              env:
+                  RELEASE_VERSION: ${{ inputs.version }}
+              run: |
+                  test -s main.js
+                  test -s manifest.json
+                  test -s styles.css
+                  node scripts/release-version.mjs verify \
+                    --version "$RELEASE_VERSION" \
+                    --channel beta
+                  sha256sum main.js manifest.json styles.css > SHA256SUMS.txt
+
+            - name: Upload workflow artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: obsidian-zotflow-${{ inputs.version }}
+                  path: |
+                      main.js
+                      manifest.json
+                      styles.css
+                      SHA256SUMS.txt
+                  if-no-files-found: error
+                  compression-level: 0
+
+            - name: Create beta release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  RELEASE_VERSION: ${{ inputs.version }}
+                  SOURCE_SHA: ${{ steps.source.outputs.sha }}
+              run: |
+                  notes="$(printf '%s\n\n%s\n\n%s\n\n%s' \
+                    "ZotFlow beta built from commit \`$SOURCE_SHA\`." \
+                    "Validated with \`npm test\` and \`npm run build:ci\`." \
+                    "Enhancement Pack compatibility is checked after this release is created." \
+                    "Install with BRAT pinned to this version or download the attached assets.")"
+                  gh release create "$RELEASE_VERSION" \
+                    --target "$SOURCE_SHA" \
+                    --title "$RELEASE_VERSION" \
+                    --notes "$notes" \
+                    --prerelease \
+                    --latest=false \
+                    main.js \
+                    manifest.json \
+                    styles.css \
+                    SHA256SUMS.txt
+
+            - name: Request Enhancement Pack beta if needed
+              uses: actions/github-script@v7
+              env:
+                  RELEASE_VERSION: ${{ inputs.version }}
+                  SOURCE_SHA: ${{ steps.source.outputs.sha }}
+              with:
+                  github-token: ${{ secrets.ENHANCEMENT_PACK_DISPATCH_TOKEN }}
+                  script: |
+                      const fs = require("node:fs");
+                      const lock = JSON.parse(fs.readFileSync("document-worker.lock.json", "utf8"));
+
+                      await github.rest.repos.createDispatchEvent({
+                          owner: "duanxianpi",
+                          repo: "zotflow-enhancement-pack",
+                          event_type: "document-worker-beta-requested",
+                          client_payload: {
+                              channel: "beta",
+                              zotflowCommit: process.env.SOURCE_SHA,
+                              zotflowVersion: process.env.RELEASE_VERSION,
+                              documentWorkerCommit: lock.documentWorker.commit,
+                              protocol: lock.enhancementPack.protocol,
+                          },
+                      });

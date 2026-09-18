@@ -7,6 +7,7 @@ on:
 
 jobs:
     build:
+        if: ${{ !contains(github.ref_name, '-') }}
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -16,6 +17,7 @@ jobs:
         steps:
             - uses: actions/checkout@v4
               with:
+                  fetch-depth: 0
                   submodules: recursive
 
             - name: Use Node.js
@@ -27,14 +29,18 @@ jobs:
             - name: Verify release version
               run: |
                   tag="${GITHUB_REF#refs/tags/}"
-                  package_version="$(node -p "require('./package.json').version")"
-                  manifest_version="$(node -p "require('./manifest.json').version")"
-                  manifest_min_app="$(node -p "require('./manifest.json').minAppVersion")"
-                  versions_min_app="$(node -p "require('./versions.json')[process.argv[1]] || ''" "$manifest_version")"
-                  if [ "$tag" != "$package_version" ] || \
-                     [ "$tag" != "$manifest_version" ] || \
-                     [ "$manifest_min_app" != "$versions_min_app" ]; then
-                    echo "Tag, package.json, manifest.json, and versions.json must agree" >&2
+                  if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "Stable release tags must use x.y.z" >&2
+                    exit 1
+                  fi
+                  node scripts/release-version.mjs verify \
+                    --version "$tag" \
+                    --channel stable
+
+                  git fetch origin \
+                    "refs/heads/release/$tag:refs/remotes/origin/release/$tag"
+                  if [ "$(git rev-parse HEAD)" != "$(git rev-parse "refs/remotes/origin/release/$tag")" ]; then
+                    echo "Tag must point to the head of release/$tag" >&2
                     exit 1
                   fi
 
@@ -67,9 +73,13 @@ jobs:
                   GH_TOKEN: ${{ github.token }}
                   RELEASE_TAG: ${{ github.ref_name }}
               run: |
+                  notes="$(printf '%s\n\n%s' \
+                    "Stable candidate built from commit \`$GITHUB_SHA\`." \
+                    "Built with \`npm ci\` and \`npm run build:ci\`.")"
                   gh release create "$RELEASE_TAG" \
                     --verify-tag \
                     --title "$RELEASE_TAG" \
+                    --notes "$notes" \
                     --draft \
                     main.js \
                     manifest.json \
