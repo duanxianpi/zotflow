@@ -755,10 +755,20 @@ Reload Obsidian → **Settings → Community plugins** → enable.
 
 ## 13. Versioning & Releases
 
-- Bump `version` in `manifest.json` (SemVer, no leading `v`).
-- Update `versions.json` to map new version → minimum Obsidian version.
-- Create GitHub release with tag matching `manifest.json` version exactly.
-- Attach `manifest.json`, `main.js`, `styles.css` as release assets.
+- `dev` is the only long-lived development branch; `master` contains only
+  versions that have already been published as stable releases.
+- Create beta releases from a clean, synchronized `dev` with
+  `npm run beta -- patch|minor|major`. This creates and pushes an annotated
+  `x.y.z-beta.N` tag without changing or committing version files.
+- The beta tag workflow temporarily updates release metadata in its runner and
+  publishes a non-draft prerelease. Never move or reuse a published beta tag.
+- Create stable versions on `dev` with `npm version patch|minor|major`, which
+  updates `manifest.json`, `versions.json`, and the package lock through the
+  existing version hook and creates the stable tag.
+- Inspect and publish the stable Draft Release before merging the exact stable
+  tag into `master`; do not merge a later moving `dev` head.
+- Every Release tag must match the released `manifest.json` version exactly and
+  include `manifest.json`, `main.js`, and `styles.css` as assets.
 
 ---
 

@@ -188,6 +188,31 @@ Copy `main.js`, `manifest.json`, and `styles.css` to:
 
 Reload Obsidian and enable the plugin.
 
+### Maintainer release workflow
+
+`dev` is the only long-lived development branch. `master` contains only code
+that has already been published as a stable release. Feature branches merge
+into `dev`; beta versions are immutable tags on existing `dev` commits, so no
+beta version is committed to `package.json` or `manifest.json`.
+
+After the `dev` CI run is green, preview or publish the next beta with:
+
+```bash
+npm run beta:next -- patch
+npm run beta -- patch
+```
+
+The second command calculates the next `x.y.z-beta.N`, creates an annotated
+tag, and pushes only that tag. Use `minor` or `major` instead of `patch` when
+the beta targets that type of stable release. The tag workflow builds temporary
+beta metadata and publishes a non-draft GitHub prerelease without changing the
+branch files.
+
+For a stable release, run `npm version patch`, `minor`, or `major` on `dev`,
+push the commit and tag, and inspect the generated Draft Release. Publish the
+release before merging that exact stable tag into `master`. Never move or reuse
+a published tag.
+
 ---
 
 ## Privacy

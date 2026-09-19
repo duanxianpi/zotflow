@@ -10,6 +10,8 @@
         "memory:watch": "node scripts/obsidian-memory-watch.mjs",
         "release:prepare": "node scripts/release-version.mjs prepare",
         "release:verify": "node scripts/release-version.mjs verify",
+        "beta": "node scripts/beta-tag.mjs",
+        "beta:next": "node scripts/beta-tag.mjs --dry-run",
         "dev:reader": "cd reader/reader && npm install && webpack --config webpack.obsidian.js --mode development --watch",
         "dev:plugin": "node esbuild.config.mjs",
         "build": "npm run build:reader && npm run build:plugin",
@@ -23,7 +25,7 @@
         "test:vitest": "vitest run",
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
-        "test:release-scripts": "node --test scripts/release-version.test.mjs",
+        "test:release-scripts": "node --test scripts/release-version.test.mjs scripts/beta-tag.test.mjs",
         "test": "npm run lint && npm run typecheck:tests && npm run test:vitest && npm run test:release-scripts"
     },
     "keywords": [],

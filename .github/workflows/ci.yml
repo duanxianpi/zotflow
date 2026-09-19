@@ -4,13 +4,11 @@ on:
     push:
         branches:
             - master
-            - staging
-            - "release/**"
+            - dev
     pull_request:
         branches:
             - master
-            - staging
-            - "release/**"
+            - dev
 
 concurrency:
     group: ci-${{ github.workflow }}-${{ github.ref }}
