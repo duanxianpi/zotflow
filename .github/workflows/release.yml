@@ -48,6 +48,33 @@ jobs:
                   npm ci
                   npm run build:ci
 
+            - name: Generate release notes
+              env:
+                  RELEASE_TAG: ${{ github.ref_name }}
+              run: |
+                  previous_tag="$(
+                    git tag --merged HEAD --sort=-v:refname |
+                      while IFS= read -r tag; do
+                        if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$tag" != "$RELEASE_TAG" ]; then
+                          printf '%s\n' "$tag"
+                          break
+                        fi
+                      done
+                  )"
+                  notes_file="$RUNNER_TEMP/release-notes.md"
+                  {
+                    printf 'Stable candidate built from commit `%s`.\n\n' "$GITHUB_SHA"
+                    printf 'Built with `npm ci` and `npm run build:ci`.\n'
+                    if [ -n "$previous_tag" ]; then
+                      printf '\n## Commits since %s\n\n' "$previous_tag"
+                      git log --reverse \
+                        --format="- %s ([%h](https://github.com/${GITHUB_REPOSITORY}/commit/%H)) — %an" \
+                        "$previous_tag..HEAD"
+                      printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+                        "$GITHUB_REPOSITORY" "$previous_tag" "$RELEASE_TAG"
+                    fi
+                  } > "$notes_file"
+
             - name: Upload workflow artifact
               uses: actions/upload-artifact@v4
               with:
@@ -76,13 +103,10 @@ jobs:
                     echo "Release $RELEASE_TAG already exists; keeping it for an idempotent rerun"
                     exit 0
                   fi
-                  notes="$(printf '%s\n\n%s' \
-                    "Stable candidate built from commit \`$GITHUB_SHA\`." \
-                    "Built with \`npm ci\` and \`npm run build:ci\`.")"
                   gh release create "$RELEASE_TAG" \
                     --verify-tag \
                     --title "$RELEASE_TAG" \
-                    --notes "$notes" \
+                    --notes-file "$RUNNER_TEMP/release-notes.md" \
                     --draft \
                     main.js \
                     manifest.json \
