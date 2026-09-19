@@ -27,6 +27,13 @@ describe("offline Pack container", () => {
             "Resource hash",
         );
     });
+    test("accepts a beta Pack identity when the installed versions agree", async () => {
+        const version = "2.1.0-beta.1";
+        const f = packFixture(version);
+        await expect(parsePack(f.bytes, version, f.expected)).resolves.toMatchObject(
+            { resources: expect.any(Map) },
+        );
+    });
     test.each([
         "\n/* arbitrary comment */",
         "\n/* nosourcemap */\nalert(1)",

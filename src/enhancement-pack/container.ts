@@ -14,6 +14,8 @@ import type {
 } from "enhancement-pack/types";
 
 const HASH = /^[0-9a-f]{64}$/;
+const PACK_VERSION =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-beta\.(0|[1-9]\d*))?$/;
 function requireValid(ok: unknown, message: string): asserts ok {
     if (!ok) throw new PackError("corrupt", message);
 }
@@ -91,9 +93,7 @@ function validateManifest(value: unknown, payloadSize: number): PackManifest {
         record(value.pack) &&
             value.pack.id === PACK_ID &&
             typeof value.pack.version === "string" &&
-            /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(
-                value.pack.version,
-            ),
+            PACK_VERSION.test(value.pack.version),
         "Invalid Pack identity",
     );
     requireValid(
