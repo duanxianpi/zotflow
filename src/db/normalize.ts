@@ -142,7 +142,13 @@ export function normalizeItem(
     if (raw.data.itemType === "attachment") {
         title = raw.data.filename || raw.data.title || "";
     } else if (raw.data.itemType === "note") {
-        title = noteTitle(raw.data.note ?? "", raw.data.key);
+            title = noteTitle(raw.data.note ?? "", raw.data.key);
+    } else if (raw.data.itemType === "case") {
+        title = raw.data.caseName || "";
+    } else if (raw.data.itemType === "statute") {
+        title = raw.data.nameOfAct || "";
+    } else if (raw.data.itemType === "email") {
+        title = raw.data.subject || "";
     } else if (raw.data.itemType !== "annotation") {
         // Exclude annotation which doesn't have title
         // For other types that might have title
