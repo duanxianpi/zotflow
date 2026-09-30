@@ -287,6 +287,7 @@ src/
 │   ├── zotero-api-client.d.ts      # zotero-api-client ambient types
 │   ├── zotero-item.d.ts            # Auto-generated Zotero item types (from schema.json)
 │   ├── zotero-item-const.ts        # Zotero item type string array
+│   ├── zotero-base-fields.ts       # Auto-generated base-field map (e.g. case.title → caseName)
 │   ├── zotero.d.ts                 # ZoteroKey, ZoteroGroup, etc.
 │   ├── zotero-reader.d.ts          # Reader event types, AnnotationJSON
 │   ├── zotflow.d.ts                # TFileWithoutParentAndVault
@@ -360,7 +361,8 @@ src/
     ├── error.ts                    # ZotFlowError class (codes, context, wrapping)
     ├── utils.ts                    # getNotePath() (sanitized filename)
     ├── file.ts                     # File CRUD helpers (read/write/check/delete)
-    └── credentials.ts              # Credential storage (Obsidian SecretStorage, not data.json)
+    ├── credentials.ts              # Credential storage (Obsidian SecretStorage, not data.json)
+    └── zotero-fields.ts            # getField(): Zotero base-field resolution for item data
 ```
 
 ---
@@ -402,7 +404,16 @@ npm run test:watch   # vitest, watch mode
 npm run typecheck:tests   # tsc over tests/ (uses tests/tsconfig.json)
 npm run test:coverage     # vitest + v8 coverage (text + html)
 npm run lint         # eslint over the whole repo (still has a backlog)
+npm run generate-zotero-item-schema             # regenerate types from schema.json
+npm run generate-zotero-item-schema -- --fetch  # refresh schema.json from api.zotero.org first
 ```
+
+Read Zotero item fields through `getField()` (`utils/zotero-fields`), not
+`data.title` / `data.date` directly: several item types store base fields under
+their own names (a case's `title` is `caseName`, a book section's
+`publicationTitle` is `bookTitle`, a patent's `date` is `issueDate`).
+Template contexts get their bibliographic variables from `buildItemMetadata()`,
+which exposes every schema field (`ZOTERO_FIELDS`) — do not hand-list fields.
 
 `eslint .` runs as part of `npm test`. Keep the whole repository free of lint
 errors; remaining warnings should only represent explicit compatibility or UX
@@ -647,7 +658,7 @@ via the Comlink `WorkerBridge`.
 | `QueryService`      | `view.ts` (attachment lookup)      | `getAttachmentItem` (extensible for future `getItem`, etc.)            |
 | `AttachmentService` | `cache-section.ts`                 | `getCacheTotalSizeBytes`, `purgeCache`                                 |
 
-### Schema (current version: 5)
+### Schema (current version: 6)
 
 Primary keys are the `&`-prefixed declarations in `db/db.ts`, and the `Table<T, K>`
 type parameters mirror them. **There is no `localID` column** — `items`,
@@ -667,7 +678,8 @@ is why `db.items.get([libraryID, key])` and
 
 Version history: v1 base schema · v2 adds `[libraryID+parentCollection]` to
 `collections` · v3 adds `lastAccessedAt` to `items` · v4 clears `files` (cached
-bytes moved from `Blob` to `ArrayBuffer`) · v5 adds `cslCache`.
+bytes moved from `Blob` to `ArrayBuffer`) · v5 adds `cslCache` · v6 backfills
+base-mapped titles (`case.caseName`, `statute.nameOfAct`, `email.subject`).
 
 `*`-prefixed entries are Dexie multi-valued indexes.
 

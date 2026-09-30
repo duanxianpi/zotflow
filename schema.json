@@ -1,5 +1,5 @@
 {
-	"version": 39,
+	"version": 42,
 	"itemTypes": [
 		{
 			"itemType": "annotation",
@@ -736,13 +736,25 @@
 					"field": "date"
 				},
 				{
+					"field": "eventPlace"
+				},
+				{
 					"field": "volume"
+				},
+				{
+					"field": "issue"
+				},
+				{
+					"field": "numberOfVolumes"
 				},
 				{
 					"field": "pages"
 				},
 				{
 					"field": "series"
+				},
+				{
+					"field": "seriesNumber"
 				},
 				{
 					"field": "DOI"
@@ -2677,6 +2689,9 @@
 					"field": "versionNumber"
 				},
 				{
+					"field": "edition"
+				},
+				{
 					"field": "status"
 				},
 				{
@@ -2687,6 +2702,15 @@
 				},
 				{
 					"field": "place"
+				},
+				{
+					"field": "partNumber"
+				},
+				{
+					"field": "partTitle"
+				},
+				{
+					"field": "ISBN"
 				},
 				{
 					"field": "DOI"
@@ -2732,6 +2756,9 @@
 				{
 					"creatorType": "author",
 					"primary": true
+				},
+				{
+					"creatorType": "editor"
 				},
 				{
 					"creatorType": "contributor"
@@ -3342,7 +3369,7 @@
 					"edition"
 				],
 				"event-place": [
-					"place"
+					"eventPlace"
 				],
 				"event-title": [
 					"meetingName",
@@ -3386,6 +3413,12 @@
 				],
 				"number-of-volumes": [
 					"numberOfVolumes"
+				],
+				"original-publisher": [
+					"originalPublisher"
+				],
+				"original-publisher-place": [
+					"originalPlace"
 				],
 				"part-number": [
 					"partNumber"
@@ -3448,7 +3481,8 @@
 			"date": {
 				"accessed": "accessDate",
 				"issued": "date",
-				"submitted": "filingDate"
+				"submitted": "filingDate",
+				"original-date": "originalDate"
 			}
 		},
 		"names": {

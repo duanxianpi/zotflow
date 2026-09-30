@@ -4,7 +4,7 @@ import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
-import { extractYear } from "utils/date";
+import { buildItemMetadata } from "utils/zotero-fields";
 import { renderLiquid } from "./liquid-support";
 import type { DbHelperService } from "./db-helper";
 
@@ -103,26 +103,8 @@ export class NotePathService {
             this.settings.librarySourceNotePathTemplate.trim() ||
             FALLBACK_ZOTERO_TEMPLATE;
 
-        const raw = item.raw || {};
-        const data = (raw.data || {}) as unknown as Record<string, unknown>;
-
         const library = await db.libraries.get(item.libraryID);
         const libraryName = library?.name || "Unknown";
-
-        let creators: { name: string }[] = [];
-        if (raw.meta?.creatorsSummary) {
-            if (typeof raw.meta.creatorsSummary === "string") {
-                creators = [{ name: raw.meta.creatorsSummary }];
-            }
-        } else if (Array.isArray(data.creators)) {
-            creators = (data.creators as Array<Record<string, string>>).map(
-                (c) => ({
-                    name:
-                        c.name ||
-                        `${c.firstName || ""} ${c.lastName || ""}`.trim(),
-                }),
-            );
-        }
 
         const itemPaths = await this.dbHelper
             .getItemPaths([
@@ -135,40 +117,21 @@ export class NotePathService {
             .then((paths) => paths[`${item.libraryID}:${item.key}`] || []);
 
         const context = {
+            ...buildItemMetadata(item),
+
             // Identity
             key: item.key,
             version: item.version,
-            citationKey: item.citationKey || "",
             libraryID: item.libraryID,
             itemType: item.itemType,
             itemPaths: itemPaths,
 
-            // Metadata
-            title: item.title || "",
-            creators,
-            date: (data.date as string) || "",
             dateAdded: item.dateAdded,
             dateModified: item.dateModified,
-            accessDate: (data.accessDate as string) || "",
-            abstractNote: (data.abstractNote as string) || "",
-            publicationTitle: (data.publicationTitle as string) || "",
-            publisher: (data.publisher as string) || "",
-            place: (data.place as string) || "",
-            volume: (data.volume as string) || "",
-            issue: (data.issue as string) || "",
-            pages: (data.pages as string) || "",
-            series: (data.series as string) || "",
-            seriesNumber: (data.seriesNumber as string) || "",
-            edition: (data.edition as string) || "",
-            url: (data.url as string) || "",
-            DOI: (data.DOI as string) || "",
-            ISBN: (data.ISBN as string) || "",
-            ISSN: (data.ISSN as string) || "",
-            tags: (data.tags as Array<{ tag: string }>) || [],
+            tags: item.raw?.data?.tags || [],
 
             // Derived
             libraryName,
-            year: extractYear(data.date),
         };
 
         const rendered = await renderLiquid(

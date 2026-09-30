@@ -293,6 +293,31 @@ describe("normalizeItem: title", () => {
         const out = normalizeItem(article({ title: undefined }), LIBRARY_ID);
         expect(out.title).toBe("");
     });
+
+    // Zotero shows these types' base-mapped stand-in as the title.
+    test("a case takes its title from caseName", () => {
+        const out = normalizeItem(
+            item("case", { caseName: "Roe v. Wade" }),
+            LIBRARY_ID,
+        );
+        expect(out.title).toBe("Roe v. Wade");
+    });
+
+    test("a statute takes its title from nameOfAct", () => {
+        const out = normalizeItem(
+            item("statute", { nameOfAct: "Clean Air Act" }),
+            LIBRARY_ID,
+        );
+        expect(out.title).toBe("Clean Air Act");
+    });
+
+    test("an email takes its title from subject", () => {
+        const out = normalizeItem(
+            item("email", { subject: "Re: draft" }),
+            LIBRARY_ID,
+        );
+        expect(out.title).toBe("Re: draft");
+    });
 });
 
 // ---------------------------------------------------------------------------

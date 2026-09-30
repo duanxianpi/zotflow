@@ -34,7 +34,7 @@ import type {
     OutputFormat,
     RenderOptions,
 } from "worker/csl";
-import { extractYear } from "utils/date";
+import { buildItemMetadata } from "utils/zotero-fields";
 import {
     renderLiquid,
     zfEnv,
@@ -141,36 +141,6 @@ const CSL_OUTPUT_FORMATS = new Set([
     "markdown",
     "markdown-pure",
 ]);
-
-/**
- * An unchecked read-view over `ZoteroItemData`, not a shape any item actually
- * has. Each field is declared on only some members of the union — a book has
- * no `publicationTitle`, an attachment has none of them — so every one is
- * optional here and may genuinely be absent at runtime.
- */
-interface OptionalItemFields {
-    date?: string;
-    accessDate?: string;
-    abstractNote?: string;
-    publicationTitle?: string;
-    publisher?: string;
-    place?: string;
-    volume?: string;
-    issue?: string;
-    pages?: string;
-    series?: string;
-    seriesNumber?: string;
-    edition?: string;
-    url?: string;
-    DOI?: string;
-    ISBN?: string;
-    ISSN?: string;
-    creators?: Array<{
-        name?: string;
-        firstName?: string;
-        lastName?: string;
-    }>;
-}
 
 /** Root scope handed to Liquid when rendering a source note. */
 interface ItemRenderContext {
@@ -905,20 +875,6 @@ export class LibraryTemplateService {
             (att) => att.annotations,
         );
 
-        const optionalFields = data as OptionalItemFields;
-
-        let creatorsObj: { name: string }[] = [];
-        if (raw.meta?.creatorsSummary) {
-            if (typeof raw.meta.creatorsSummary === "string") {
-                creatorsObj = [{ name: raw.meta.creatorsSummary }];
-            }
-        } else if (optionalFields.creators) {
-            creatorsObj = optionalFields.creators.map((c) => ({
-                name:
-                    c.name || `${c.firstName || ""} ${c.lastName || ""}`.trim(),
-            }));
-        }
-
         const itemPaths = await this.dbHelper
             .getItemPaths([
                 {
@@ -932,11 +888,11 @@ export class LibraryTemplateService {
         const relatedItems = await this.mapToRelatedItems(data);
 
         return {
+            ...buildItemMetadata(item),
             key: item.key,
             version: item.version,
             libraryID: item.libraryID,
             parentItem: item.parentItem || "",
-            citationKey: item.citationKey || "",
             itemPaths: itemPaths,
             notes,
             annotations,
@@ -944,27 +900,8 @@ export class LibraryTemplateService {
             attachments,
             relatedItems,
             itemType: item.itemType,
-            title: item.title || "",
-            creators: creatorsObj,
-            date: optionalFields.date || null,
-            year: extractYear(optionalFields.date),
             dateAdded: item.dateAdded,
             dateModified: item.dateModified,
-            accessDate: optionalFields.accessDate || null,
-            abstractNote: optionalFields.abstractNote,
-            publicationTitle: optionalFields.publicationTitle,
-            publisher: optionalFields.publisher,
-            place: optionalFields.place,
-            volume: optionalFields.volume,
-            issue: optionalFields.issue,
-            pages: optionalFields.pages,
-            series: optionalFields.series,
-            seriesNumber: optionalFields.seriesNumber,
-            edition: optionalFields.edition,
-            url: optionalFields.url,
-            DOI: optionalFields.DOI,
-            ISBN: optionalFields.ISBN,
-            ISSN: optionalFields.ISSN,
             tags: data.tags || [],
             csljson: item.csljson,
         };

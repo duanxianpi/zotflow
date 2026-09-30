@@ -262,19 +262,19 @@ describe("template context", () => {
         ).toBe("ARTICLE1.md");
     });
 
-    test("creators come from the meta summary when Zotero supplies one", async () => {
+    test("Zotero's creator summary is exposed alongside creators", async () => {
         const it = await item({
             raw: {
                 ...raw({ creators: [{ firstName: "Jane", lastName: "Doe" }] }),
-                meta: { creatorsSummary: "Doe et al." },
+                meta: { creatorSummary: "Doe et al." },
             },
         });
         expect(
             await h.notePath.resolveLibraryNotePath(
                 it,
-                "Refs/{{creators[0].name}}",
+                "Refs/{{creatorSummary}} - {{creators[0].name}}",
             ),
-        ).toBe("Refs/Doe et al..md");
+        ).toBe("Refs/Doe et al. - Jane Doe.md");
     });
 
     test("creators fall back to first/last name pairs", async () => {
@@ -308,6 +308,29 @@ describe("template context", () => {
                 "{{publicationTitle}}/{{volume}}/{{pages}}/{{key}}",
             ),
         ).toBe("Journal of Testing/12/45-67/ARTICLE1.md");
+    });
+
+    test("base fields resolve through type-specific stand-ins", async () => {
+        const it = await item({
+            itemType: "patent",
+            raw: raw({ itemType: "patent", issueDate: "2004-06-01" }),
+        });
+        expect(
+            await h.notePath.resolveLibraryNotePath(it, "{{year}}/{{key}}"),
+        ).toBe("2004/ARTICLE1.md");
+    });
+
+    test("type-specific fields are exposed and sanitized", async () => {
+        const it = await item({
+            itemType: "case",
+            raw: raw({ itemType: "case", court: "Court A/B" }),
+        });
+        expect(
+            await h.notePath.resolveLibraryNotePath(
+                it,
+                "{{court}}/{{key}}",
+            ),
+        ).toBe("Court AB/ARTICLE1.md");
     });
 
     test("itemPaths carries the collection breadcrumbs", async () => {

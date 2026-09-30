@@ -96,7 +96,7 @@ export interface ZoteroItem<T extends ZoteroItemData> {
             name: string;
             links: { [key: string]: { href: string; type: string } };
         };
-        creatorsSummary?: string;
+        creatorSummary?: string;
     };
     data: T;
     /** CSL-JSON payload, present when fetched with include=data,csljson. */

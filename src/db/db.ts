@@ -1,5 +1,8 @@
 import Dexie from "dexie";
 
+import { itemTitle } from "db/normalize";
+import { BASE_FIELD_MAP } from "types/zotero-base-fields";
+
 import type { IndexableTypePart, Table } from "dexie";
 import type {
     IDBZoteroFile,
@@ -95,6 +98,23 @@ export class ZotFlowDB extends Dexie {
         // v5: Key-value cache for the CSL renderer (styles, locales, index).
         this.version(5).stores({
             cslCache: "&key",
+        });
+
+        // v6: Titles are now base-field mapped (case → caseName, statute →
+        // nameOfAct, email → subject). Delta sync never refetches unchanged
+        // items, so backfill the titles those types were stored without.
+        this.version(6).upgrade(async (tx) => {
+            const mappedTypes = new Set(
+                Object.keys(BASE_FIELD_MAP).filter(
+                    (type) => BASE_FIELD_MAP[type]?.title,
+                ),
+            );
+            await tx
+                .table<AnyIDBZoteroItem>("items")
+                .filter((item) => !item.title && mappedTypes.has(item.itemType))
+                .modify((item) => {
+                    if (item.raw?.data) item.title = itemTitle(item.raw.data);
+                });
         });
     }
 }

@@ -1,5 +1,6 @@
 import type { IDBZoteroCollection, AnyIDBZoteroItem } from "types/db-schema";
 import type { ZoteroCollection, AnyZoteroItem } from "types/zotero";
+import { getField } from "utils/zotero-fields";
 
 /**
  * Normalize a raw Zotero collection from the API into our IDB schema.
@@ -125,6 +126,24 @@ function noteTitle(note: string, key: string): string {
 }
 
 /**
+ * The display title Zotero shows for an item: an attachment's filename, a
+ * note's first line, and otherwise the base-mapped `title` field — so a
+ * case uses `caseName`, a statute `nameOfAct` and an email `subject`.
+ */
+export function itemTitle(data: AnyZoteroItem["data"]): string {
+    switch (data.itemType) {
+        case "attachment":
+            return data.filename || data.title || "";
+        case "note":
+            return noteTitle(data.note ?? "", data.key);
+        case "annotation":
+            return "";
+        default:
+            return getField(data, "title") ?? "";
+    }
+}
+
+/**
  * Normalize a raw Zotero item from the API into our IDB schema.
  *
  * @param raw The raw item object from Zotero API (containing .data, .key, etc.)
@@ -135,20 +154,7 @@ export function normalizeItem(
     raw: AnyZoteroItem,
     libraryID: number,
 ): AnyIDBZoteroItem {
-    // Safety check for title
-    let title = "";
-
-    // Normalize title
-    if (raw.data.itemType === "attachment") {
-        title = raw.data.filename || raw.data.title || "";
-    } else if (raw.data.itemType === "note") {
-        title = noteTitle(raw.data.note ?? "", raw.data.key);
-    } else if (raw.data.itemType !== "annotation") {
-        // Exclude annotation which doesn't have title
-        // For other types that might have title
-        const maybeTitle = raw.data.title;
-        if (maybeTitle) title = maybeTitle;
-    }
+    const title = itemTitle(raw.data);
 
     // Flatten creators for search
     const searchCreators: string[] = [];

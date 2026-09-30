@@ -547,6 +547,101 @@ describe("item context", () => {
         }
     });
 
+    test("base fields resolve through type-specific stand-ins", async () => {
+        // A case keeps its title in caseName, its date in dateDecided and its
+        // court under the `authority` base field; templates see base names.
+        await seedItem({
+            libraryID: LIB,
+            key: "CASE0001",
+            itemType: "case",
+            title: "Roe v. Wade",
+            raw: {
+                key: "CASE0001",
+                library: { type: "user", id: LIB, name: "My Library" },
+                meta: {},
+                data: {
+                    key: "CASE0001",
+                    itemType: "case",
+                    caseName: "Roe v. Wade",
+                    court: "Supreme Court",
+                    dateDecided: "1973-01-22",
+                    docketNumber: "70-18",
+                    reporter: "U.S.",
+                    tags: [],
+                    relations: {},
+                },
+            } as any,
+        } as any);
+        const item = (await db.items.get([LIB, "CASE0001"]))!;
+
+        const body = await render(
+            "{{ item.title }}|{{ item.year }}|{{ item.authority }}|{{ item.number }}|{{ item.reporter }}|{{ item.caseName }}",
+            item,
+        );
+        expect(body.trim()).toBe(
+            "Roe v. Wade|1973|Supreme Court|70-18|U.S.|Roe v. Wade",
+        );
+    });
+
+    test("a book section's publicationTitle is its bookTitle", async () => {
+        await seedItem({
+            libraryID: LIB,
+            key: "SECTION1",
+            itemType: "bookSection",
+            raw: {
+                key: "SECTION1",
+                library: { type: "user", id: LIB, name: "My Library" },
+                meta: {},
+                data: {
+                    key: "SECTION1",
+                    itemType: "bookSection",
+                    title: "Chapter One",
+                    bookTitle: "The Whole Book",
+                    tags: [],
+                    relations: {},
+                },
+            } as any,
+        } as any);
+        const item = (await db.items.get([LIB, "SECTION1"]))!;
+
+        // Both names resolve, as with Zotero's getField().
+        expect(
+            (
+                await render(
+                    "{{ item.publicationTitle }}|{{ item.bookTitle }}",
+                    item,
+                )
+            ).trim(),
+        ).toBe("The Whole Book|The Whole Book");
+    });
+
+    test("every schema field reaches the template", async () => {
+        // Not a hand-kept list: anything in the Zotero schema is exposed.
+        const item = await seedArticle("PARENT01", {
+            extra: "Original date: 1999",
+            shortTitle: "Things",
+            language: "en",
+            journalAbbreviation: "J. Test.",
+            callNumber: "QA76",
+            archiveLocation: "Box 3",
+            PMID: "123456",
+        });
+        const body = await render(
+            "{{ item.extra }}|{{ item.shortTitle }}|{{ item.language }}|{{ item.journalAbbreviation }}|{{ item.callNumber }}|{{ item.archiveLocation }}|{{ item.PMID }}",
+            item,
+        );
+        expect(body.trim()).toBe(
+            "Original date: 1999|Things|en|J. Test.|QA76|Box 3|123456",
+        );
+    });
+
+    test("fields the item lacks are absent, so `if` skips them", async () => {
+        const body = await render(
+            "{% if item.bookTitle %}yes{% else %}no{% endif %}",
+        );
+        expect(body.trim()).toBe("no");
+    });
+
     test("tags reach the template", async () => {
         const item = await seedArticle("PARENT01", {
             tags: [{ tag: "alpha" }, { tag: "beta" }],
@@ -568,7 +663,23 @@ describe("item context", () => {
         expect(await render("{{ item.creators[0].name }}")).toContain("Jane Doe");
     });
 
-    test("a Zotero-supplied creator summary wins", async () => {
+    test("creators keep their role and name parts", async () => {
+        const item = await seedArticle("PARENT01", {
+            creators: [
+                { creatorType: "author", firstName: "Jane", lastName: "Doe" },
+                { creatorType: "editor", name: "Acme Institute" },
+            ],
+        });
+        const body = await render(
+            "{% for c in item.creators %}{{ c.creatorType }}:{{ c.lastName }}:{{ c.name }};{% endfor %}",
+            item,
+        );
+        expect(body.trim()).toBe("author:Doe:Jane Doe;editor::Acme Institute;");
+    });
+
+    test("Zotero's creator summary is its own variable", async () => {
+        // It used to be read from a misspelt `creatorsSummary`, which the API
+        // never sends; when it did apply, it replaced the creators list.
         await seedItem({
             libraryID: LIB,
             key: "PARENT01",
@@ -576,7 +687,7 @@ describe("item context", () => {
             raw: {
                 key: "PARENT01",
                 library: { type: "user", id: LIB, name: "My Library" },
-                meta: { creatorsSummary: "Doe et al." },
+                meta: { creatorSummary: "Doe et al." },
                 data: {
                     key: "PARENT01",
                     itemType: "journalArticle",
@@ -587,9 +698,14 @@ describe("item context", () => {
         } as any);
         const item = (await db.items.get([LIB, "PARENT01"]))!;
 
-        expect(await render("{{ item.creators[0].name }}", item)).toContain(
-            "Doe et al.",
-        );
+        expect(
+            (
+                await render(
+                    "{{ item.creatorSummary }}|{{ item.creators[0].name }}",
+                    item,
+                )
+            ).trim(),
+        ).toBe("Doe et al.|Jane Doe");
     });
 
     test("itemPaths carries the collection breadcrumbs", async () => {

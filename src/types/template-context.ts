@@ -1,4 +1,5 @@
 import type { AnnotationJSON } from "./zotero-reader";
+import type { ZoteroFieldName } from "./zotero-base-fields";
 
 /** Utility functions available inside LiquidJS templates. */
 export interface TemplateUtils {
@@ -6,48 +7,52 @@ export interface TemplateUtils {
     formatDate: (date: string, format?: string) => string;
 }
 
+/**
+ * Every Zotero item field, keyed by schema name and resolved like Zotero's
+ * `getField()` — a book section has both `bookTitle` and `publicationTitle`.
+ * Absent when the item has no value.
+ */
+export type ZoteroFieldValues = Partial<Record<ZoteroFieldName, string>>;
+
+/** A creator as templates see it. */
+export interface CreatorTemplateContext {
+    /** Role, e.g. `author`, `editor`, `translator`. */
+    creatorType?: string;
+    firstName?: string;
+    lastName?: string;
+    /** Single-field name, or `firstName lastName` joined. */
+    name: string;
+}
+
+/** Bibliographic variables shared by source-note and note-path templates. */
+export interface ItemMetadataContext extends Omit<
+    ZoteroFieldValues,
+    "title" | "citationKey" | "date" | "accessDate"
+> {
+    title: string;
+    citationKey: string;
+    date: string | null;
+    /** Null rather than absent when the item has none, matching `date`. */
+    accessDate: string | null;
+    year: string;
+    creators: CreatorTemplateContext[];
+    /** Zotero's own short creator line, e.g. "Doe and Smith". */
+    creatorSummary: string;
+}
+
 /** Template rendering context for a top-level Zotero item. */
-export interface ItemTemplateContext {
+export interface ItemTemplateContext extends ItemMetadataContext {
     // Identity
     key: string;
     version: number;
-    citationKey: string;
     libraryID: number;
     itemType: string;
     itemPaths: string[];
     /** Parent item key (e.g. for standalone attachments/notes). Empty for top-level items. */
     parentItem: string;
 
-    // Metadata
-    title: string;
-    creators: Array<{
-        creatorType?: string;
-        firstName?: string;
-        lastName?: string;
-        name?: string;
-    }>;
-    date: string | null;
-    year: string;
     dateAdded: string;
     dateModified: string;
-
-    /** Null rather than absent when the item has none, matching `date`. */
-    accessDate?: string | null;
-    abstractNote?: string;
-    publicationTitle?: string;
-    publisher?: string;
-    place?: string;
-    volume?: string;
-    issue?: string;
-    pages?: string;
-    series?: string;
-    seriesNumber?: string;
-    edition?: string;
-
-    url?: string;
-    DOI?: string;
-    ISBN?: string;
-    ISSN?: string;
 
     tags: Array<{ tag: string; type?: number }>;
 
