@@ -24,6 +24,7 @@ import type { KeyService } from "worker/services/key";
 import type { LibraryService } from "worker/services/library";
 import type { DbHelperService } from "worker/services/db-helper";
 import type { SearchService } from "worker/services/search";
+import type { DisplayTitleService } from "worker/services/display-title";
 import type { TagService } from "worker/services/tag";
 import type { DocumentWorkerService } from "worker/services/document-worker";
 import type { LibraryTemplateService } from "worker/services/library-template";
@@ -63,6 +64,7 @@ export class WorkerBridge {
     private _library: Comlink.Remote<LibraryService>;
     private _dbHelper: Comlink.Remote<DbHelperService>;
     private _search: Comlink.Remote<SearchService>;
+    private _displayTitle: Comlink.Remote<DisplayTitleService>;
     private _tag: Comlink.Remote<TagService>;
     private _documentWorker: Comlink.Remote<DocumentWorkerService>;
     private _enhancementResources: Comlink.Remote<EnhancementResourceService>;
@@ -176,6 +178,10 @@ export class WorkerBridge {
         this._search = await materializeComlinkProxy(
             "search",
             this._api.search,
+        );
+        this._displayTitle = await materializeComlinkProxy(
+            "displayTitle",
+            this._api.displayTitle,
         );
         this._tag = await materializeComlinkProxy("tag", this._api.tag);
         this._enhancementResources = await materializeComlinkProxy(
@@ -306,6 +312,11 @@ export class WorkerBridge {
     get search() {
         this.assertInitialized();
         return this._search;
+    }
+
+    get displayTitle() {
+        this.assertInitialized();
+        return this._displayTitle;
     }
 
     get tag() {

@@ -7,6 +7,7 @@ import { NotePathService } from "worker/services/note-path";
 import { LibraryService } from "worker/services/library";
 import { SearchService } from "worker/services/search";
 import { SearchMatcher } from "worker/services/search-matcher";
+import { DisplayTitleService } from "worker/services/display-title";
 import { DEFAULT_SETTINGS } from "settings/types";
 
 import { db, resetDb, seedLibrary } from "./db";
@@ -33,6 +34,7 @@ export interface ServiceHarness {
     notePath: NotePathService;
     library: LibraryService;
     search: SearchService;
+    displayTitle: DisplayTitleService;
     host: FakeParentHost;
     settings: ZotFlowSettings;
 }
@@ -85,8 +87,21 @@ export async function createServiceHarness(
     const host = createFakeParentHost();
     const library = new LibraryService(settings, host);
     const dbHelper = new DbHelperService(settings, host, library);
-    const search = new SearchService(new SearchMatcher(), dbHelper);
+    const displayTitle = new DisplayTitleService(settings, host);
+    const search = new SearchService(
+        new SearchMatcher(),
+        dbHelper,
+        displayTitle,
+    );
     const notePath = new NotePathService(settings, dbHelper);
 
-    return { dbHelper, notePath, library, search, host, settings };
+    return {
+        dbHelper,
+        notePath,
+        library,
+        search,
+        displayTitle,
+        host,
+        settings,
+    };
 }

@@ -1,0 +1,325 @@
+/**
+ * Display titles — the user's template for how items are named in the tree
+ * view and the item search modals, with the Zotero title as the fallback.
+ */
+import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+
+import {
+    DISPLAY_TITLE_APPLY_DELAY,
+    DisplayTitleService,
+} from "worker/services/display-title";
+import { SearchMatcher } from "worker/services/search-matcher";
+import { TreeViewService } from "worker/services/tree-view";
+import { DEFAULT_SETTINGS } from "settings/types";
+import { db, seedItem } from "../fakes/db";
+import { createFakeParentHost } from "../fakes/parent-host";
+import { createServiceHarness, USER_ID } from "../fakes/services";
+
+import type { AnyIDBZoteroItem } from "types/db-schema";
+import type { ServiceHarness } from "../fakes/services";
+
+const TEMPLATE =
+    "{{ item.creators[0].lastName }} ({{ item.year }}) {{ item.title }}";
+
+/** Seed a journal article and hand back the stored row. */
+async function article(
+    key = "ARTICLE1",
+    over: Partial<AnyIDBZoteroItem> = {},
+    data: Record<string, unknown> = {},
+): Promise<AnyIDBZoteroItem> {
+    await seedItem({
+        libraryID: USER_ID,
+        key,
+        title: "Attention Is All You Need",
+        citationKey: "vaswani2017",
+        raw: {
+            key,
+            version: 1,
+            library: { type: "user", id: USER_ID, name: "My Library" },
+            meta: {},
+            data: {
+                key,
+                version: 1,
+                itemType: "journalArticle",
+                title: "Attention Is All You Need",
+                creators: [
+                    {
+                        creatorType: "author",
+                        firstName: "Ashish",
+                        lastName: "Vaswani",
+                    },
+                ],
+                date: "2017-06-12",
+                tags: [],
+                relations: {},
+                ...data,
+            },
+        } as any,
+        ...over,
+    });
+    return (await db.items.get([USER_ID, key]))!;
+}
+
+function service(template: string, host = createFakeParentHost()) {
+    return new DisplayTitleService(settingsWith(template), host);
+}
+
+function settingsWith(template: string) {
+    return { ...DEFAULT_SETTINGS, itemDisplayTitleTemplate: template };
+}
+
+// Fake timers only around the synchronous debounce steps: fake-indexeddb
+// schedules its own work on timers, so DB calls run with real ones.
+afterEach(() => {
+    vi.useRealTimers();
+});
+
+describe("DisplayTitleService", () => {
+    beforeEach(async () => {
+        await createServiceHarness();
+    });
+
+    test("with no template, the Zotero title is shown", async () => {
+        const item = await article();
+        expect(service("").get(item)).toBe("Attention Is All You Need");
+    });
+
+    test("renders the template against the item variables", async () => {
+        const item = await article();
+        expect(service(TEMPLATE).get(item)).toBe(
+            "Vaswani (2017) Attention Is All You Need",
+        );
+    });
+
+    test("base-mapped fields are available, as in source-note templates", async () => {
+        const item = await article(
+            "CASE0001",
+            { itemType: "case", title: "Roe v. Wade" },
+            {
+                itemType: "case",
+                caseName: "Roe v. Wade",
+                court: "SCOTUS",
+                title: undefined,
+            },
+        );
+        expect(
+            service("{{ item.authority }}: {{ item.title }}").get(item),
+        ).toBe("SCOTUS: Roe v. Wade");
+    });
+
+    test("whitespace left by tags collapses to one line", async () => {
+        const item = await article();
+        expect(
+            service(
+                "{% if item.citationKey %}\n  @{{ item.citationKey }}\n{% endif %}  {{ item.year }}",
+            ).get(item),
+        ).toBe("@vaswani2017 2017");
+    });
+
+    test("an empty render falls back to the Zotero title", async () => {
+        const item = await article();
+        expect(service("{{ item.doesNotExist }}").get(item)).toBe(
+            "Attention Is All You Need",
+        );
+    });
+
+    test("an invalid template falls back and is reported once", async () => {
+        const host = createFakeParentHost();
+        const item = await article();
+        expect(service("{{ item.title", host).get(item)).toBe(
+            "Attention Is All You Need",
+        );
+        expect(host.logsAt("warn")).toHaveLength(1);
+    });
+
+    test("a render failure falls back and is reported once", async () => {
+        const host = createFakeParentHost();
+        const titles = service("{% include 'missing' %}", host);
+        const first = await article("ARTICLE1");
+        const second = await article("ARTICLE2");
+
+        expect(titles.get(first)).toBe("Attention Is All You Need");
+        expect(titles.get(second)).toBe("Attention Is All You Need");
+        expect(host.logsAt("warn")).toHaveLength(1);
+    });
+
+    test("child items keep their own names", async () => {
+        const attachment = await article("ATTACH01", {
+            itemType: "attachment",
+            title: "paper.pdf",
+        });
+        expect(service(TEMPLATE).get(attachment)).toBe("paper.pdf");
+    });
+
+    test("a new item version is re-rendered", async () => {
+        const titles = service("{{ item.title }}");
+        const item = await article();
+        expect(titles.get(item)).toBe("Attention Is All You Need");
+
+        const edited = { ...item, version: 2, title: "Edited" };
+        expect(titles.get(edited)).toBe("Edited");
+    });
+
+    test("a new template takes effect only after the delay", async () => {
+        const item = await article();
+        const titles = service("{{ item.year }}");
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith("@{{ item.citationKey }}"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY - 1);
+        expect(titles.get(item)).toBe("2017");
+
+        vi.advanceTimersByTime(1);
+        expect(titles.get(item)).toBe("@vaswani2017");
+    });
+
+    test("each edit restarts the delay", async () => {
+        const item = await article();
+        const titles = service("{{ item.year }}");
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith("@"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY - 1);
+        titles.updateSettings(settingsWith("@{{ item.citationKey }}"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY - 1);
+        expect(titles.get(item)).toBe("2017");
+
+        vi.advanceTimersByTime(1);
+        expect(titles.get(item)).toBe("@vaswani2017");
+    });
+
+    test("applying notifies listeners and the main thread once", async () => {
+        const host = createFakeParentHost();
+        const titles = service("{{ item.year }}", host);
+        const listener = vi.fn();
+        titles.onChange(listener);
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith("a"));
+        titles.updateSettings(settingsWith("ab"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(host.events.map((e) => e.name)).toEqual(["onTreeChanged"]);
+    });
+
+    test("typing back to the template in effect cancels the change", async () => {
+        const host = createFakeParentHost();
+        const titles = service("{{ item.year }}", host);
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith("{{ item.year }}x"));
+        titles.updateSettings(settingsWith("{{ item.year }}"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
+
+        expect(host.events).toEqual([]);
+    });
+
+    test("unchanged settings schedule nothing", () => {
+        const host = createFakeParentHost();
+        const titles = service(TEMPLATE, host);
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith(TEMPLATE));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
+
+        expect(host.events).toEqual([]);
+    });
+
+    test("dispose drops a pending change", async () => {
+        const host = createFakeParentHost();
+        const item = await article();
+        const titles = service("{{ item.year }}", host);
+
+        vi.useFakeTimers();
+        titles.updateSettings(settingsWith("@{{ item.citationKey }}"));
+        titles.dispose();
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
+
+        expect(titles.get(item)).toBe("2017");
+        expect(host.events).toEqual([]);
+    });
+
+    test("getTitles resolves titles by library and key", async () => {
+        await article();
+        expect(
+            await service("@{{ item.citationKey }}").getTitles([
+                { libraryID: USER_ID, key: "ARTICLE1" },
+                { libraryID: USER_ID, key: "MISSING1" },
+            ]),
+        ).toEqual({ [`${USER_ID}:ARTICLE1`]: "@vaswani2017" });
+    });
+
+    test("search names keep the Zotero title when the display hides it", async () => {
+        const item = await article();
+        expect(service("@{{ item.citationKey }}").searchNames(item)).toEqual({
+            name: "@vaswani2017",
+            aliases: ["Attention Is All You Need"],
+        });
+        expect(service(TEMPLATE).searchNames(item)).toEqual({
+            name: "Vaswani (2017) Attention Is All You Need",
+        });
+    });
+});
+
+describe("item search", () => {
+    let h: ServiceHarness;
+
+    beforeEach(async () => {
+        h = await createServiceHarness({
+            settings: { itemDisplayTitleTemplate: "@{{ item.citationKey }}" },
+        });
+        await article();
+    });
+
+    test("matches text that only the display title contains", async () => {
+        const hits = await h.search.searchItems("vaswani2017", 10);
+        expect(hits.map((i) => i.key)).toEqual(["ARTICLE1"]);
+    });
+
+    test("still matches the Zotero title", async () => {
+        const hits = await h.search.searchItems("attention", 10);
+        expect(hits.map((i) => i.key)).toEqual(["ARTICLE1"]);
+    });
+});
+
+describe("tree view", () => {
+    let h: ServiceHarness;
+
+    function tree() {
+        return new TreeViewService(
+            h.settings,
+            h.host,
+            h.library,
+            new SearchMatcher(),
+            h.displayTitle,
+        );
+    }
+
+    beforeEach(async () => {
+        h = await createServiceHarness({
+            settings: { itemDisplayTitleTemplate: TEMPLATE },
+        });
+        await article();
+    });
+
+    test("item entities are named by the display title", async () => {
+        const payload = await tree().getOptimizedTree();
+        expect(payload.entities.ARTICLE1?.name).toBe(
+            "Vaswani (2017) Attention Is All You Need",
+        );
+    });
+
+    test("a new template rebuilds the cached tree", async () => {
+        const view = tree();
+        await view.getOptimizedTree();
+
+        vi.useFakeTimers();
+        h.displayTitle.updateSettings(settingsWith("{{ item.year }}"));
+        vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
+        vi.useRealTimers();
+
+        const payload = await view.getOptimizedTree();
+        expect(payload.entities.ARTICLE1?.name).toBe("2017");
+    });
+});

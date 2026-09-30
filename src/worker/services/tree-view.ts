@@ -35,6 +35,7 @@ import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
 import type { LibraryService } from "./library";
 import type { SearchMatcher, SearchableRecord } from "./search-matcher";
+import type { DisplayTitleService } from "./display-title";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -61,8 +62,14 @@ export class TreeViewService {
         private parentHost: IParentProxy,
         private library: LibraryService,
         private matcher: SearchMatcher,
+        private displayTitle: DisplayTitleService,
     ) {
         this.treeTransferPayload = null;
+        // Item names come from the display title; rebuild on a new template.
+        this.displayTitle.onChange(() => {
+            this.treeTransferPayload = null;
+            this.searchIndex = null;
+        });
     }
 
     get tree() {
@@ -298,6 +305,7 @@ export class TreeViewService {
                     (lib) => lib.id === item.libraryID,
                 );
                 const libName = libObj ? libObj.name : "Unknown Library";
+                const displayNames = this.displayTitle.searchNames(item);
 
                 if (item.itemType === "attachment") {
                     registerEntity(
@@ -316,7 +324,7 @@ export class TreeViewService {
                 } else {
                     registerEntity(
                         item.key,
-                        item.title,
+                        displayNames.name,
                         item.itemType,
                         item.libraryID,
                         libName,
@@ -331,7 +339,7 @@ export class TreeViewService {
 
                 registerSearch({
                     id: item.key,
-                    name: item.title || "",
+                    ...displayNames,
                     itemType: item.itemType,
                     creators: item.searchCreators,
                     tags: item.searchTags,

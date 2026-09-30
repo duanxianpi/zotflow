@@ -34,7 +34,8 @@ export interface EventRecord {
     name:
         | "onAnnotationChanged"
         | "onNoteChangedByEditor"
-        | "onNoteChangedByNoteView";
+        | "onNoteChangedByNoteView"
+        | "onTreeChanged";
     args: unknown[];
 }
 
@@ -269,6 +270,9 @@ export function createFakeParentHost(
         },
         onNoteChangedByNoteView(...args) {
             events.push({ name: "onNoteChangedByNoteView", args });
+        },
+        onTreeChanged() {
+            events.push({ name: "onTreeChanged", args: [] });
         },
     };
 

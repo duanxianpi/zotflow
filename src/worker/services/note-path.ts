@@ -134,11 +134,13 @@ export class NotePathService {
             libraryName,
         };
 
-        const rendered = await renderLiquid(
-            this.engine,
-            template,
-            sanitizeContext(context),
-        );
+        // The same variables also sit under `item`, so `{{ item.title }}`
+        // works here as it does in source-note and citation templates.
+        const scope = sanitizeContext(context);
+        const rendered = await renderLiquid(this.engine, template, {
+            ...scope,
+            item: scope,
+        });
         return sanitizePath(rendered);
     }
 

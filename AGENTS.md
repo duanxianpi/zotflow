@@ -339,6 +339,7 @@ src/
 │   │   ├── library-template.ts     # LibraryTemplateService (LiquidJS for library items)
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)
+│   │   ├── display-title.ts        # DisplayTitleService (item title template for tree + search)
 │   │   ├── document-worker.ts      # DocumentWorkerService (nested Zotero worker)
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)

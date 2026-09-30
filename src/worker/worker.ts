@@ -18,6 +18,7 @@ import { LibraryService } from "./services/library";
 import { DbHelperService } from "./services/db-helper";
 import { SearchService } from "./services/search";
 import { SearchMatcher } from "./services/search-matcher";
+import { DisplayTitleService } from "./services/display-title";
 import { TagService } from "./services/tag";
 import { NotePathService } from "./services/note-path";
 import { ConvertService } from "./services/convert";
@@ -74,6 +75,7 @@ export interface WorkerAPI {
     library: Exposed<LibraryService>;
     dbHelper: Exposed<DbHelperServiceType>;
     search: Exposed<SearchService>;
+    displayTitle: Exposed<DisplayTitleService>;
     tag: Exposed<TagServiceType>;
     documentWorker: Exposed<DocumentWorkerService>;
     enhancementResources: Exposed<EnhancementResourceService>;
@@ -122,6 +124,7 @@ let _library: LibraryService | undefined;
 let _dbHelper: DbHelperService | undefined;
 let _search: SearchService | undefined;
 let _matcher: SearchMatcher | undefined;
+let _displayTitle: DisplayTitleService | undefined;
 let _tag: TagService | undefined;
 let _notePath: NotePathService | undefined;
 let _convert: ConvertService | undefined;
@@ -150,6 +153,7 @@ function assertInitialized() {
         !_library ||
         !_dbHelper ||
         !_search ||
+        !_displayTitle ||
         !_tag ||
         !_notePath ||
         !_convert ||
@@ -234,8 +238,9 @@ const exposedApi: WorkerAPI = {
             _zotero = new ZoteroAPIService(settings.zoteroapikey);
             _library = new LibraryService(settings, parentHost);
             _matcher = new SearchMatcher();
+            _displayTitle = new DisplayTitleService(settings, parentHost);
             _dbHelper = new DbHelperService(settings, parentHost, _library);
-            _search = new SearchService(_matcher, _dbHelper);
+            _search = new SearchService(_matcher, _dbHelper, _displayTitle);
             _tag = new TagService(settings, parentHost);
             finishStage("Create API, library, search and database services");
             _webdav = new WebDavService(settings, parentHost);
@@ -251,6 +256,7 @@ const exposedApi: WorkerAPI = {
                 parentHost,
                 _library,
                 _matcher,
+                _displayTitle,
             );
             finishStage("Create attachment, sync and tree services");
 
@@ -488,6 +494,16 @@ const exposedApi: WorkerAPI = {
         return Comlink.proxy(_search);
     },
 
+    get displayTitle() {
+        if (!_displayTitle)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_displayTitle);
+    },
+
     get tag() {
         if (!_tag)
             throw new ZotFlowError(
@@ -564,6 +580,7 @@ const exposedApi: WorkerAPI = {
     },
 
     dispose: () => {
+        _displayTitle?.dispose();
         _libraryNote?.dispose();
         _localNote?.dispose();
         _cslRender?.dispose();
@@ -647,6 +664,7 @@ const exposedApi: WorkerAPI = {
         _webdav!.updateSettings(settings);
         _attachment!.updateSettings(settings);
         _sync!.updateSettings(settings);
+        _displayTitle!.updateSettings(settings);
         _treeView!.updateSettings(settings);
         _library!.updateSettings(settings);
         _template!.updateSettings(settings);

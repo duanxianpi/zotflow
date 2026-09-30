@@ -76,7 +76,7 @@ export class SourceNotesSection {
                     },
                     {
                         name: "Library Source Note Path Template",
-                        desc: "LiquidJS template for library source note file path (without .md extension).",
+                        desc: "LiquidJS template for library source note file path (without .md extension). Variables work with or without the item. prefix, e.g. {{title}} or {{item.title}}.",
                         control: {
                             type: "text",
                             key: "librarySourceNotePathTemplate",

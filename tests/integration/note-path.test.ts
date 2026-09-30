@@ -333,6 +333,27 @@ describe("template context", () => {
         ).toBe("Court AB/ARTICLE1.md");
     });
 
+    test("variables are also available under `item`", async () => {
+        // Same spelling as source-note and citation templates.
+        const it = await item({
+            title: "A Study",
+            raw: raw({ date: "2020-05-04" }),
+        });
+        expect(
+            await h.notePath.resolveLibraryNotePath(
+                it,
+                "{{ item.year }}/{{ item.title }} - {{ title }}",
+            ),
+        ).toBe("2020/A Study - A Study.md");
+    });
+
+    test("values under `item` are sanitized like top-level ones", async () => {
+        const it = await item({ title: "Either/Or: A Fragment" });
+        expect(
+            await h.notePath.resolveLibraryNotePath(it, "Refs/{{ item.title }}"),
+        ).toBe("Refs/EitherOr A Fragment.md");
+    });
+
     test("itemPaths carries the collection breadcrumbs", async () => {
         await seedCollection({
             libraryID: USER_ID,

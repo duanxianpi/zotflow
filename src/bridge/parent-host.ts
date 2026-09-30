@@ -268,4 +268,8 @@ export class ParentHost implements IParentProxy {
             parentItemKey,
         );
     }
+
+    public onTreeChanged(): void {
+        services.taskMonitor.treeChanged.emit();
+    }
 }

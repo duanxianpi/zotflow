@@ -35,6 +35,8 @@ export type SuggestionItem =
  */
 export class ZoteroItemSuggest {
     itemPaths: Record<string, string[]> = {};
+    /** Display titles keyed `${libraryID}:${key}`, from the user's template. */
+    displayTitles: Record<string, string> = {};
 
     constructor(private readonly itemFilter?: SuggestionItemFilter) {}
 
@@ -94,19 +96,31 @@ export class ZoteroItemSuggest {
             }
 
             if (zItems.length > 0) {
-                try {
-                    this.itemPaths = await workerBridge.dbHelper.getItemPaths(
-                        zItems.map((i) => ({
-                            libraryID: i.libraryID,
-                            key: i.key,
-                            collections: i.collections,
-                        })),
-                    );
-                } catch (pathErr) {
+                const refs = zItems.map((i) => ({
+                    libraryID: i.libraryID,
+                    key: i.key,
+                    collections: i.collections,
+                }));
+                const [paths, titles] = await Promise.allSettled([
+                    workerBridge.dbHelper.getItemPaths(refs),
+                    workerBridge.displayTitle.getTitles(refs),
+                ]);
+                if (paths.status === "fulfilled") {
+                    this.itemPaths = paths.value;
+                } else {
                     services.logService.error(
                         "Failed to fetch item paths",
                         "ZoteroItemSuggest",
-                        pathErr,
+                        paths.reason,
+                    );
+                }
+                if (titles.status === "fulfilled") {
+                    this.displayTitles = titles.value;
+                } else {
+                    services.logService.error(
+                        "Failed to fetch display titles",
+                        "ZoteroItemSuggest",
+                        titles.reason,
                     );
                 }
             }
@@ -171,7 +185,10 @@ export class ZoteroItemSuggest {
         // Title Row
         const titleRow = contentContainer.createDiv({ cls: "zotflow-row-top" });
         const titleEl = titleRow.createDiv({ cls: "zotflow-title" });
-        this.renderHighlight(titleEl, zItem.title || "Untitled", query);
+        const title =
+            this.displayTitles[`${zItem.libraryID}:${zItem.key}`] ||
+            zItem.title;
+        this.renderHighlight(titleEl, title || "Untitled", query);
 
         // Meta + Path Row
         const bottomRow = contentContainer.createDiv({

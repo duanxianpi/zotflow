@@ -89,4 +89,7 @@ export interface IParentProxy {
         noteKey: string,
         parentItemKey: string,
     ): void;
+
+    /** Item names in the tree changed (e.g. a new display-title template). */
+    onTreeChanged(): void;
 }

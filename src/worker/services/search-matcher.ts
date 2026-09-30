@@ -16,6 +16,8 @@ export interface SearchableRecord {
     id: string;
     /** Primary display string (title / name). Always part of the haystack. */
     name: string;
+    /** Other names the record answers to (e.g. the Zotero title behind a display title). */
+    aliases?: string[];
     creators?: string[];
     tags?: string[];
     /** Collection NAMES the record belongs to (not keys). */
@@ -149,6 +151,7 @@ export class SearchMatcher {
 
     private buildHaystack(r: SearchableRecord): string {
         const parts: string[] = [r.name];
+        if (r.aliases?.length) parts.push(...r.aliases);
         if (r.creators?.length) parts.push(r.creators.join(" "));
         if (r.tags?.length) parts.push(r.tags.join(" "));
         return parts.join(HAYSTACK_SEP);

@@ -3,6 +3,7 @@ import { Zotero_Item_Types } from "types/zotero-item-const";
 
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { DbHelperService } from "./db-helper";
+import type { DisplayTitleService } from "./display-title";
 import type { SearchMatcher, SearchableRecord } from "./search-matcher";
 
 /**
@@ -15,6 +16,7 @@ export class SearchService {
     constructor(
         private matcher: SearchMatcher,
         private dbHelper: DbHelperService,
+        private displayTitle: DisplayTitleService,
     ) {}
 
     /**
@@ -154,7 +156,7 @@ export class SearchService {
             byId.set(id, item);
             return {
                 id,
-                name: item.title || "",
+                ...this.displayTitle.searchNames(item),
                 creators: item.searchCreators,
                 tags: item.searchTags,
                 itemType: item.itemType,

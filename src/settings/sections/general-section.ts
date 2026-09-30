@@ -5,7 +5,7 @@ import type ZotFlow from "main";
 import type { SettingDefinitionItem } from "obsidian";
 import type { SettingKey } from "settings/types";
 
-/** Declarative entry point for source-note and reader settings. */
+/** Declarative entry point for source-note, reader and item display settings. */
 export class GeneralSection {
     constructor(private readonly plugin: ZotFlow) {}
 
@@ -22,6 +22,22 @@ export class GeneralSection {
                 name: "Reader",
                 desc: "Reader integration, annotation tools, fonts, and color themes.",
                 items: new ReaderSection(this.plugin).getDefinitions(),
+            },
+            {
+                type: "group",
+                heading: "Item Display",
+                items: [
+                    {
+                        name: "Display Title Template",
+                        desc: "LiquidJS template for how Zotero items are titled in the library tree and in item search, using the same item variables as citation templates. Sorting by title follows it. Leave empty to show the Zotero title.",
+                        control: {
+                            type: "text",
+                            key: "itemDisplayTitleTemplate",
+                            placeholder:
+                                "e.g. {{ item.creatorSummary }} ({{ item.year }}) {{ item.title }}",
+                        },
+                    },
+                ],
             },
         ];
     }

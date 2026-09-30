@@ -59,6 +59,8 @@ export interface ZotFlowSettings {
     treeCollectionSort: CollectionSortOrder;
     treeItemSort: ItemSortOrder;
     treeSingleClickOpen: boolean;
+    /** LiquidJS template for item titles in the tree and search; "" shows the Zotero title. */
+    itemDisplayTitleTemplate: string;
     convertNoteLinks: boolean;
     linkedAttachmentBaseDir: string;
     useZoteroStorage: boolean;
@@ -137,6 +139,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     treeCollectionSort: "name-asc",
     treeItemSort: "title-asc",
     treeSingleClickOpen: false,
+    itemDisplayTitleTemplate: "",
     convertNoteLinks: true,
     linkedAttachmentBaseDir: "",
     useZoteroStorage: false,
