@@ -1,39 +1,23 @@
 import { App } from "obsidian";
-import { EventBus } from "services/event-bus";
+import type { EventHub } from "services/event-hub";
 import type { ITaskInfo } from "types/tasks";
 
 type TaskUpdateCallback = (tasks: ITaskInfo[]) => void;
 
-/** Pub/sub hub that tracks worker task state and notifies UI subscribers on updates. */
+/**
+ * Tracks worker task state for the UI. `subscribe` replays the current task
+ * list, so a view opened mid-sync shows it at once. Data-change signals that
+ * tasks produce (e.g. a sync finishing) go out on the EventHub instead.
+ */
 export class TaskMonitor {
     private tasks: Map<string, ITaskInfo> = new Map();
     private subscribers: Set<TaskUpdateCallback> = new Set();
     private syncDataRevision = 0;
 
-    /** Fires when an annotation is created/updated/deleted (from editor or reader). */
-    public readonly annotationChanged = new EventBus<
-        [libraryID: number, annotationKey: string, parentItemKey: string]
-    >();
-
-    /** Fires when a LOCAL attachment's annotation is edited from the source-note editable region. */
-    public readonly localAnnotationChanged = new EventBus<
-        [attachmentPath: string, annotationId: string]
-    >();
-
-    /** Fires when a child note is created or updated from the source-note editable region. */
-    public readonly noteChangedByEditor = new EventBus<
-        [libraryID: number, noteKey: string, parentItemKey: string]
-    >();
-
-    /** Fires when a child note is created or updated from the standalone NotePreviewView. */
-    public readonly noteChangedByNoteView = new EventBus<
-        [libraryID: number, noteKey: string, parentItemKey: string]
-    >();
-
-    /** Fires when the tree data should be refreshed (e.g. item deleted). */
-    public readonly treeChanged = new EventBus<[]>();
-
-    constructor(private app: App) {}
+    constructor(
+        private app: App,
+        private readonly events: EventHub,
+    ) {}
 
     /**
      * Called by ParentHost when a task updates in the worker
@@ -41,15 +25,14 @@ export class TaskMonitor {
     public onTaskUpdate(taskId: string, info: ITaskInfo) {
         const previous = this.tasks.get(taskId);
         this.tasks.set(taskId, info);
-        if (
+        const syncFinished =
             info.type === "sync" &&
             info.status !== "pending" &&
             info.status !== "running" &&
-            previous?.status !== info.status
-        ) {
-            this.syncDataRevision += 1;
-        }
+            previous?.status !== info.status;
+        if (syncFinished) this.syncDataRevision += 1;
         this.notifySubscribers();
+        if (syncFinished) this.events.syncFinished.emit(info);
 
         // Cleanup completed/failed tasks after delay (optional, handled by UI mostly)
     }

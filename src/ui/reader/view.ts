@@ -18,7 +18,6 @@ import type {
     CustomReaderTheme,
     ReaderNavigation,
 } from "types/zotero-reader";
-import type { ITaskInfo } from "types/tasks";
 import type { ReaderDocumentLease } from "services/reader-document-cache";
 import { getLibraryReaderDocumentKey } from "services/reader-document-cache";
 import {
@@ -50,9 +49,8 @@ export class ZoteroReaderView extends ItemView {
 
     private bridge?: IframeReaderBridge;
     private colorScheme: ColorScheme = "light"; // Default to light
-    private unsubscribeTaskMonitor?: () => void;
+    private unsubscribeSyncFinished?: () => void;
     private unsubscribeAnnotationChanged?: () => void;
-    private lastSyncTaskStatuses = new Map<string, ITaskInfo["status"]>();
     /** Actual MD5 of the PDF bytes used to initialise the reader. */
     private fileContentMD5?: string;
     private knownAnnotationIds = new Set<string>();
@@ -594,9 +592,9 @@ export class ZoteroReaderView extends ItemView {
 
     async onClose() {
         this.closing = true;
-        this.unsubscribeTaskMonitor?.();
+        this.unsubscribeSyncFinished?.();
         this.unsubscribeAnnotationChanged?.();
-        this.unsubscribeTaskMonitor = undefined;
+        this.unsubscribeSyncFinished = undefined;
         this.unsubscribeAnnotationChanged = undefined;
         try {
             if (this.bridge) {
@@ -609,7 +607,6 @@ export class ZoteroReaderView extends ItemView {
 
         this.fileContentMD5 = undefined;
         this.knownAnnotationIds.clear();
-        this.lastSyncTaskStatuses.clear();
 
         // Flush view state on close to ensure latest state is saved
         services.viewStateService.flushViewStateSave();
@@ -647,67 +644,49 @@ export class ZoteroReaderView extends ItemView {
     }
 
     /**
-     * Subscribe to TaskMonitor and refresh annotations in the reader
-     * when a sync task that covers this attachment's library completes.
+     * Refresh annotations in the reader when a sync that covers this
+     * attachment's library completes.
      */
     private subscribeToSyncEvents() {
         // Avoid double-subscribe
-        this.unsubscribeTaskMonitor?.();
+        this.unsubscribeSyncFinished?.();
 
-        // Snapshot current task statuses so the initial callback
-        // (fired immediately by subscribe()) is a no-op.
-        for (const task of services.taskMonitor.getTasks()) {
-            this.lastSyncTaskStatuses.set(task.id, task.status);
-        }
+        this.unsubscribeSyncFinished = services.eventHub.syncFinished.subscribe(
+            (task) => {
+                if (task.status !== "completed") return;
 
-        this.unsubscribeTaskMonitor = services.taskMonitor.subscribe(
-            (tasks: ITaskInfo[]) => {
-                for (const task of tasks) {
-                    if (task.type !== "sync") continue;
-
-                    const prev = this.lastSyncTaskStatuses.get(task.id);
-                    this.lastSyncTaskStatuses.set(task.id, task.status);
-
-                    // Only act on a transition *into* "completed"
-                    if (task.status !== "completed" || prev === "completed")
-                        continue;
-
-                    // Check if the sync covers this attachment's library
-                    const taskLibId = task.input?.["libraryId"];
-                    if (
-                        taskLibId !== undefined &&
-                        taskLibId !== this.attachmentItem.libraryID
-                    ) {
-                        continue; // Sync was for a different library
-                    }
-
-                    services.logService.info(
-                        `Sync completed — refreshing reader annotations (task ${task.id})`,
-                        "ZoteroReaderView",
-                    );
-
-                    // Refresh the attachment item from IDB to pick up
-                    // any metadata changes from sync (e.g. MD5, filename).
-                    ff(
-                        this.refreshAttachmentItem().then(() => {
-                            // Refresh annotations from IDB without reconnecting
-                            ff(
-                                this.refreshAnnotationsFromDB(),
-                                "Failed to refresh reader annotations after sync",
-                            );
-
-                            // Re-extract external annotations in case the file changed
-                            ff(
-                                this.extractExternalAnnotation(),
-                                "Failed to re-extract external annotations",
-                            );
-                        }),
-                        "Failed to refresh the attachment after sync",
-                    );
-
-                    // One refresh per update batch is enough
-                    break;
+                // Check if the sync covers this attachment's library
+                const taskLibId = task.input?.["libraryId"];
+                if (
+                    taskLibId !== undefined &&
+                    taskLibId !== this.attachmentItem.libraryID
+                ) {
+                    return; // Sync was for a different library
                 }
+
+                services.logService.info(
+                    `Sync completed — refreshing reader annotations (task ${task.id})`,
+                    "ZoteroReaderView",
+                );
+
+                // Refresh the attachment item from IDB to pick up
+                // any metadata changes from sync (e.g. MD5, filename).
+                ff(
+                    this.refreshAttachmentItem().then(() => {
+                        // Refresh annotations from IDB without reconnecting
+                        ff(
+                            this.refreshAnnotationsFromDB(),
+                            "Failed to refresh reader annotations after sync",
+                        );
+
+                        // Re-extract external annotations in case the file changed
+                        ff(
+                            this.extractExternalAnnotation(),
+                            "Failed to re-extract external annotations",
+                        );
+                    }),
+                    "Failed to refresh the attachment after sync",
+                );
             },
         );
     }
@@ -721,7 +700,7 @@ export class ZoteroReaderView extends ItemView {
         this.unsubscribeAnnotationChanged?.();
 
         this.unsubscribeAnnotationChanged =
-            services.taskMonitor.annotationChanged.subscribe(
+            services.eventHub.annotationChanged.subscribe(
                 (libraryID, _annotationKey, parentItemKey) => {
                     if (libraryID !== this.attachmentItem.libraryID) return;
                     if (parentItemKey !== this.attachmentItem.key) return;

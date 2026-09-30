@@ -6,6 +6,7 @@ import { LogService } from "./log-service";
 import { NotificationService } from "./notification-service";
 import { ViewStateService } from "./view-state-service";
 import { TaskMonitor } from "./task-monitor";
+import { EventHub } from "./event-hub";
 import { CitationService } from "./citation-service";
 import { LibraryCache } from "./library-cache";
 import { ReaderDocumentCache } from "./reader-document-cache";
@@ -26,6 +27,7 @@ class ServiceLocator {
     private _notificationService: NotificationService;
     private _viewStateService: ViewStateService;
     private _taskMonitor: TaskMonitor;
+    private _eventHub: EventHub;
     private _citationService: CitationService;
     private _libraryCache: LibraryCache;
     private _readerDocumentCache: ReaderDocumentCache;
@@ -46,7 +48,8 @@ class ServiceLocator {
         this._indexService = new IndexService(this._app, this._logService);
         this._indexService.load();
 
-        this._taskMonitor = new TaskMonitor(this._app);
+        this._eventHub = new EventHub();
+        this._taskMonitor = new TaskMonitor(this._app, this._eventHub);
         this._citationService = new CitationService();
         this._libraryCache = new LibraryCache(
             () => this._settings,
@@ -138,6 +141,11 @@ class ServiceLocator {
     get taskMonitor() {
         this.assertInitialized();
         return this._taskMonitor;
+    }
+
+    get eventHub() {
+        this.assertInitialized();
+        return this._eventHub;
     }
 
     get citationService() {

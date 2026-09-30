@@ -995,9 +995,9 @@ describe("updateAnnotationComment", () => {
         await h.service.updateAnnotationComment(USER_ID, "ANNO0001", "edited");
 
         expect(
-            h.host.events.filter((e) => e.name === "onAnnotationChanged"),
+            h.host.events.filter((e) => e.name === "annotationChanged"),
         ).toEqual([
-            { name: "onAnnotationChanged", args: [USER_ID, "ANNO0001", "ATTACH01"] },
+            { name: "annotationChanged", args: [USER_ID, "ANNO0001", "ATTACH01"] },
         ]);
     });
 

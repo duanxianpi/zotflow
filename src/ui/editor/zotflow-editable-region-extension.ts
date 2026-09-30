@@ -277,7 +277,7 @@ const editableRegionSyncPlugin = ViewPlugin.fromClass(
                             .then((changed) => {
                                 if (changed) {
                                     // Let an open local reader refresh its cache.
-                                    services.taskMonitor.localAnnotationChanged.emit(
+                                    services.eventHub.localAnnotationChanged.emit(
                                         target.attachmentPath,
                                         region.key,
                                     );

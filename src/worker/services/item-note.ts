@@ -159,7 +159,12 @@ export class ItemNoteService {
         );
 
         // Notify main thread so the tree can refresh
-        this.parentHost.onNoteChangedByNoteView(libraryID, key, parentKey);
+        this.parentHost.emit(
+            "noteChangedByNoteView",
+            libraryID,
+            key,
+            parentKey,
+        );
 
         return key;
     }
@@ -230,13 +235,15 @@ export class ItemNoteService {
 
         // Notify main thread so the note-view and tree can react
         if (origin === "editor") {
-            this.parentHost.onNoteChangedByEditor(
+            this.parentHost.emit(
+                "noteChangedByEditor",
                 libraryID,
                 noteKey,
                 item.parentItem,
             );
         } else {
-            this.parentHost.onNoteChangedByNoteView(
+            this.parentHost.emit(
+                "noteChangedByNoteView",
                 libraryID,
                 noteKey,
                 item.parentItem,

@@ -382,29 +382,15 @@ export const SyncView: React.FC = () => {
     }, [refresh]);
 
     // Auto-refresh when a sync task completes or fails
-    useEffect(() => {
-        const prevStatus = new Map<string, string>();
-
-        const unsubscribe = services.taskMonitor.subscribe((tasks) => {
-            for (const task of tasks) {
-                const prev = prevStatus.get(task.id);
-                prevStatus.set(task.id, task.status);
-
-                // Only refresh when a sync task transitions to a terminal state
-                if (
-                    task.type === "sync" &&
-                    prev !== undefined &&
-                    prev !== task.status &&
-                    (task.status === "completed" || task.status === "failed")
-                ) {
+    useEffect(
+        () =>
+            services.eventHub.syncFinished.subscribe((task) => {
+                if (task.status === "completed" || task.status === "failed") {
                     void refresh();
-                    return;
                 }
-            }
-        });
-
-        return unsubscribe;
-    }, [refresh]);
+            }),
+        [refresh],
+    );
 
     // Sync all libraries
     const handleSyncAll = useCallback(async () => {

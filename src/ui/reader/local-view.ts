@@ -525,7 +525,7 @@ export class LocalReaderView extends ItemView {
         this.unsubscribeLocalAnnotationChanged?.();
 
         this.unsubscribeLocalAnnotationChanged =
-            services.taskMonitor.localAnnotationChanged.subscribe(
+            services.eventHub.localAnnotationChanged.subscribe(
                 (attachmentPath) => {
                     if (attachmentPath !== file.path) return;
                     if (!this.dataManager) return;

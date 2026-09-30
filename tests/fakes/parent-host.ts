@@ -14,6 +14,7 @@
  */
 import type { IParentProxy, IRequestResponse, VaultConfig } from "bridge/types";
 import type { LogLevel } from "services/log-service";
+import type { WorkerEventName } from "services/event-hub";
 import type { NotificationType } from "services/notification-service";
 import type { ITaskInfo } from "types/tasks";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
@@ -31,11 +32,7 @@ export interface NoticeRecord {
 }
 
 export interface EventRecord {
-    name:
-        | "onAnnotationChanged"
-        | "onNoteChangedByEditor"
-        | "onNoteChangedByNoteView"
-        | "onTreeChanged";
+    name: WorkerEventName;
     args: unknown[];
 }
 
@@ -56,9 +53,9 @@ export interface FakeParentHost extends IParentProxy {
     indexed: string[];
     /** Paths passed to `openFile`, in order. */
     opened: string[];
-    /** Every `onTaskUpdate` call, in order. */
+    /** Every `reportTaskUpdate` call, in order. */
     taskUpdates: { taskId: string; info: ITaskInfo }[];
-    /** Annotation/note change events emitted back to the main thread. */
+    /** Every `emit` call (EventHub events raised by the worker), in order. */
     events: EventRecord[];
 
     /** Convenience filter, e.g. `host.logsAt("error")`. */
@@ -257,22 +254,13 @@ export function createFakeParentHost(
             async (): Promise<TFileWithoutParentAndVault | null> => null,
 
         // Tasks
-        onTaskUpdate(taskId, info) {
+        reportTaskUpdate(taskId, info) {
             taskUpdates.push({ taskId, info });
         },
 
         // Events
-        onAnnotationChanged(...args) {
-            events.push({ name: "onAnnotationChanged", args });
-        },
-        onNoteChangedByEditor(...args) {
-            events.push({ name: "onNoteChangedByEditor", args });
-        },
-        onNoteChangedByNoteView(...args) {
-            events.push({ name: "onNoteChangedByNoteView", args });
-        },
-        onTreeChanged() {
-            events.push({ name: "onTreeChanged", args: [] });
+        emit(event, ...args) {
+            events.push({ name: event, args });
         },
     };
 

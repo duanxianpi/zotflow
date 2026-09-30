@@ -31,9 +31,8 @@ export class NoteEditorView extends ItemView {
     private metaLine = "";
     /** `window.setTimeout` handle — a number, unlike Node's `Timeout`. */
     private saveTimer?: number;
-    private unsubscribeTaskMonitor?: () => void;
+    private unsubscribeSyncFinished?: () => void;
     private unsubscribeNoteChanged?: () => void;
-    private lastSyncStatuses = new Map<string, string>();
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -207,36 +206,24 @@ export class NoteEditorView extends ItemView {
      * note's library, re-fetch the item from IDB and refresh the editor.
      */
     private subscribeToSyncEvents() {
-        this.unsubscribeTaskMonitor?.();
-        this.lastSyncStatuses.clear();
+        this.unsubscribeSyncFinished?.();
 
-        this.unsubscribeTaskMonitor = services.taskMonitor.subscribe(
-            (tasks) => {
-                for (const task of tasks) {
-                    if (task.type !== "sync") continue;
+        this.unsubscribeSyncFinished = services.eventHub.syncFinished.subscribe(
+            (task) => {
+                if (task.status !== "completed") return;
 
-                    const prev = this.lastSyncStatuses.get(task.id);
-                    this.lastSyncStatuses.set(task.id, task.status);
-
-                    if (task.status !== "completed" || prev === "completed")
-                        continue;
-
-                    // Only refresh if the sync covers this note's library
-                    const taskLibId = task.input?.["libraryId"] as
-                        | number
-                        | undefined;
-                    if (
-                        taskLibId !== undefined &&
-                        taskLibId !== this.noteItem?.libraryID
-                    ) {
-                        continue;
-                    }
-
-                    ff(
-                        this.refreshAfterSync(),
-                        "Failed to refresh after sync",
-                    );
+                // Only refresh if the sync covers this note's library
+                const taskLibId = task.input?.["libraryId"] as
+                    | number
+                    | undefined;
+                if (
+                    taskLibId !== undefined &&
+                    taskLibId !== this.noteItem?.libraryID
+                ) {
+                    return;
                 }
+
+                ff(this.refreshAfterSync(), "Failed to refresh after sync");
             },
         );
     }
@@ -250,7 +237,7 @@ export class NoteEditorView extends ItemView {
         this.unsubscribeNoteChanged?.();
 
         this.unsubscribeNoteChanged =
-            services.taskMonitor.noteChangedByEditor.subscribe(
+            services.eventHub.noteChangedByEditor.subscribe(
                 (_libraryID, noteKey, _parentItemKey) => {
                     if (noteKey !== this.noteItem?.key) return;
                     ff(
@@ -305,8 +292,8 @@ export class NoteEditorView extends ItemView {
     }
 
     async onClose() {
-        this.unsubscribeTaskMonitor?.();
-        this.unsubscribeTaskMonitor = undefined;
+        this.unsubscribeSyncFinished?.();
+        this.unsubscribeSyncFinished = undefined;
         this.unsubscribeNoteChanged?.();
         this.unsubscribeNoteChanged = undefined;
         // Flush any pending save before closing

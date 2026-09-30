@@ -200,7 +200,7 @@ describe("DisplayTitleService", () => {
         vi.advanceTimersByTime(DISPLAY_TITLE_APPLY_DELAY);
 
         expect(listener).toHaveBeenCalledTimes(1);
-        expect(host.events.map((e) => e.name)).toEqual(["onTreeChanged"]);
+        expect(host.events.map((e) => e.name)).toEqual(["treeChanged"]);
     });
 
     test("typing back to the template in effect cancels the change", async () => {

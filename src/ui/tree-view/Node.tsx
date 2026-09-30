@@ -454,7 +454,7 @@ export const NodeItem = ({ node, style }: NodeRendererProps<ViewNode>) => {
                                 node.data.libraryID,
                                 node.data.key,
                             );
-                            services.taskMonitor.treeChanged.emit();
+                            services.eventHub.treeChanged.emit();
                             // Re-render the parent source note so the deleted
                             // note's editable region is removed.
                             if (parentKey) {
@@ -538,7 +538,7 @@ export const NodeItem = ({ node, style }: NodeRendererProps<ViewNode>) => {
                                     invalidateTagAutocompleteCache();
 
                                     // Refresh the tree so chip display updates.
-                                    services.taskMonitor.treeChanged.emit();
+                                    services.eventHub.treeChanged.emit();
 
                                     // Re-render the owning source note if one
                                     // already exists (never create a new one).

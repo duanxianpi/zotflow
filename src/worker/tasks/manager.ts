@@ -48,11 +48,11 @@ export class TaskManager {
 
         // Bind update
         task.onUpdate = (info: ITaskInfo) => {
-            this.parentHost.onTaskUpdate(task.id, info);
+            this.parentHost.reportTaskUpdate(task.id, info);
         };
 
         // Initial update
-        this.parentHost.onTaskUpdate(task.id, task.getInfo());
+        this.parentHost.reportTaskUpdate(task.id, task.getInfo());
     }
 
     public async startTask(task: BaseTask) {

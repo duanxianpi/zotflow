@@ -2,6 +2,7 @@ import type { PackLease } from "enhancement-pack/types";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { NotificationType } from "services/notification-service";
 import type { LogLevel } from "services/log-service";
+import type { EventArgs, WorkerEventName } from "services/event-hub";
 
 import type { ITaskInfo } from "types/tasks";
 import type { RequestUrlParam } from "obsidian";
@@ -69,27 +70,14 @@ export interface IParentProxy {
     ): Promise<TFileWithoutParentAndVault | null>;
 
     // Tasks
-    onTaskUpdate(taskId: string, info: ITaskInfo): void;
+    /** Push a task's latest state to the main-thread TaskMonitor. */
+    reportTaskUpdate(taskId: string, info: ITaskInfo): void;
 
     // Events
-    onAnnotationChanged(
-        libraryID: number,
-        annotationKey: string,
-        parentItemKey: string,
-    ): void;
-
-    onNoteChangedByEditor(
-        libraryID: number,
-        noteKey: string,
-        parentItemKey: string,
-    ): void;
-
-    onNoteChangedByNoteView(
-        libraryID: number,
-        noteKey: string,
-        parentItemKey: string,
-    ): void;
-
-    /** Item names in the tree changed (e.g. a new display-title template). */
-    onTreeChanged(): void;
+    /**
+     * Raise a data-change event on the main-thread EventHub, e.g.
+     * `emit("treeChanged")`. A new worker event needs only its name added
+     * to `WorkerEventName`, not a new method here.
+     */
+    emit<K extends WorkerEventName>(event: K, ...args: EventArgs<K>): void;
 }

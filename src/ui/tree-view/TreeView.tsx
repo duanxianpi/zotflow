@@ -356,15 +356,15 @@ export const ZotFlowTree = () => {
             }
         };
         const unsub1 =
-            services.taskMonitor.noteChangedByEditor.subscribe(
+            services.eventHub.noteChangedByEditor.subscribe(
                 () => void refreshHandler(),
             );
         const unsub2 =
-            services.taskMonitor.noteChangedByNoteView.subscribe(
+            services.eventHub.noteChangedByNoteView.subscribe(
                 () => void refreshHandler(),
             );
         const unsub3 =
-            services.taskMonitor.treeChanged.subscribe(
+            services.eventHub.treeChanged.subscribe(
                 () => void refreshHandler(),
             );
         return () => {

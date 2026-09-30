@@ -67,7 +67,7 @@ export class DisplayTitleService {
             this.pendingSource = null;
             this.apply(source);
             for (const listener of this.listeners) listener();
-            this.parentHost.onTreeChanged();
+            this.parentHost.emit("treeChanged");
         }, DISPLAY_TITLE_APPLY_DELAY);
     }
 

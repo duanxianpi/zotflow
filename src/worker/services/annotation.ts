@@ -442,7 +442,8 @@ export class AnnotationService {
             "AnnotationService",
         );
 
-        this.parentHost.onAnnotationChanged(
+        this.parentHost.emit(
+            "annotationChanged",
             libraryID,
             annotationKey,
             annotation.parentItem,

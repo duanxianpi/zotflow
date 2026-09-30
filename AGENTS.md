@@ -37,7 +37,8 @@ processing.
 │       │     ├── IndexService   (vault file → zotero-key)     │
 │       │     ├── LogService     (in-memory log buffer)        │
 │       │     ├── NotificationService  (styled Notice)         │
-│       │     └── TaskMonitor    (pub/sub task updates)        │
+│       │     ├── TaskMonitor    (task state for the UI)       │
+│       │     └── EventHub       (data-change events)          │
 │       │                                                      │
 │       ├── ui/                                                │
 │       │     ├── reader/   (ZoteroReaderView, IframeReaderBridge, │
@@ -105,7 +106,8 @@ processing.
 2. `TaskManager` creates `SyncTask`, calls `SyncService.startSync(signal)`
 3. `SyncService` calls `ZoteroAPIService` (proxied through `ParentHost.request` to bypass CORS)
 4. Fetched data normalized via `db/normalize.ts` → stored in Dexie tables
-5. `ParentHost.onTaskUpdate()` pushes progress to `TaskMonitor` on main thread
+5. `ParentHost.reportTaskUpdate()` pushes progress to `TaskMonitor` on main thread;
+   when the sync ends, `TaskMonitor` emits `EventHub.syncFinished`
 6. UI components (TreeView, ActivityCenter) re-fetch via `workerBridge.treeView`
 
 ### 2.3 Reader architecture
@@ -268,7 +270,8 @@ src/
 │   ├── index-service.ts            # Maps vault files by zotero-key frontmatter
 │   ├── log-service.ts              # In-memory log buffer (max 1000)
 │   ├── notification-service.ts     # Styled Obsidian Notice wrapper
-│   ├── task-monitor.ts             # Pub/sub for task progress updates
+│   ├── task-monitor.ts             # Task state store (replays the task list to subscribers)
+│   ├── event-hub.ts                # Data-change events (tree/note/annotation changed, sync finished)
 │   ├── csl-folder-service.ts       # Vault folder watcher feeding .csl/locale XML to the worker
 │   └── view-state-service.ts       # Reader view state persistence
 │
@@ -633,6 +636,11 @@ const response = await fetch(url, { ... }); // transparently proxied
 1. Add the method signature to `IParentProxy` in `bridge/types.ts`
 2. Implement it in `ParentHost` in `bridge/parent-host.ts`
 3. Call it via `this.parentHost.methodName()` in Worker code
+
+Data-change notifications are the exception: the worker raises EventHub events
+with `this.parentHost.emit("treeChanged")` (typed by `EventArgs`). A new one
+needs its bus on `EventHub` and its name in `WorkerEventName`
+(`services/event-hub.ts`), not a new `IParentProxy` method.
 
 ---
 

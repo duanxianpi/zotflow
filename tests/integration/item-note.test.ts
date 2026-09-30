@@ -265,7 +265,7 @@ describe("creating a child note", () => {
     test("the tree is told to refresh", async () => {
         const key = await service.createChildNote(LIB, "PARENT01");
         expect(host.events).toContainEqual({
-            name: "onNoteChangedByNoteView",
+            name: "noteChangedByNoteView",
             args: [LIB, key, "PARENT01"],
         });
     });
@@ -497,7 +497,7 @@ describe("update notifications and source-note refresh", () => {
         await service.updateNoteContent(LIB, "NOTEKEY1", "edited", "note-view");
 
         expect(host.events).toContainEqual({
-            name: "onNoteChangedByNoteView",
+            name: "noteChangedByNoteView",
             args: [LIB, "NOTEKEY1", "PARENT01"],
         });
         expect(triggerCalls).toEqual([
@@ -516,7 +516,7 @@ describe("update notifications and source-note refresh", () => {
         await service.updateNoteContent(LIB, "NOTEKEY1", "edited", "editor");
 
         expect(host.events).toContainEqual({
-            name: "onNoteChangedByEditor",
+            name: "noteChangedByEditor",
             args: [LIB, "NOTEKEY1", "PARENT01"],
         });
         expect(triggerCalls).toEqual([]);

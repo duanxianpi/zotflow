@@ -18,6 +18,8 @@ import {
     getLinkedLocalSourceNote,
 } from "utils/file";
 import type { ExternalFileStat, VaultConfig } from "bridge/types";
+import type { EventBus } from "services/event-bus";
+import type { EventArgs, WorkerEventName } from "services/event-hub";
 import { services } from "services/services";
 import { errorMessage as describeError } from "utils/error";
 
@@ -229,47 +231,17 @@ export class ParentHost implements IParentProxy {
         return getLinkedLocalSourceNote(this.app, file);
     }
 
-    public onTaskUpdate(taskId: string, info: ITaskInfo): void {
+    public reportTaskUpdate(taskId: string, info: ITaskInfo): void {
         services.taskMonitor.onTaskUpdate(taskId, info);
     }
 
-    public onAnnotationChanged(
-        libraryID: number,
-        annotationKey: string,
-        parentItemKey: string,
+    public emit<K extends WorkerEventName>(
+        event: K,
+        ...args: EventArgs<K>
     ): void {
-        services.taskMonitor.annotationChanged.emit(
-            libraryID,
-            annotationKey,
-            parentItemKey,
-        );
-    }
-
-    public onNoteChangedByEditor(
-        libraryID: number,
-        noteKey: string,
-        parentItemKey: string,
-    ): void {
-        services.taskMonitor.noteChangedByEditor.emit(
-            libraryID,
-            noteKey,
-            parentItemKey,
-        );
-    }
-
-    public onNoteChangedByNoteView(
-        libraryID: number,
-        noteKey: string,
-        parentItemKey: string,
-    ): void {
-        services.taskMonitor.noteChangedByNoteView.emit(
-            libraryID,
-            noteKey,
-            parentItemKey,
-        );
-    }
-
-    public onTreeChanged(): void {
-        services.taskMonitor.treeChanged.emit();
+        // Indexing by a generic key loses the per-event tuple; the
+        // signature above is what keeps callers type-checked.
+        const bus = services.eventHub[event] as EventBus<EventArgs<K>>;
+        bus.emit(...args);
     }
 }
