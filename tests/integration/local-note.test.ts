@@ -17,7 +17,6 @@ import { LocalTemplateService } from "worker/services/local-template";
 import { NotePathService } from "worker/services/note-path";
 import { DbHelperService } from "worker/services/db-helper";
 import { LibraryService } from "worker/services/library";
-import { SearchService } from "worker/services/search";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { resetDb } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
@@ -69,12 +68,7 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
     };
 
     const library = new LibraryService(settings, host);
-    const dbHelper = new DbHelperService(
-        settings,
-        host,
-        library,
-        new SearchService(),
-    );
+    const dbHelper = new DbHelperService(settings, host, library);
     templates = new LocalTemplateService(settings, host);
     service = new LocalNoteService(
         settings,

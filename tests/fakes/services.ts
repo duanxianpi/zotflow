@@ -6,6 +6,7 @@ import { DbHelperService } from "worker/services/db-helper";
 import { NotePathService } from "worker/services/note-path";
 import { LibraryService } from "worker/services/library";
 import { SearchService } from "worker/services/search";
+import { SearchMatcher } from "worker/services/search-matcher";
 import { DEFAULT_SETTINGS } from "settings/types";
 
 import { db, resetDb, seedLibrary } from "./db";
@@ -83,8 +84,8 @@ export async function createServiceHarness(
 
     const host = createFakeParentHost();
     const library = new LibraryService(settings, host);
-    const search = new SearchService();
-    const dbHelper = new DbHelperService(settings, host, library, search);
+    const dbHelper = new DbHelperService(settings, host, library);
+    const search = new SearchService(new SearchMatcher(), dbHelper);
     const notePath = new NotePathService(settings, dbHelper);
 
     return { dbHelper, notePath, library, search, host, settings };

@@ -343,7 +343,9 @@ src/
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)
 │   │   ├── csl-render.ts           # CslRenderWorkerService (CSL rendering; wraps worker/csl core)
-│   │   └── db-helper.ts            # DbHelperService (general-purpose DB queries)
+│   │   ├── search.ts               # SearchService (item search, recent items, autocomplete lists)
+│   │   ├── search-matcher.ts       # SearchMatcher (pure query parsing + fuzzy ranking; shared with tree view)
+│   │   └── db-helper.ts            # DbHelperService (general-purpose DB queries without a clearer owner)
 │   ├── csl/                        # Vendored csl-render core (citeproc wrapper; platform
 │   │                               #   agnostic, relative imports, WORKER-ONLY via services)
 │   └── tasks/

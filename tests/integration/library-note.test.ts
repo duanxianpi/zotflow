@@ -14,7 +14,6 @@ import { LibraryNoteService } from "worker/services/library-note";
 import { NotePathService } from "worker/services/note-path";
 import { DbHelperService } from "worker/services/db-helper";
 import { LibraryService } from "worker/services/library";
-import { SearchService } from "worker/services/search";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
@@ -107,12 +106,7 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
     } as unknown as DocumentWorkerService;
 
     const library = new LibraryService(settings, host);
-    const dbHelper = new DbHelperService(
-        settings,
-        host,
-        library,
-        new SearchService(),
-    );
+    const dbHelper = new DbHelperService(settings, host, library);
 
     service = new LibraryNoteService(
         settings,

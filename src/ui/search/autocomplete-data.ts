@@ -114,7 +114,7 @@ export async function getValueSuggestions(
         switch (field) {
             case "library":
                 source = await getCachedValues("library", () =>
-                    workerBridge.dbHelper.getLibraryNames(),
+                    workerBridge.search.getLibraryNames(),
                 );
                 break;
             case "tag":
@@ -124,7 +124,7 @@ export async function getValueSuggestions(
                 break;
             case "collection":
                 source = await getCachedValues("collection", () =>
-                    workerBridge.dbHelper.getCollectionNames(),
+                    workerBridge.search.getCollectionNames(),
                 );
                 break;
             case "type":

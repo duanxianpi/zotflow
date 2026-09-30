@@ -47,7 +47,7 @@ export class ZoteroItemSuggest {
 
             if (!query) {
                 const recentItems =
-                    await workerBridge.dbHelper.getRecentItems(limit);
+                    await workerBridge.search.getRecentItems(limit);
 
                 if (recentItems.length > 0) {
                     items = [
@@ -56,7 +56,7 @@ export class ZoteroItemSuggest {
                     ];
                 } else {
                     const fallbackItems =
-                        await workerBridge.dbHelper.getRecentlyAddedItems(
+                        await workerBridge.search.getRecentlyAddedItems(
                             limit,
                         );
 
@@ -68,7 +68,7 @@ export class ZoteroItemSuggest {
                     }
                 }
             } else {
-                const searchResults = await workerBridge.dbHelper.searchItems(
+                const searchResults = await workerBridge.search.searchItems(
                     query,
                     limit,
                 );

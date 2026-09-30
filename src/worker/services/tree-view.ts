@@ -34,7 +34,7 @@ import type { AnyIDBZoteroItem, IDBZoteroCollection } from "types/db-schema";
 import type { ZotFlowSettings } from "settings/types";
 import type { IParentProxy } from "bridge/types";
 import type { LibraryService } from "./library";
-import type { SearchService, SearchableRecord } from "./search";
+import type { SearchMatcher, SearchableRecord } from "./search-matcher";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -60,7 +60,7 @@ export class TreeViewService {
         private settings: ZotFlowSettings,
         private parentHost: IParentProxy,
         private library: LibraryService,
-        private search: SearchService,
+        private matcher: SearchMatcher,
     ) {
         this.treeTransferPayload = null;
     }
@@ -97,7 +97,7 @@ export class TreeViewService {
      * Ancestor visibility and child propagation are handled on the client.
      */
     public async searchTree(rawQuery: string): Promise<TreeSearchResult> {
-        const parsed = this.search.parse(rawQuery);
+        const parsed = this.matcher.parse(rawQuery);
         if (!this.searchIndex) {
             await this.getOptimizedTree();
         }
@@ -107,7 +107,7 @@ export class TreeViewService {
         }
 
         const records = Array.from(index.values());
-        const matched = this.search.matchAndRank(parsed, records);
+        const matched = this.matcher.matchAndRank(parsed, records);
         return {
             matchedKeys: matched.map((r) => r.id),
             freeTokens: parsed.freeTokens,

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("bridge", () => ({
     workerBridge: {
         tag: { getTagNames: mocks.getTagNames },
-        dbHelper: {
+        search: {
             getCollectionNames: mocks.getCollectionNames,
             getLibraryNames: mocks.getLibraryNames,
         },

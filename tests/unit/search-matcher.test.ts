@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 
 import {
-    SearchService,
+    SearchMatcher,
     type SearchableRecord,
-} from "worker/services/search";
+} from "worker/services/search-matcher";
 
-const search = new SearchService();
+const search = new SearchMatcher();
 
 function record(
     id: string,
@@ -22,7 +22,7 @@ function match(raw: string, records: SearchableRecord[]): SearchableRecord[] {
     return search.matchAndRank(search.parse(raw), records);
 }
 
-describe("SearchService diacritic folding", () => {
+describe("SearchMatcher diacritic folding", () => {
     test("matches plain and accented free text in both directions", () => {
         const accented = record("accented", { creators: ["Lämmermann"] });
         const plain = record("plain", { creators: ["Lammermann"] });
@@ -72,7 +72,7 @@ describe("SearchService diacritic folding", () => {
     });
 });
 
-describe("SearchService non-Latin free text", () => {
+describe("SearchMatcher non-Latin free text", () => {
     test("matches a Chinese substring in an item title", () => {
         const cjk = record("cjk", {
             name: "国家电网湖南省电力有限公司",

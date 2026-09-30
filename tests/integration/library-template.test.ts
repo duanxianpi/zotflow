@@ -17,7 +17,6 @@ import { DbHelperService } from "worker/services/db-helper";
 import { NotePathService } from "worker/services/note-path";
 import { ConvertService } from "worker/services/convert";
 import { LibraryService } from "worker/services/library";
-import { SearchService } from "worker/services/search";
 import { ZoteroAPIService } from "worker/services/zotero";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
@@ -91,12 +90,7 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
     } as unknown as CslRenderWorkerService;
 
     const library = new LibraryService(settings, host);
-    const dbHelper = new DbHelperService(
-        settings,
-        host,
-        library,
-        new SearchService(),
-    );
+    const dbHelper = new DbHelperService(settings, host, library);
     const convert = new ConvertService();
 
     service = new LibraryTemplateService(

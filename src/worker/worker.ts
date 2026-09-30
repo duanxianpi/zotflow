@@ -17,6 +17,7 @@ import { KeyService } from "./services/key";
 import { LibraryService } from "./services/library";
 import { DbHelperService } from "./services/db-helper";
 import { SearchService } from "./services/search";
+import { SearchMatcher } from "./services/search-matcher";
 import { TagService } from "./services/tag";
 import { NotePathService } from "./services/note-path";
 import { ConvertService } from "./services/convert";
@@ -72,6 +73,7 @@ export interface WorkerAPI {
     key: Exposed<KeyService>;
     library: Exposed<LibraryService>;
     dbHelper: Exposed<DbHelperServiceType>;
+    search: Exposed<SearchService>;
     tag: Exposed<TagServiceType>;
     documentWorker: Exposed<DocumentWorkerService>;
     enhancementResources: Exposed<EnhancementResourceService>;
@@ -119,6 +121,7 @@ let _key: KeyService | undefined;
 let _library: LibraryService | undefined;
 let _dbHelper: DbHelperService | undefined;
 let _search: SearchService | undefined;
+let _matcher: SearchMatcher | undefined;
 let _tag: TagService | undefined;
 let _notePath: NotePathService | undefined;
 let _convert: ConvertService | undefined;
@@ -230,13 +233,9 @@ const exposedApi: WorkerAPI = {
         try {
             _zotero = new ZoteroAPIService(settings.zoteroapikey);
             _library = new LibraryService(settings, parentHost);
-            _search = new SearchService();
-            _dbHelper = new DbHelperService(
-                settings,
-                parentHost,
-                _library,
-                _search,
-            );
+            _matcher = new SearchMatcher();
+            _dbHelper = new DbHelperService(settings, parentHost, _library);
+            _search = new SearchService(_matcher, _dbHelper);
             _tag = new TagService(settings, parentHost);
             finishStage("Create API, library, search and database services");
             _webdav = new WebDavService(settings, parentHost);
@@ -251,7 +250,7 @@ const exposedApi: WorkerAPI = {
                 settings,
                 parentHost,
                 _library,
-                _search,
+                _matcher,
             );
             finishStage("Create attachment, sync and tree services");
 
@@ -477,6 +476,16 @@ const exposedApi: WorkerAPI = {
                 "Worker not initialized",
             );
         return Comlink.proxy(_dbHelper);
+    },
+
+    get search() {
+        if (!_search)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_search);
     },
 
     get tag() {
