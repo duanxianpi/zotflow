@@ -829,9 +829,9 @@ input or waiting: trusted clicks, keyboard into CM6, mouse drags inside the
 reader's nested iframes (`openReader()` returns the reader frame, the
 document frame and the sidebar cards), and auto-waiting locators instead of
 sleeps. Find a new annotation by diffing sidebar ids, never by card index —
-the sidebar is sorted by position. `openView()` always uses a fresh leaf:
-reusing a loaded reader leaf leaves it blank (known bug, recorded as a
-`todo` test). Do not launch Obsidian through Playwright's Electron
+the sidebar is sorted by position. `openView()` always uses a fresh leaf so
+each test starts from a newly opened view; leaf reuse has its own tests. Do
+not launch Obsidian through Playwright's Electron
 launcher; it bypasses the isolated profile.
 
 Prefer `eval` over screenshots: `app.commands.executeCommandById("zotflow:…")`,

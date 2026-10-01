@@ -43,6 +43,13 @@ const ff = fireAndForgetIn("ZoteroReaderView");
  * between two concurrent opens of the same attachment. */
 const openingReaders = new Map<string, WorkspaceLeaf>();
 
+/** Bridge states in which the view's document is showing or still loading. */
+const ACTIVE_BRIDGE_STATES: ReadonlySet<IframeReaderBridge["state"]> = new Set([
+    "connecting",
+    "bridge-ready",
+    "reader-ready",
+]);
+
 export class ZoteroReaderView extends ItemView {
     private attachmentItem: IDBZoteroItem<AttachmentData>;
     private keyInfo: IDBZoteroKey;
@@ -56,6 +63,9 @@ export class ZoteroReaderView extends ItemView {
     private knownAnnotationIds = new Set<string>();
     private documentLease?: ReaderDocumentLease;
     private closing = false;
+    /** Bumped when the document is torn down, so an older in-flight render
+     * can tell it has been superseded. */
+    private documentGeneration = 0;
     private readerState: ReaderViewState = { libraryID: 0, itemKey: "" };
 
     constructor(leaf: WorkspaceLeaf) {
@@ -154,6 +164,22 @@ export class ZoteroReaderView extends ItemView {
 
         openingReaders.set(key, this.leaf);
         try {
+            // Obsidian calls setState again on an open view (history, layout
+            // restore, a link to the same attachment). If this document is
+            // already showing or loading, there is nothing to do.
+            const current = this.attachmentItem as
+                | IDBZoteroItem<AttachmentData>
+                | undefined;
+            if (
+                current?.libraryID === state.libraryID &&
+                current.key === state.itemKey &&
+                this.bridge &&
+                ACTIVE_BRIDGE_STATES.has(this.bridge.state)
+            ) {
+                await super.setState(state, result);
+                return;
+            }
+
             const _keyInfo = await workerBridge.annotation.getKeyInfo(
                 services.settings.zoteroapikey,
             );
@@ -181,6 +207,12 @@ export class ZoteroReaderView extends ItemView {
                     throw new Error(
                         `Item ${state.itemKey} doesn't exist or is not an attachment`,
                     );
+                }
+                // Another document in this leaf: the bridge is bound to the
+                // old attachment and loadDocument() is about to empty its
+                // iframe out of the view, so dispose it first.
+                if (this.bridge || this.documentLease) {
+                    await this.teardownReader();
                 }
                 this.attachmentItem = _item;
 
@@ -264,6 +296,10 @@ export class ZoteroReaderView extends ItemView {
         let acquiredLease: ReaderDocumentLease | undefined;
         let leaseInstalled = false;
         let readerInitialized = false;
+        // Closed, or torn down for another document while this render waited.
+        const generation = this.documentGeneration;
+        const superseded = () =>
+            this.closing || generation !== this.documentGeneration;
 
         // Resolve initial color scheme based on setting
         const schemeSetting = services.settings.readerColorScheme;
@@ -281,6 +317,7 @@ export class ZoteroReaderView extends ItemView {
                 await workerBridge.attachment.getReaderDocumentRevision(
                     this.attachmentItem,
                 );
+            if (superseded()) return;
             const documentKey = getLibraryReaderDocumentKey(
                 this.attachmentItem,
                 revision.kind === "external" ? revision : undefined,
@@ -435,7 +472,7 @@ export class ZoteroReaderView extends ItemView {
                 throw e;
             }
 
-            if (this.closing) {
+            if (superseded()) {
                 acquiredLease.release();
                 acquiredLease = undefined;
                 return;
@@ -453,6 +490,7 @@ export class ZoteroReaderView extends ItemView {
 
             // Another overlapping render may already own the View's lease.
             if (
+                superseded() ||
                 this.bridge.state !== "bridge-ready" ||
                 this.documentLease
             ) {
@@ -545,6 +583,7 @@ export class ZoteroReaderView extends ItemView {
                 ...opts,
             });
             readerInitialized = true;
+            if (superseded()) return;
 
             // Subscribe to sync events for live annotation updates
             this.subscribeToSyncEvents();
@@ -557,10 +596,12 @@ export class ZoteroReaderView extends ItemView {
             );
         } catch (e) {
             acquiredLease?.release();
+            // A teardown already released this render's lease, and the view
+            // may hold the next document's by now: leave both alone.
+            if (superseded()) return;
             if (leaseInstalled && !readerInitialized) {
                 this.releaseDocumentLease();
             }
-            if (this.closing) return;
             services.logService.error(
                 "Error loading Zotero Reader view",
                 "ZoteroReaderView",
@@ -592,6 +633,19 @@ export class ZoteroReaderView extends ItemView {
 
     async onClose() {
         this.closing = true;
+        await this.teardownReader();
+
+        // Flush view state on close to ensure latest state is saved
+        services.viewStateService.flushViewStateSave();
+    }
+
+    /**
+     * Dispose the current document: subscriptions, bridge (and its iframe)
+     * and the document lease. Any render still in flight for it sees the
+     * generation change and stops.
+     */
+    private async teardownReader(): Promise<void> {
+        this.documentGeneration++;
         this.unsubscribeSyncFinished?.();
         this.unsubscribeAnnotationChanged?.();
         this.unsubscribeSyncFinished = undefined;
@@ -607,9 +661,6 @@ export class ZoteroReaderView extends ItemView {
 
         this.fileContentMD5 = undefined;
         this.knownAnnotationIds.clear();
-
-        // Flush view state on close to ensure latest state is saved
-        services.viewStateService.flushViewStateSave();
     }
 
     private releaseDocumentLease(): void {

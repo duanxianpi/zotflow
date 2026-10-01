@@ -6,7 +6,7 @@ import { before, beforeEach, describe, test } from "node:test";
 
 import spec from "../../../scripts/fixture-library.mjs";
 import { buildDesired } from "../../../scripts/zotero-fixtures-lib.mjs";
-import { key, local, openReader, reset, session as connect, until } from "./lib.mjs";
+import { key, LIBRARY_ID, local, openReader, reset, session as connect, until } from "./lib.mjs";
 
 const fixtures = buildDesired(spec);
 const annotationsOf = (parentId) =>
@@ -79,21 +79,39 @@ describe("PDF reader", () => {
 });
 
 describe("reusing a reader leaf", () => {
-    // Known bug: ZoteroReaderView.loadDocument() empties the view, removing the
-    // bridge's iframe, but the bridge is created only once, so a second
-    // setViewState on a loaded reader (same or another attachment) leaves it
-    // on "Downloading/Loading…" forever. Drop `todo` once it is fixed.
-    test("opening another attachment in the same leaf shows it", { todo: "blank reader on setViewState reuse" }, async () => {
+    // Obsidian calls setViewState on an open view for history, layout restore
+    // and links. These used to leave the reader blank: loadDocument() emptied
+    // the bridge's iframe out of the view, and the bridge was never rebuilt.
+    const setViewState = (page, itemKey) =>
+        page.evaluate(
+            async ({ libraryID, itemKey }) => {
+                await window.app.workspace.activeLeaf.setViewState({
+                    type: "zotflow-zotero-reader-view",
+                    state: { libraryID, itemKey },
+                    active: true,
+                });
+            },
+            { libraryID: LIBRARY_ID, itemKey },
+        );
+
+    test("opening another attachment in the same leaf shows it", async () => {
         const { page } = session;
         await openReader(page, key("attention-pdf"));
-        await page.evaluate(async (itemKey) => {
-            await window.app.workspace.activeLeaf.setViewState({
-                type: "zotflow-zotero-reader-view",
-                state: { libraryID: Number(itemKey.lib), itemKey: itemKey.key },
-                active: true,
-            });
-        }, { lib: String((await local.row(key("morphology-epub"))).libraryID), key: key("morphology-epub") });
-        await page.locator(".workspace-leaf.mod-active iframe").waitFor({ timeout: 10000 });
+        await setViewState(page, key("morphology-epub"));
+        const reader = page.frameLocator(".workspace-leaf.mod-active iframe");
+        await reader.frameLocator("iframe").getByText("smallest meaningful unit").first().waitFor();
+        assert.equal(await page.locator(".workspace-leaf.mod-active .zotflow-loading").count(), 0);
+    });
+
+    test("setting the same attachment again keeps the loaded reader", async () => {
+        const { page } = session;
+        await openReader(page, key("attention-pdf"));
+        const iframe = page.locator(".workspace-leaf.mod-active iframe");
+        await iframe.evaluate((el) => (el.dataset.zfProbe = "first"));
+        await setViewState(page, key("attention-pdf"));
+        await page.waitForTimeout(1000);
+        assert.equal(await iframe.getAttribute("data-zf-probe"), "first", "reader was reloaded");
+        assert.equal(await page.locator(".workspace-leaf.mod-active .zotflow-loading").count(), 0);
     });
 });
 

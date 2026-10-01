@@ -15,14 +15,13 @@ import { LIBRARY_ID } from "../sync/lib.mjs";
 
 // One Playwright connection per test file, shared with the sync helpers and
 // closed by them when the file's tests end.
-export { key, local, reset, session } from "../sync/lib.mjs";
+export { key, LIBRARY_ID, local, reset, session } from "../sync/lib.mjs";
 
 /**
- * Show a view in a main-area leaf that is not already a reader. Reusing a
- * reader leaf hits a known bug (a second setViewState on a loaded reader
- * leaves it blank; see reader.live.mjs), and after the last main tab is
- * detached `getLeaf(true)` fails with "No tab group found", so fall back to
- * creating a leaf in the root split.
+ * Show a view in a fresh main-area leaf, so each test starts from a newly
+ * opened view (reusing a leaf is tested on its own in reader.live.mjs).
+ * After the last main tab is detached `getLeaf(true)` fails with "No tab
+ * group found", so fall back to creating a leaf in the root split.
  */
 export async function openView(page, viewState) {
     await page.evaluate(async (state) => {
