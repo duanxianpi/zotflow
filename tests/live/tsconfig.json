@@ -1,0 +1,12 @@
+{
+    // The live tests are Node scripts like scripts/*.mjs (run by
+    // `npm run live:sync`, not vitest); this config only lets the
+    // type-aware lint rules see them.
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "allowJs": true,
+        "checkJs": false,
+        "noEmit": true
+    },
+    "include": ["**/*.mjs"]
+}

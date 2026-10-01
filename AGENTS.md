@@ -256,6 +256,9 @@ src/
 │   ├── parent-host.ts              # ParentHost — main-thread API for Worker
 │   └── types.ts                    # IParentProxy interface
 │
+├── dev/
+│   └── test-hooks.ts               # window.__zotflowTest for live tests (off unless the profile sets a flag)
+│
 ├── bundle-assets/
 │   ├── inline-assets.ts            # Decompress reader resources → Blob URLs
 │   └── patch-inlined-assets.ts     # Rewrite viewer.html to use Blob URLs
@@ -787,6 +790,7 @@ npm run live:obsidian -- reload    # manual reload (e.g. after npm run build:plu
 npm run live:obsidian -- eval '<js>' | screenshot [out] [window] | logs [s] | targets | quit | reset
 npm run live:memory                # memory samples from the same instance
 npm run live:fixtures -- plan | apply | purge --yes | keys [id...] | libraries
+npm run live:app                   # Playwright UI tests (tests/live/app)
 ```
 
 `npm run live:fixtures` seeds the test library (`fixtureLibrary` in
@@ -798,6 +802,37 @@ id, not by searching. Attachment files are generated (`makePdf`, `makeEpub`,
 `makeHtml`); PDF text is Helvetica ASCII, and `annotate.*` places annotations
 on it. New spec objects need permanent ids: changing an id recreates the
 object under a new key.
+
+`npm run live:sync [-- pull push conflicts faults concurrency]` runs the live
+sync tests in `tests/live/sync/`, one file per kind of sync: real plugin
+services in the test Obsidian, the real test group, another client simulated
+through the API, and faults injected by holding a worker request (pass, drop
+its answer after the server applied it, or fail it unsent). Every test resets
+both sides first (fixtures `apply`, local library cleared and fully synced).
+They reach the page through one Playwright connection per test file
+(`session()` in `tests/live/sync/lib.mjs`, closed by an `after` hook) and the
+worker through `window.__zotflowTest`
+(`src/dev/test-hooks.ts`), which exists only when the vault's localStorage
+holds `zotflow-test-hooks = "1"` — set by the tests in the isolated profile,
+never by the plugin. Rebuild and reload the plugin before running. Results:
+`.obsidian-test/live-sync/` (JUnit XML, and `facts.jsonl` with the server
+behaviour each test observed). Put a new live sync test in the file for its
+kind; record server behaviour it depends on with `fact()`.
+
+`npm run live:app` runs the live UI tests in `tests/live/app/` with
+Playwright (`playwright-core`, no bundled browser) attached to the running
+test Obsidian over CDP: `Harness#playwright()` → `{ page, disconnect }`
+(`disconnect()` leaves Obsidian running). Tests share the sync helpers'
+`session()` rather than connecting themselves, and get `reset()`/`local`
+from there too. Use it for anything that needs real
+input or waiting: trusted clicks, keyboard into CM6, mouse drags inside the
+reader's nested iframes (`openReader()` returns the reader frame, the
+document frame and the sidebar cards), and auto-waiting locators instead of
+sleeps. Find a new annotation by diffing sidebar ids, never by card index —
+the sidebar is sorted by position. `openView()` always uses a fresh leaf:
+reusing a loaded reader leaf leaves it blank (known bug, recorded as a
+`todo` test). Do not launch Obsidian through Playwright's Electron
+launcher; it bypasses the isolated profile.
 
 Prefer `eval` over screenshots: `app.commands.executeCommandById("zotflow:…")`,
 `app.plugins.plugins.zotflow`, and DOM queries return structured results. The

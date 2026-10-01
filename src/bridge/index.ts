@@ -74,6 +74,8 @@ export class WorkerBridge {
     private _cslRender: Comlink.Remote<CslRenderWorkerService>;
     private _tasks: Comlink.Remote<TaskManager>;
 
+    private _parentHost: ParentHost;
+
     private _workerBlobUrl: string;
     private _initialized = false;
 
@@ -119,9 +121,10 @@ export class WorkerBridge {
             ),
         );
         finishStage("Prepare bundled Reader resource URLs");
+        this._parentHost = new ParentHost(app);
         await this._api.init(
             settings,
-            Comlink.proxy(new ParentHost(app)),
+            Comlink.proxy(this._parentHost),
             blobUrls,
         );
         finishStage("Wait for worker initialization");
@@ -357,6 +360,12 @@ export class WorkerBridge {
     get tasks() {
         this.assertInitialized();
         return this._tasks;
+    }
+
+    /** The main-thread host the worker calls back into. */
+    get parentHost() {
+        this.assertInitialized();
+        return this._parentHost;
     }
 
     /* ================================================================ */

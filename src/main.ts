@@ -14,6 +14,7 @@ import {
 import { ZotFlowSettingTab } from "./settings/settings";
 import { DEFAULT_SETTINGS } from "./settings/types";
 import { workerBridge } from "./bridge";
+import { installTestHooks } from "dev/test-hooks";
 import { revokeBlobUrls } from "bundle-assets/inline-assets";
 import {
     saveCredentials,
@@ -135,6 +136,10 @@ export default class ZotFlow extends Plugin {
         let workerStage = "Initialize worker bridge";
         try {
             await workerBridge.initialize(this.settings, this.app);
+            installTestHooks(this, {
+                bridge: workerBridge,
+                parentHost: workerBridge.parentHost,
+            });
             finishStage(workerStage);
             workerStage = "Refresh library capabilities";
             // Now that the worker is ready, populate per-library capabilities

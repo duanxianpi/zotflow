@@ -348,6 +348,26 @@ export class Harness {
         return { started: true, pid: child.pid };
     }
 
+    /**
+     * Attach Playwright to the running instance over CDP. Obsidian keeps
+     * running when `disconnect()` is called: for a CDP-attached browser,
+     * `browser.close()` only drops the connection. Launch with `launch()`
+     * first; Playwright's own Electron launcher would bypass the profile.
+     */
+    async playwright() {
+        const { chromium } = await import("playwright-core");
+        const browser = await chromium.connectOverCDP(this.base);
+        const context = browser.contexts()[0];
+        const page = context
+            .pages()
+            .find((p) => p.url() === "app://obsidian.md/index.html");
+        if (!page) {
+            await browser.close();
+            throw new Error(`No Obsidian main window on port ${this.config.port}`);
+        }
+        return { browser, context, page, disconnect: () => browser.close() };
+    }
+
     async close() {
         if (!(await this.isUp())) return false;
         const res = await fetch(`${this.base}/json/version`);

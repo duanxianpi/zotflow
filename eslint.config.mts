@@ -90,6 +90,7 @@ export default defineConfig(
             "esbuild.config.mjs",
             "version-bump.mjs",
             "tests/**/*.ts",
+            "tests/live/**/*.mjs",
             "vitest.config.ts",
         ],
         languageOptions: {

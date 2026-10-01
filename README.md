@@ -240,6 +240,17 @@ nothing unless the content changes, and annotations are placed on the
 generated text. Each object's key derives from its fixture id
 (`npm run live:fixtures -- keys attention-pdf`), so tests can address it directly.
 
+### Live sync tests
+
+`npm run live:sync` runs end-to-end sync tests against the test instance and
+the fixture library: pull, push, conflicts, faults (requests dropped after the
+server applied them, or never sent) and concurrency (another client writing
+mid-sync). They need the instance launched, a fresh `npm run build:plugin`,
+and `zoteroApiKey` plus a `groups/<id>` `fixtureLibrary` in
+`.obsidian-test/config.json`. Every test resets the group to the fixture set,
+so use a group you only use for testing. Run a subset with
+`npm run live:sync -- pull conflicts`.
+
 ### Memory leak checks
 
 With the test instance running (`npm run live:obsidian -- launch`):
