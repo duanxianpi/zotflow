@@ -131,7 +131,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     localSidecarFolder: "",
     localSourceNotePathTemplate: "Source/Local/@{{basename}}",
     autoImportAnnotationImages: false,
-    annotationImageFolder: "",
+    annotationImageFolder: "Source/Images",
     overwriteViewer: true,
     readerColorScheme: "obsidian-theme",
     defaultLightTheme: "obsidian",
