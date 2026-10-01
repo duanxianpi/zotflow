@@ -166,27 +166,101 @@ npm run dev:reader     # webpack watch mode (reader, separate terminal)
 npm run lint
 ```
 
-### Memory leak checks
+### Live testing in Obsidian
 
-With Obsidian running, start the lightweight CDP monitor with:
+`npm run live:obsidian` drives a separate Obsidian instance over the Chrome
+DevTools Protocol. It runs with its own profile (`--user-data-dir`), so its
+settings, IndexedDB and plugin state never touch your everyday Obsidian, which
+can stay open.
+
+Requirements: Obsidian installed, and a Zotero API key of your own, ideally
+limited to a group you only use for testing (sync tests write to it).
 
 ```bash
-npm run memory:watch -- --vault "Vault name"
+npm run build:plugin
+npm run live:obsidian -- setup
+npm run live:obsidian -- launch
+ZOTFLOW_TEST_API_KEY=<key> npm run live:obsidian -- login
+```
+
+`setup` creates a test vault (default `.obsidian-test/vault/`), hard-links
+`main.js`, `manifest.json` and `styles.css` into
+`.obsidian/plugins/zotflow/`, installs the
+[Hot Reload](https://github.com/pjeby/hot-reload) plugin (pinned version,
+checksum-verified), and writes `.obsidian-test/config.json`. All of
+`.obsidian-test/` is gitignored. Options:
+
+| Option              | Default                                             |
+| ------------------- | --------------------------------------------------- |
+| `--vault <dir>`     | `.obsidian-test/vault`                              |
+| `--profile <dir>`   | `.obsidian-test/profile`                            |
+| `--port <n>`        | `9223`                                              |
+| `--obsidian <exe>`  | macOS: `/Applications/Obsidian.app/Contents/MacOS/Obsidian`; Windows: `%LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe`; Linux: required |
+
+For a live edit loop, run the build in watch mode:
+
+```bash
+npm run live:obsidian -- dev
+```
+
+esbuild rewrites `main.js` in place, which the hard link makes visible inside
+the vault, so Hot Reload reloads the plugin after every rebuild (plain
+`npm run dev:plugin` works too). Anything that replaces a file instead of
+rewriting it, such as `git checkout` or an editor's atomic save, breaks its
+link; `dev`, `launch` and `reload` re-check and repair the links. A vault on a
+different volume than the repo gets copies instead, refreshed by the same
+commands. `npm run live:obsidian -- reload` reloads the plugin by hand. Other
+commands: `status`, `eval '<js>'`, `screenshot [out] [window]`,
+`logs [seconds]`, `targets`, `quit`, and `reset` (deletes the profile for a
+fresh start). The environment variables `ZF_OBSIDIAN_PATH`, `ZF_TEST_VAULT`,
+`ZF_TEST_PROFILE` and `ZF_TEST_PORT` override the config.
+
+### Fixture library
+
+`npm run live:fixtures` keeps a known set of Zotero data in your test library:
+collections, items of several types (including ones whose fields have their
+own names, like cases and patents), notes, PDF/EPUB/HTML attachments, and
+every annotation type. It only creates, updates and deletes objects it owns
+(marked in `extra`, in the note HTML, or by being under a fixture item or the
+`ZotFlow fixtures` collection), so other items in the library are left alone.
+A dedicated test group is still recommended, since sync tests touch the whole
+library.
+
+```bash
+ZOTFLOW_TEST_API_KEY=<key> npm run live:fixtures -- libraries   # pick a library
+# then set "fixtureLibrary": "groups/<id>" in .obsidian-test/config.json
+npm run live:fixtures -- plan      # what apply would change, read-only
+npm run live:fixtures -- apply     # create the set, or reset it after tests
+npm run live:fixtures -- purge --yes
+```
+
+The set is defined in `scripts/fixture-library.mjs`. Attachment files are
+generated there, not stored: deterministic bytes, so a re-apply uploads
+nothing unless the content changes, and annotations are placed on the
+generated text. Each object's key derives from its fixture id
+(`npm run live:fixtures -- keys attention-pdf`), so tests can address it directly.
+
+### Memory leak checks
+
+With the test instance running (`npm run live:obsidian -- launch`):
+
+```bash
+npm run live:memory
 ```
 
 Press Enter for a passive sample, use `g <label>` for a double-GC checkpoint,
-and `q` to detach the debugger and quit. Samples are written to
-`.memory-logs/` as CSV.
+and `q` to detach and quit. Samples are written to `.memory-logs/` as CSV.
 
 ### Local install
 
 Copy `main.js`, `manifest.json`, and `styles.css` to:
 
 ```
-<vault>/.obsidian/plugins/obsidian-zotflow/
+<vault>/.obsidian/plugins/zotflow/
 ```
 
-Reload Obsidian and enable the plugin.
+The folder name must match the plugin id in `manifest.json`. Reload Obsidian
+and enable the plugin.
 
 ### Maintainer release workflow
 

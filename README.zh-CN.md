@@ -164,12 +164,75 @@ npm run dev:reader     # 阅读器 webpack watch（需单独终端）
 npm run lint
 ```
 
-### 内存泄露检查
+### 在 Obsidian 中实测
 
-保持 Obsidian 运行，然后启动轻量 CDP 监控器：
+`npm run live:obsidian` 通过 Chrome DevTools Protocol 驱动一个独立的
+Obsidian 实例。它使用自己的配置目录（`--user-data-dir`），设置、IndexedDB
+和插件状态都不会影响你日常使用的 Obsidian，后者可以保持打开。
+
+前提：已安装 Obsidian，并准备一个自己的 Zotero API key，最好只授权一个专门用于
+测试的群组（同步测试会写入数据）。
 
 ```bash
-npm run memory:watch -- --vault "仓库名称"
+npm run build:plugin
+npm run live:obsidian -- setup
+npm run live:obsidian -- launch
+ZOTFLOW_TEST_API_KEY=<key> npm run live:obsidian -- login
+```
+
+`setup` 会创建测试仓库（默认 `.obsidian-test/vault/`），把 `main.js`、
+`manifest.json`、`styles.css` 以硬链接方式放入 `.obsidian/plugins/zotflow/`，
+安装 [Hot Reload](https://github.com/pjeby/hot-reload) 插件（固定版本并校验
+checksum），并写入 `.obsidian-test/config.json`。整个 `.obsidian-test/` 已被 gitignore。可选参数：
+
+| 参数                | 默认值                                              |
+| ------------------- | --------------------------------------------------- |
+| `--vault <dir>`     | `.obsidian-test/vault`                              |
+| `--profile <dir>`   | `.obsidian-test/profile`                            |
+| `--port <n>`        | `9223`                                              |
+| `--obsidian <exe>`  | macOS：`/Applications/Obsidian.app/Contents/MacOS/Obsidian`；Windows：`%LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe`；Linux：必填 |
+
+开发时以 watch 模式构建：
+
+```bash
+npm run live:obsidian -- dev
+```
+
+esbuild 原地重写 `main.js`，硬链接让仓库里的改动直接出现在 vault 中，Hot Reload
+会在每次构建后自动重载插件（直接用 `npm run dev:plugin` 也可以）。`git checkout`、
+编辑器的原子保存等"替换文件"的操作会使链接断开；`dev`、`launch`、`reload` 会检查
+并修复链接。vault 与仓库不在同一个卷时改为复制，同样由这些命令刷新。
+手动重载插件用 `npm run live:obsidian -- reload`。其他命令：`status`、
+`eval '<js>'`、`screenshot [out] [window]`、`logs [seconds]`、`targets`、
+`quit`，以及 `reset`（删除配置目录，从头开始）。环境变量 `ZF_OBSIDIAN_PATH`、
+`ZF_TEST_VAULT`、`ZF_TEST_PROFILE`、`ZF_TEST_PORT` 会覆盖配置文件。
+
+### Fixture 测试库
+
+`npm run live:fixtures` 在测试库中维护一组已知的 Zotero 数据：collection、多种条目类型
+（包括 case、patent 等字段名特殊的类型）、笔记、PDF/EPUB/HTML 附件，以及所有类型
+的注释。它只创建、修改、删除自己拥有的对象（通过 `extra`、笔记 HTML 中的标记，
+或位于 fixture 条目/`ZotFlow fixtures` collection 之下来识别），库中其他条目不受
+影响。仍建议使用独立的测试群组，因为同步测试会涉及整个库。
+
+```bash
+ZOTFLOW_TEST_API_KEY=<key> npm run live:fixtures -- libraries   # 选择目标库
+# 然后在 .obsidian-test/config.json 中设置 "fixtureLibrary": "groups/<id>"
+npm run live:fixtures -- plan      # 只读：查看 apply 会做哪些改动
+npm run live:fixtures -- apply     # 创建数据集，或在测试后重置
+npm run live:fixtures -- purge --yes
+```
+
+数据集定义在 `scripts/fixture-library.mjs`。附件文件在其中生成而非存入仓库：内容
+确定，重复 apply 时除非内容变化否则不会重新上传，注释也精确落在生成的文字上。每个
+对象的 key 由 fixture id 推导（`npm run live:fixtures -- keys attention-pdf`），测试可直接引用。
+
+### 内存泄露检查
+
+先启动测试实例（`npm run live:obsidian -- launch`），然后：
+
+```bash
+npm run live:memory
 ```
 
 按 Enter 进行被动采样，输入 `g <标签>` 执行两次 GC 后采样，输入 `q`
@@ -180,10 +243,10 @@ npm run memory:watch -- --vault "仓库名称"
 将 `main.js`、`manifest.json`、`styles.css` 复制到：
 
 ```
-<vault>/.obsidian/plugins/obsidian-zotflow/
+<vault>/.obsidian/plugins/zotflow/
 ```
 
-重载 Obsidian 后启用插件。
+文件夹名必须与 `manifest.json` 中的插件 id 一致。重载 Obsidian 后启用插件。
 
 ---
 

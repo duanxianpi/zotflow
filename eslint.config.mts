@@ -10,6 +10,9 @@ export default defineConfig(
         // prettify.js/sorter.js belong to no tsconfig, so the type-aware rules
         // could only ever report them as parse errors.
         "coverage/**",
+        // live:obsidian harness state: a vault with linked main.js and an
+        // Obsidian profile full of Chromium caches.
+        ".obsidian-test/**",
         "reader/reader/**",
         "note-editor/note-editor/**",
         "zotflow-enhancement-pack/**",
@@ -98,6 +101,9 @@ export default defineConfig(
             "obsidianmd/no-nodejs-modules": "off",
             "obsidianmd/rule-custom-message": "off",
             "no-restricted-globals": "off",
+            // The live:obsidian harness creates its own vault, so the config
+            // folder is known to be `.obsidian`.
+            "obsidianmd/hardcoded-config-path": "off",
         },
     },
     {

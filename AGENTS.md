@@ -9,7 +9,7 @@
 
 | Field                 | Value                                             |
 | --------------------- | ------------------------------------------------- |
-| **Name**              | ZotFlow (`obsidian-zotflow`)                      |
+| **Name**              | ZotFlow (plugin id `zotflow`, npm `obsidian-zotflow`) |
 | **Type**              | Obsidian Community Plugin                         |
 | **Language**          | TypeScript (strict mode)                          |
 | **Bundler**           | esbuild (custom config in `esbuild.config.mjs`)   |
@@ -769,10 +769,42 @@ npm run lint                 # ESLint
 Manual install: copy `main.js`, `manifest.json`, `styles.css` to:
 
 ```
-<Vault>/.obsidian/plugins/obsidian-zotflow/
+<Vault>/.obsidian/plugins/zotflow/
 ```
 
-Reload Obsidian → **Settings → Community plugins** → enable.
+The folder must match the manifest `id` (`zotflow`), not the npm package name
+(`obsidian-zotflow`). Reload Obsidian → **Settings → Community plugins** → enable.
+
+Live checks run in an isolated Obsidian driven over CDP (setup steps and
+options in README, "Live testing in Obsidian"):
+
+```bash
+npm run live:obsidian -- setup     # once: vault, hard-linked plugin, Hot Reload, config
+npm run live:obsidian -- launch    # own --user-data-dir, CDP on 9223
+npm run live:obsidian -- login     # needs ZOTFLOW_TEST_API_KEY
+npm run live:obsidian -- dev       # esbuild watch; Hot Reload reloads on each rebuild
+npm run live:obsidian -- reload    # manual reload (e.g. after npm run build:plugin)
+npm run live:obsidian -- eval '<js>' | screenshot [out] [window] | logs [s] | targets | quit | reset
+npm run live:memory                # memory samples from the same instance
+npm run live:fixtures -- plan | apply | purge --yes | keys [id...] | libraries
+```
+
+`npm run live:fixtures` seeds the test library (`fixtureLibrary` in
+`.obsidian-test/config.json`) from `scripts/fixture-library.mjs` and resets it
+after a test changes it; run `apply` before a live test that depends on known
+data. It only touches objects it owns — never add a write path that skips
+`ownedSets()`. Keys are `fixtureKey(id)` ("ZFX…"), so address fixture items by
+id, not by searching. Attachment files are generated (`makePdf`, `makeEpub`,
+`makeHtml`); PDF text is Helvetica ASCII, and `annotate.*` places annotations
+on it. New spec objects need permanent ids: changing an id recreates the
+object under a new key.
+
+Prefer `eval` over screenshots: `app.commands.executeCommandById("zotflow:…")`,
+`app.plugins.plugins.zotflow`, and DOM queries return structured results. The
+worker shares the main window's origin, so its Dexie database (`zotflow-dev`)
+can be read with `indexedDB.open` from `eval`. Settings opens in its own window
+in Obsidian 1.13+; pass `Settings` as the screenshot window. The Zotero key is
+the developer's own and must never be committed or echoed.
 
 ---
 

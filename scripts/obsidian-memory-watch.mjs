@@ -1,21 +1,21 @@
-import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import readline from "node:readline";
 
+import { Harness, loadConfig } from "./obsidian-harness.mjs";
 import {
-    defaultCliPath,
     defaultOutputPath,
     ObsidianMemoryWatch,
 } from "./obsidian-memory-watch-lib.mjs";
 
 function printHelp() {
-    console.log(`Usage: npm run memory:watch -- [options]
+    console.log(`Usage: npm run live:memory -- [options]
+
+Attaches over CDP to the isolated test instance started by
+"npm run live:obsidian -- launch" (see scripts/obsidian-harness.mjs).
 
 Options:
-  --vault <name>    Target vault name. Defaults to the active vault.
   --output <path>   CSV output path. Defaults to .memory-logs/.
-  --cli <path>      Obsidian CLI path. Defaults to OBSIDIAN_CLI or the
-                    standard Windows installation path.
+  --port <n>        CDP port. Defaults to the live:obsidian config (9223).
   --once            Take one double-GC sample and exit.
   --help            Show this help.
 
@@ -24,11 +24,7 @@ Interactive commands:
   s <label>         Take a labelled passive sample.
   g <label>         Run GC twice, then take a labelled sample.
   h                 Show the interactive commands.
-  q                 Detach the debugger and quit.
-
-Environment variables:
-  OBSIDIAN_CLI       Override the Obsidian CLI executable.
-  OBSIDIAN_VAULT     Default vault name.`);
+  q                 Detach the debugger and quit.`);
 }
 
 function takeOptionValue(argv, index, option) {
@@ -41,20 +37,15 @@ function takeOptionValue(argv, index, option) {
 
 function parseOptions(argv) {
     const options = {
-        cli: defaultCliPath(),
         help: false,
         once: false,
         output: defaultOutputPath(),
-        vault: process.env.OBSIDIAN_VAULT ?? "",
+        port: null,
     };
 
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
         switch (argument) {
-            case "--cli":
-                options.cli = takeOptionValue(argv, index, argument);
-                index += 1;
-                break;
             case "--help":
                 options.help = true;
                 break;
@@ -67,8 +58,8 @@ function parseOptions(argv) {
                 );
                 index += 1;
                 break;
-            case "--vault":
-                options.vault = takeOptionValue(argv, index, argument);
+            case "--port":
+                options.port = Number(takeOptionValue(argv, index, argument));
                 index += 1;
                 break;
             default:
@@ -154,13 +145,16 @@ async function main() {
         printHelp();
         return;
     }
-    if (isAbsolute(options.cli) && !existsSync(options.cli)) {
+    const config = loadConfig();
+    if (options.port) config.port = options.port;
+    const harness = new Harness(config);
+    if (!(await harness.isUp())) {
         throw new Error(
-            `Obsidian CLI not found at ${options.cli}. Pass --cli or set OBSIDIAN_CLI.`,
+            `Nothing listening on CDP port ${config.port}; run "npm run live:obsidian -- launch" first`,
         );
     }
 
-    const watch = new ObsidianMemoryWatch(options);
+    const watch = new ObsidianMemoryWatch({ ...options, harness });
     await watch.prepareCsv();
     console.log(`CSV: ${options.output}`);
 

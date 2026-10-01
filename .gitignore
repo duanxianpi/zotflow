@@ -41,3 +41,6 @@ docs/
 
 # Local note-editor checkout (not tracked as a submodule)
 note-editor/note-editor/
+
+# Local Obsidian test harness (config, vault, profile, screenshots)
+.obsidian-test/
