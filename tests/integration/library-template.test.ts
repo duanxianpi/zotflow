@@ -235,6 +235,33 @@ describe("frontmatter", () => {
         expect(out).toContain("library-version: 1234");
     });
 
+    test("the mandatory fields come first, ahead of template and older note keys", async () => {
+        const item = await seedArticle();
+        await db.libraries.update(LIB, { itemVersion: 1234 });
+        const out = await service.renderLibrarySourceNote(
+            item,
+            "---\ntitle: {{ item.title }}\nstatus: read\n---\nbody",
+            // An older note had them at the end.
+            { rating: 5, "zotero-key": item.key, "item-version": 1, "zotflow-locked": true },
+        );
+
+        const keys = out
+            .split("---")[1]!
+            .split("\n")
+            .filter((l) => /^[\w-]+:/.test(l))
+            .map((l) => l.slice(0, l.indexOf(":")));
+        expect(keys.slice(0, 6)).toEqual([
+            "zotflow-locked",
+            "zotero-key",
+            "library-id",
+            "item-version",
+            "item-tree",
+            "library-version",
+        ]);
+        expect(keys.slice(6)).toEqual(["rating", "title", "status"]);
+        expect(out).toContain("item-version: 7");
+    });
+
     test("a bare template key overwrites what the note had", async () => {
         const item = await seedArticle();
         const out = await service.renderLibrarySourceNote(

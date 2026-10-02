@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { mergeTemplateFrontmatter } from "utils/template-frontmatter";
+import {
+    mergeTemplateFrontmatter,
+    withMandatoryFirst,
+} from "utils/template-frontmatter";
 
 describe("template frontmatter merge protocol", () => {
     test("bare keys overwrite while ?? keys preserve existing values", () => {
@@ -31,5 +34,16 @@ describe("template frontmatter merge protocol", () => {
 
     test("an empty prefixed key is ignored", () => {
         expect(mergeTemplateFrontmatter({}, { "??": "ignored" })).toEqual({});
+    });
+});
+
+describe("withMandatoryFirst", () => {
+    test("mandatory keys come first, in their order; the rest keep theirs", () => {
+        const out = withMandatoryFirst(
+            { "zotflow-locked": true, "zotero-key": "ABCD1234" },
+            { title: "T", "zotero-key": "OLD", tags: ["a"] },
+        );
+        expect(Object.keys(out)).toEqual(["zotflow-locked", "zotero-key", "title", "tags"]);
+        expect(out["zotero-key"]).toBe("ABCD1234");
     });
 });

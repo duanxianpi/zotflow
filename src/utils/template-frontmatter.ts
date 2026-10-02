@@ -23,3 +23,19 @@ export function mergeTemplateFrontmatter(
 
     return merged;
 }
+
+/**
+ * Frontmatter with the plugin's mandatory fields first, in the given order,
+ * then everything else in its existing order. A mandatory key found among
+ * the rest (an older note had it further down) is moved, not duplicated.
+ */
+export function withMandatoryFirst(
+    mandatory: Record<string, unknown>,
+    rest: Record<string, unknown>,
+): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...mandatory };
+    for (const [key, value] of Object.entries(rest)) {
+        if (!(key in mandatory)) out[key] = value;
+    }
+    return out;
+}

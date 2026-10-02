@@ -7,6 +7,7 @@
  * than what the template said.
  */
 import { describe, test, expect, beforeEach } from "vitest";
+import { MAX_SEGMENT_BYTES } from "worker/services/note-path";
 import { db, seedItem, seedCollection, seedLibrary } from "../fakes/db";
 import { createServiceHarness, USER_ID } from "../fakes/services";
 
@@ -475,5 +476,67 @@ describe("settings updates", () => {
         expect(await h.notePath.resolveLibraryNotePath(it)).toBe(
             "New/ARTICLE1.md",
         );
+    });
+});
+
+describe("long names", () => {
+    // File systems allow 255 bytes per name; a note may also get " (99)".
+    const bytes = (s: string) => new TextEncoder().encode(s).length;
+    const parts = (path: string) => path.slice(0, -".md".length).split("/");
+
+    async function resolveTitle(title: string, template = "Refs/@{{ title }}") {
+        h = await createServiceHarness({ settings: { librarySourceNotePathTemplate: template } });
+        return h.notePath.resolveLibraryNotePath(await item({ title }));
+    }
+
+    test("a long title is cut to MAX_SEGMENT_BYTES, with room for a suffix and .md", async () => {
+        const path = await resolveTitle("a".repeat(300));
+        const [folder, name] = parts(path);
+
+        expect(folder).toBe("Refs");
+        expect(name).toBe(`@${"a".repeat(MAX_SEGMENT_BYTES - 1)}`);
+        expect(bytes(`${name} (99).md`)).toBeLessThanOrEqual(255);
+    });
+
+    test("the limit counts bytes: a CJK title is cut at a third of the characters", async () => {
+        const title = "注意力机制".repeat(40); // 200 characters, 600 bytes
+        const name = parts(await resolveTitle(title))[1]!;
+
+        expect(bytes(name)).toBeLessThanOrEqual(MAX_SEGMENT_BYTES);
+        expect(bytes(name)).toBeGreaterThan(MAX_SEGMENT_BYTES - 3);
+        expect(title.startsWith(name.slice(1))).toBe(true);
+        expect(name).not.toContain("�");
+    });
+
+    test("a cut never splits an emoji", async () => {
+        const family = "👨‍👩‍👧"; // one character, 18 bytes
+        const name = parts(await resolveTitle(`${"a".repeat(195)}${family}${"b".repeat(20)}`))[1]!;
+
+        expect(name).toBe(`@${"a".repeat(195)}`);
+    });
+
+    test("trailing spaces and dots left by the cut are dropped", async () => {
+        const name = parts(await resolveTitle(`${"a".repeat(197)}. ${"b".repeat(50)}`))[1]!;
+
+        expect(name).toBe(`@${"a".repeat(197)}`);
+    });
+
+    test("folder segments are capped too", async () => {
+        const path = await resolveTitle("f".repeat(300), "{{ title }}/note");
+
+        expect(path).toBe(`${"f".repeat(MAX_SEGMENT_BYTES)}/note.md`);
+    });
+
+    test("the fixture's long, punctuated title fits", async () => {
+        const title =
+            'An extremely long report title used to check truncation, wrapping, file name limits and sanitization: slashes / back\\slashes, colons: question marks? asterisks* quotes "double" pipes | and angle <brackets> — repeated until it is well over two hundred characters long';
+        const name = parts(await resolveTitle(title))[1]!;
+
+        expect(bytes(`${name} (99).md`)).toBeLessThanOrEqual(255);
+        expect(name.startsWith("@An extremely long report title")).toBe(true);
+    });
+
+    test("a name within the limit is left as it is", async () => {
+        expect(await resolveTitle("a".repeat(MAX_SEGMENT_BYTES - 1))).toBe(`Refs/@${"a".repeat(MAX_SEGMENT_BYTES - 1)}.md`);
     });
 });

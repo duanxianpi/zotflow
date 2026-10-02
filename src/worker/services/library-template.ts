@@ -41,7 +41,10 @@ import {
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
-import { mergeTemplateFrontmatter } from "utils/template-frontmatter";
+import {
+    mergeTemplateFrontmatter,
+    withMandatoryFirst,
+} from "utils/template-frontmatter";
 
 const DEFAULT_ITEM_TEMPLATE = `---
 citationKey: {{ item.citationKey | json }}
@@ -627,26 +630,30 @@ export class LibraryTemplateService {
             //   bare `key`          => overwrite (default; refreshed each
             //                          update from the rendered template)
             // The `??` prefix is stripped from the final key.
-            const finalFrontmatter = mergeTemplateFrontmatter(
-                originalFrontmatter,
-                templateFrontmatter,
-            );
-
-            // Ensure Mandatory Fields (always overwritten)
-            finalFrontmatter["zotflow-locked"] = true;
-            finalFrontmatter["zotero-key"] = item.key;
-            finalFrontmatter["item-version"] = item.version;
+            // Mandatory fields, always overwritten and written first.
+            const mandatory: Record<string, unknown> = {
+                "zotflow-locked": true,
+                "zotero-key": item.key,
+                "library-id": item.libraryID,
+                "item-version": item.version,
+            };
             // The subtree fingerprint: Zotero does not bump an item's version
             // when a child (attachment, annotation, note) changes.
             const tree = await itemTreeFingerprint(item.libraryID, item.key);
-            if (tree) finalFrontmatter["item-tree"] = tree;
+            if (tree) mandatory["item-tree"] = tree;
             // How far this device had synced the library: a device that is
             // behind leaves the note alone (see LibraryNoteService).
             const library = await db.libraries.get(item.libraryID);
             if (library?.itemVersion) {
-                finalFrontmatter["library-version"] = library.itemVersion;
+                mandatory["library-version"] = library.itemVersion;
             }
-            finalFrontmatter["library-id"] = item.libraryID;
+            const finalFrontmatter = withMandatoryFirst(
+                mandatory,
+                mergeTemplateFrontmatter(
+                    originalFrontmatter,
+                    templateFrontmatter,
+                ),
+            );
 
             // Stringify Frontmatter
             const frontmatterString =

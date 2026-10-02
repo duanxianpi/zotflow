@@ -131,6 +131,22 @@ describe("local template rendering", () => {
         expect(out).not.toContain("stale/path.pdf");
     });
 
+    test("the mandatory fields come first", async () => {
+        const out = await templates.renderLocalNote(
+            pdf(),
+            [],
+            "---\ntitle: {{ title }}\n---\nbody",
+            { rating: 5, "zotflow-local-attachment": "[[stale/path.pdf]]", "zotflow-locked": true },
+        );
+
+        const keys = out
+            .split("---")[1]!
+            .split("\n")
+            .filter((l) => /^[\w-]+:/.test(l))
+            .map((l) => l.slice(0, l.indexOf(":")));
+        expect(keys).toEqual(["zotflow-locked", "zotflow-local-attachment", "rating", "title"]);
+    });
+
     test("template frontmatter overwrites what the note had", async () => {
         const out = await templates.renderLocalNote(
             pdf(),

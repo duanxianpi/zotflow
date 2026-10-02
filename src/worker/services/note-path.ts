@@ -71,10 +71,66 @@ function sanitizeContext(
     return result;
 }
 
-/** Normalize a rendered path: collapse slashes, strip empties, append `.md`. */
+/**
+ * Longest path segment, in UTF-8 bytes. File systems allow 255 bytes per
+ * name; this leaves room for `.md` and the ` (n)` a note gets when its path
+ * is taken.
+ */
+export const MAX_SEGMENT_BYTES = 200;
+
+const utf8 = new TextEncoder();
+
+/** `Intl.Segmenter`, typed here: the project's TS lib predates it. */
+type GraphemeSegmenter = {
+    segment(text: string): Iterable<{ segment: string }>;
+};
+const SegmenterCtor = (
+    Intl as unknown as {
+        Segmenter?: new (
+            locale: undefined,
+            options: { granularity: "grapheme" },
+        ) => GraphemeSegmenter;
+    }
+).Segmenter;
+const graphemes = SegmenterCtor
+    ? new SegmenterCtor(undefined, { granularity: "grapheme" })
+    : null;
+
+/** User-perceived characters, so a cut never splits an emoji or accent. */
+function characters(text: string): string[] {
+    return graphemes
+        ? Array.from(graphemes.segment(text), (s) => s.segment)
+        : Array.from(text);
+}
+
+/**
+ * Cut a segment to MAX_SEGMENT_BYTES at a character boundary. Measured in
+ * bytes, since that is what the limit counts (a CJK character is three).
+ * Trailing spaces and dots left by the cut are dropped (Windows rejects them).
+ */
+function capSegment(segment: string): string {
+    if (utf8.encode(segment).length <= MAX_SEGMENT_BYTES) return segment;
+    let out = "";
+    let bytes = 0;
+    for (const c of characters(segment)) {
+        const n = utf8.encode(c).length;
+        if (bytes + n > MAX_SEGMENT_BYTES) break;
+        out += c;
+        bytes += n;
+    }
+    return out.replace(/[\s.]+$/u, "") || "_";
+}
+
+/**
+ * Normalize a rendered path: collapse slashes, strip empties, cap each
+ * segment's length, append `.md`.
+ */
 function sanitizePath(rawPath: string): string {
     const normalized = rawPath.replace(/\\/g, "/").replace(/\/+/g, "/");
-    const segments = normalized.split("/").filter((s) => s.trim().length > 0);
+    const segments = normalized
+        .split("/")
+        .filter((s) => s.trim().length > 0)
+        .map(capSegment);
     return `${segments.join("/")}.md`;
 }
 

@@ -12,7 +12,10 @@ import {
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
-import { mergeTemplateFrontmatter } from "utils/template-frontmatter";
+import {
+    mergeTemplateFrontmatter,
+    withMandatoryFirst,
+} from "utils/template-frontmatter";
 
 /** Default LiquidJS template string for local vault file source notes. */
 const DEFAULT_LOCAL_NOTE_TEMPLATE = `---
@@ -176,15 +179,17 @@ export class LocalTemplateService {
 
             // `??key` supplies a default without overwriting a value the user
             // already has; bare keys retain overwrite-on-render semantics.
-            const finalFrontmatter = mergeTemplateFrontmatter(
-                originalFrontmatter,
-                templateFrontmatter,
+            // Mandatory fields, always overwritten and written first.
+            const finalFrontmatter = withMandatoryFirst(
+                {
+                    "zotflow-locked": true,
+                    "zotflow-local-attachment": `[[${localAttachment.path}]]`,
+                },
+                mergeTemplateFrontmatter(
+                    originalFrontmatter,
+                    templateFrontmatter,
+                ),
             );
-
-            // Ensure Mandatory Fields
-            finalFrontmatter["zotflow-locked"] = true;
-            finalFrontmatter["zotflow-local-attachment"] =
-                `[[${localAttachment.path}]]`;
 
             // Stringify Frontmatter via Main Thread
             const frontmatterString =
