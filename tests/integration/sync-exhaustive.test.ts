@@ -18,6 +18,7 @@
  *   ZF_EXHAUSTIVE_UNIVERSE=<name> run one universe
  *   ZF_EXHAUSTIVE_REPORT=1        print every kind of violation found, with its
  *                                 shortest path, instead of failing on the first
+ *   ZF_EXHAUSTIVE_TIMEOUT_MIN=<n> per-universe time limit in minutes (default 60)
  */
 import { describe, test, expect } from "vitest";
 import { db } from "db/db";
@@ -31,6 +32,7 @@ import type { LibraryNoteService } from "worker/services/library-note";
 const DEPTH = Number(process.env.ZF_EXHAUSTIVE_DEPTH ?? 2);
 const ONLY = process.env.ZF_EXHAUSTIVE_UNIVERSE;
 const REPORT = process.env.ZF_EXHAUSTIVE_REPORT === "1";
+const TIMEOUT_MS = Number(process.env.ZF_EXHAUSTIVE_TIMEOUT_MIN ?? 60) * 60_000;
 
 const position = JSON.stringify({ pageIndex: 0, rects: [[10, 10, 100, 20]] });
 
@@ -203,6 +205,6 @@ describe("exhaustive sync check", () => {
                 );
             }
             expect(result.found.map((f) => f.message)).toEqual([]);
-        }, 3_600_000);
+        }, TIMEOUT_MS);
     }
 });

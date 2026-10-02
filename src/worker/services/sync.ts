@@ -559,7 +559,9 @@ export class SyncService {
                 signal,
             );
             if ((res.getVersion() ?? v0) !== v0) throw new DownloadRestart();
-            objects.push(...(res.raw as AnyZoteroItem[]));
+            // Only what was asked for (see fetchServerCopy).
+            const asked = new Set(slice);
+            objects.push(...(res.raw as AnyZoteroItem[]).filter((o) => asked.has(o.key)));
         }
 
         // Parents before children, so a child never waits for a parent
@@ -1166,7 +1168,10 @@ export class SyncService {
                 () => this.lib(libraryType, libraryID).items().get({ itemKey: key, includeTrashed: true }),
                 signal,
             );
-            remote = (res.raw as AnyZoteroItem[])[0];
+            // Only an object with the requested key: the server ignores an
+            // `itemKey` filter it cannot parse (an invalid key) and answers
+            // with other items (measured on api.zotero.org).
+            remote = (res.raw as AnyZoteroItem[]).find((o) => o.key === key);
         } catch (e) {
             this.parentHost.log("warn", `Could not fetch the server copy of ${key}`, "SyncService", e);
             return;

@@ -355,6 +355,31 @@ describe("write response handling", () => {
         expect(conflict.remote!.title).toBe("Original");
     });
 
+    test("a server copy is taken only for the requested key", async () => {
+        // Measured live: an itemKey the server cannot parse is ignored, and
+        // the answer lists other items. None of them is this item's copy.
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "OTHER001", data: { title: "someone else" } });
+        await h.sync.startSync();
+        await seedItem({ libraryID: USER_ID, key: "BADKEY01", syncStatus: "created" });
+        lib.rejectWrite("BADKEY01", { code: 400, message: "Invalid key" });
+        const real = globalThis.fetch;
+        globalThis.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            return real(url.replace(/itemKey=BADKEY01/, "itemKey=OTHER001"), init);
+        };
+        try {
+            await h.sync.startSync();
+        } finally {
+            globalThis.fetch = real;
+        }
+
+        const conflict = (await db.syncConflicts.get([USER_ID, "BADKEY01"]))!;
+        expect(conflict.kind).toBe("refused");
+        expect(conflict.remote).toBeUndefined();
+    });
+
     test("a per-item 412 means local versions cannot be trusted: a full sync, then the retry lands", async () => {
         const lib = await syncedItem();
         await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
