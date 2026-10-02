@@ -216,7 +216,19 @@ export const local = {
             const json = { ...template, id, comment, dateModified: new Date().toISOString() };
             await t.bridge.annotation.saveAnnotations(attachment, keyInfo, [...all, json]);
         }, LIBRARY_ID, attachmentKey, templateKey, newKey, comment),
+    /** Change fields of an annotation the way the reader does (`{ comment, color, … }`). */
+    editAnnotation: (attachmentKey, k, patch) =>
+        inObsidian(async (t, h, lib, a, k, patch) => {
+            const attachment = await t.bridge.dbHelper.getAttachmentItem(lib, a);
+            const keyInfo = await t.bridge.annotation.getKeyInfo(h.apiKey());
+            const all = await t.bridge.annotation.getAnnotations(attachment, h.apiKey());
+            if (!all.some((x) => x.id === k)) throw new Error(`No annotation ${k} under ${a}`);
+            const next = all.map((x) => (x.id === k ? { ...x, ...patch, dateModified: new Date().toISOString() } : x));
+            await t.bridge.annotation.saveAnnotations(attachment, keyInfo, next);
+        }, LIBRARY_ID, attachmentKey, k, patch),
     conflicts: () => inObsidian((t) => t.bridge.conflict.getItemConflicts()),
+    /** Resolve every conflict with one action, as the batch command does; returns the count. */
+    resolveAll: (action) => inObsidian((t, h, action) => t.bridge.conflict.resolveAllItemConflicts(action), action),
     /** The conflict listed for `k` (kind, group, remoteData, …), if any. */
     conflict: async (k) => (await local.conflicts()).find((c) => c.key === k),
     /** Pending local deletes (the delete log) for this library. */

@@ -281,3 +281,220 @@ describe("a write the server refuses", () => {
         assert.deepEqual(await syncAndWrites(), []);
     });
 });
+
+describe("a conflict on one field leaves the other changes merged", () => {
+    // Both sides change the annotation's comment (the conflict); only this
+    // side changes its colour, only the server its tags.
+    const A = () => key("attention-pdf-highlight-transformer");
+    const PDF = () => key("attention-pdf");
+
+    async function oneFieldConflict() {
+        await local.editAnnotation(PDF(), A(), { comment: "local comment", color: "#ffd400" });
+        await remote.patch(A(), { annotationComment: "remote comment", tags: [{ tag: "remote-tag" }] });
+        await local.sync();
+        const c = await local.conflict(A());
+        fact(F, "fields listed for a comment conflict with other fields changed on each side", c?.conflictFields);
+        assert.equal(c?.kind, "changed");
+        assert.deepEqual(c.conflictFields, ["annotationComment"]);
+    }
+
+    test("keep-local keeps the local comment and colour, and takes the server's tags", async () => {
+        await oneFieldConflict();
+        await local.resolve(A(), "keep-local");
+        const w = await syncAndWrites();
+
+        const server = (await remote.get(A())).data;
+        assert.deepEqual(w, ["POST /items → 200"]);
+        assert.equal(server.annotationComment, "local comment");
+        assert.equal(server.annotationColor, "#ffd400");
+        assert.deepEqual(server.tags.map((t) => t.tag), ["remote-tag"]);
+        assert.equal((await local.row(A())).syncStatus, "synced");
+    });
+
+    test("accept-remote takes the server's copy as it is, colour included", async () => {
+        await oneFieldConflict();
+        await local.resolve(A(), "accept-remote");
+
+        const row = await local.row(A());
+        assert.equal(row.syncStatus, "synced");
+        assert.equal(row.raw.data.annotationComment, "remote comment");
+        assert.equal(row.raw.data.annotationColor, "#2ea8e5");
+        assert.deepEqual(await syncAndWrites(), []);
+    });
+});
+
+describe("tags changed on both sides", () => {
+    test("are merged as a set: no conflict", async () => {
+        // The note starts with "summary": this side removes it and adds one,
+        // the server adds another.
+        const N = key("attention-note");
+        await local.setTags(N, [{ tag: "from-obsidian" }]);
+        await remote.patch(N, { tags: [{ tag: "summary" }, { tag: "from-zotero" }] });
+        await local.sync();
+
+        const tags = (await remote.get(N)).data.tags.map((t) => t.tag).sort();
+        fact(F, "tags after a removal + addition here and an addition there", tags);
+        assert.deepEqual(await local.conflicts(), []);
+        assert.deepEqual(tags, ["from-obsidian", "from-zotero"]);
+        assert.equal((await local.row(N)).syncStatus, "synced");
+    });
+});
+
+describe("trash on one side, an edit on the other", () => {
+    const N = () => key("attention-note");
+
+    test("trashed in Zotero, edited here: both apply, no conflict", async () => {
+        await local.editNote(N(), "Edited here");
+        await remote.patch(N(), { deleted: 1 });
+        await local.sync();
+
+        const server = (await remote.get(N())).data;
+        const row = await local.row(N());
+        fact(F, "remote trash + local text edit", { conflicts: (await local.conflicts()).length, deleted: server.deleted, trashed: row?.trashed });
+        assert.deepEqual(await local.conflicts(), []);
+        assert.ok(server.deleted, "in the server's trash");
+        assert.match(server.note, /Edited here/);
+        assert.equal(row.trashed, 1);
+    });
+
+    test("trashed here, edited in Zotero: both apply, no conflict", async () => {
+        await local.deleteNote(N());
+        await remote.patch(N(), { note: "<p>Edited in Zotero</p>" });
+        await local.sync();
+
+        const server = (await remote.get(N())).data;
+        assert.deepEqual(await local.conflicts(), []);
+        assert.ok(server.deleted, "in the server's trash");
+        assert.match(server.note, /Edited in Zotero/);
+        assert.equal((await local.row(N())).syncStatus, "synced");
+    });
+});
+
+describe("a child note moved to another item in Zotero while edited here", () => {
+    test("ends under the new parent with the local text, no conflict", async () => {
+        const N = key("attention-note");
+        await local.editNote(N, "Edited before the move");
+        await remote.patch(N, { parentItem: key("resnet") });
+        await local.sync();
+
+        const server = (await remote.get(N)).data;
+        assert.deepEqual(await local.conflicts(), []);
+        assert.equal(server.parentItem, key("resnet"));
+        assert.match(server.note, /Edited before the move/);
+        assert.equal((await local.row(N)).parentItem, key("resnet"));
+    });
+});
+
+describe("the server changes an item again around its conflict", () => {
+    const N = () => key("attention-note");
+
+    async function changedConflict() {
+        await local.editNote(N(), "Local text");
+        await remote.patch(N(), { note: "<p>Remote text</p>" });
+        await local.sync();
+        assert.equal((await local.conflict(N()))?.kind, "changed");
+    }
+
+    test("while in conflict: the conflict shows the newest server copy, keep-local uploads once", async () => {
+        await changedConflict();
+        await remote.patch(N(), { note: "<p>Remote text, second edit</p>" });
+        await local.sync();
+
+        const conflicts = await local.conflicts();
+        assert.equal(conflicts.length, 1);
+        assert.match(conflicts[0].remoteData.note, /second edit/);
+
+        await local.resolve(N(), "keep-local");
+        assert.deepEqual(await syncAndWrites(), ["POST /items → 200"], "no refused upload against a stale version");
+        assert.match((await remote.get(N())).data.note, /Local text/);
+    });
+
+    test("after keep-local, before the upload: a new conflict, nothing overwritten", async () => {
+        await changedConflict();
+        await local.resolve(N(), "keep-local");
+        await remote.patch(N(), { note: "<p>Remote text after keep-local</p>" });
+        await local.sync();
+
+        const c = await local.conflict(N());
+        fact(F, "server edit between keep-local and its upload", { kind: c?.kind, fields: c?.conflictFields });
+        assert.equal(c?.kind, "changed");
+        assert.match(c.remoteData.note, /after keep-local/);
+        assert.match((await remote.get(N())).data.note, /after keep-local/, "the server's edit is not overwritten unseen");
+    });
+});
+
+describe("several conflicts at once", () => {
+    test("resolve-all keep-local uploads every one in the next sync", async () => {
+        const N = key("attention-note");
+        const A = key("attention-pdf-highlight-transformer");
+        const P = key("legal-patent");
+        await local.editNote(N, "Local note text");
+        await local.editAnnotationComment(A, "local comment");
+        await local.setTags(P, [{ tag: "keep-me" }]);
+        await remote.patch(N, { note: "<p>Remote note text</p>" });
+        await remote.patch(A, { annotationComment: "remote comment" });
+        await remote.delete(P);
+        await local.sync();
+        assert.deepEqual((await local.conflicts()).map((c) => c.kind).sort(), ["changed", "changed", "remote-deleted"]);
+
+        const count = await local.resolveAll("keep-local");
+        await local.sync();
+
+        assert.equal(count, 3);
+        assert.deepEqual(await local.conflicts(), []);
+        assert.match((await remote.get(N)).data.note, /Local note text/);
+        assert.equal((await remote.get(A)).data.annotationComment, "local comment");
+        assert.deepEqual((await remote.get(P)).data.tags.map((t) => t.tag), ["keep-me"]);
+    });
+});
+
+describe("a keep-local upload whose answer is lost", () => {
+    test("is recognised on the next sync: no new conflict, the local text stays", async () => {
+        const N = key("attention-note");
+        await local.editNote(N, "Local text");
+        await remote.patch(N, { note: "<p>Remote text</p>" });
+        await local.sync();
+        await local.resolve(N, "keep-local");
+
+        await syncWithPause({ method: "POST" }, "lost");
+        assert.match((await remote.get(N)).data.note, /Local text/, "the server applied it");
+        await local.sync();
+
+        assert.deepEqual(await local.conflicts(), []);
+        assert.equal((await local.row(N)).syncStatus, "synced");
+        assert.match((await remote.get(N)).data.note, /Local text/);
+    });
+});
+
+describe("an annotation edited here and deleted in Zotero", () => {
+    const A = () => key("attention-pdf-highlight-transformer");
+    const PDF = () => key("attention-pdf");
+
+    async function deletedConflict() {
+        await local.editAnnotationComment(A(), "local comment");
+        await remote.delete(A());
+        await local.sync();
+        assert.equal((await local.conflict(A()))?.kind, "remote-deleted");
+    }
+
+    test("keep-local creates it again with the local comment, shown in the reader", async () => {
+        await deletedConflict();
+        await local.resolve(A(), "keep-local");
+        await local.sync();
+
+        const server = await remote.get(A());
+        assert.ok(server, "recreated");
+        assert.equal(server.data.annotationComment, "local comment");
+        assert.equal(server.data.parentItem, PDF());
+        assert.ok((await visible(PDF())).includes(A()));
+    });
+
+    test("accept-remote removes it from the reader", async () => {
+        await deletedConflict();
+        await local.resolve(A(), "accept-remote");
+
+        assert.equal(await local.row(A()), undefined);
+        assert.ok(!(await visible(PDF())).includes(A()));
+        assert.deepEqual(await syncAndWrites(), []);
+    });
+});
