@@ -86,7 +86,9 @@ processing.
 │       │                   collections, libraries, files)     │
 │       ├── normalize.ts   (API response → IDB shape)          │
 │       ├── mutate.ts      (local item writes: mutateItem)     │
-│       └── annotation.ts  (IDB ↔ AnnotationJSON conversion)   │
+│       ├── annotation.ts  (IDB ↔ AnnotationJSON conversion)   │
+│       └── sync/          (sync model: reconcile, decide,     │
+│                           commit, model, migrate-v7)         │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -267,8 +269,14 @@ src/
 ├── db/
 │   ├── db.ts                       # Dexie schema & getCombinations() helper (WORKER-ONLY)
 │   ├── normalize.ts                # Zotero API → IDB normalization (WORKER-ONLY)
-│   ├── mutate.ts                   # mutateItem / applyLocalEdit / applyLocalDelete / newLocalItem (WORKER-ONLY)
-│   └── annotation.ts               # AnnotationJSON ↔ IDB conversion (WORKER-ONLY)
+│   ├── mutate.ts                   # mutateItem(s) / applyLocalEdit / newLocalItem / createLocalItems / deleteLocalItems (WORKER-ONLY)
+│   ├── annotation.ts               # AnnotationJSON ↔ IDB conversion (WORKER-ONLY)
+│   └── sync/                       # The sync model (docs/sync-architecture.md), WORKER-ONLY
+│       ├── reconcile.ts            # Port of Zotero's diff / applyChanges / patch / three-way merge (pure)
+│       ├── model.ts                # KeyState, derived syncStatus, subtree fingerprint (pure)
+│       ├── decide.ts               # Every sync decision as a pure function of (state, event)
+│       ├── commit.ts               # The one writer of sync state (SyncWriter, readKey, syncTransaction)
+│       └── migrate-v7.ts           # v6 → v7 migration plan (pure)
 │
 ├── services/
 │   ├── services.ts                 # ServiceLocator singleton (main thread)
@@ -330,6 +338,7 @@ src/
 │       ├── suggest.ts              # BaseItemSearchModal + ZoteroSearchModal
 │       ├── item-picker.ts          # ItemPickerModal (extends BaseItemSearchModal)
 │       ├── file-picker.ts          # FilePickerModal (local vault file picker)
+│       ├── note-gone-modal.ts      # NoteGoneModal: text of a note deleted in Zotero → "Save as new note"
 │       ├── csl-add-modal.ts        # AddCslStyleModal / AddCslLocaleModal (fetch-by-id preview + add)
 │       ├── csl-details-modal.ts    # StyleDetailsModal (state-aware actions for installed styles)
 │       └── csl-style-details.ts    # Shared StyleDetails block (meta table + deps + preview)
@@ -338,7 +347,8 @@ src/
 │   ├── worker.ts                   # Worker entry point — exposes WorkerAPI via Comlink
 │   ├── services/
 │   │   ├── zotero.ts               # ZoteroAPIService (zotero-api-client wrapper)
-│   │   ├── sync.ts                 # SyncService (bidirectional, conflict-aware)
+│   │   ├── sync.ts                 # SyncService (upload-then-download engine; decisions in db/sync/decide)
+│   │   ├── conflict.ts             # ConflictService (list by group, resolve; Keep Local / Accept Remote)
 │   │   ├── attachment.ts           # AttachmentService (download, cache, LRU prune)
 │   │   ├── webdav.ts               # WebDavService (file download, verify)
 │   │   ├── library-note.ts         # LibraryNoteService (library source note CRUD)
@@ -458,12 +468,34 @@ Two things worth knowing before writing a service test:
 regression gate. Run it with `ZF_SYNTAX_MATRIX=1` to print the syntax survival
 matrix and the list of known gaps.
 
-`SyncService` is covered by four files, split by what they hold still:
-`sync-orchestration` (which libraries a run touches, the 412 retry loop,
-progress and notices), `sync-pull`, `sync-push`, and `sync-guards` (paths
-`startSync` cannot reach, e.g. `pushDirtyItems` called directly by the task
-layer). `createSyncHarness()` in `tests/fakes/sync-harness.ts` wires all of it
-in one call.
+Sync is tested in layers (docs/sync-architecture.md §8):
+
+- `tests/unit/reconcile.test.ts` — Zotero's own diff/patch/reconcile cases, ported.
+- `tests/unit/sync-decide.test.ts` — every abstract state × every event of
+  `db/sync/decide.ts`, then every event sequence up to `ZF_DECIDE_DEPTH`
+  (default 6; 10 verified) against a minimal one-object server. No DB.
+- `SyncService` integration files, split by what they hold still:
+  `sync-orchestration` (libraries, upload/download rounds, 412 and restart
+  limits, progress), `sync-pull`, `sync-push`, `sync-guards` (paths
+  `startSync` cannot reach, e.g. `upload` called directly), plus the scenario
+  files `sync-conflicts`, `sync-concurrency`, `sync-faults` and
+  `annotation-delete-conflict`. `createSyncHarness()` in
+  `tests/fakes/sync-harness.ts` wires all of it in one call (backoff sleeps
+  are instant there).
+- `tests/integration/sync-model.test.ts` — random sequences with faults;
+  replay a failure with `ZF_SYNC_MODEL_SEED=<n>`, widen with
+  `ZF_SYNC_MODEL_SEEDS=<count>` (5000 is the pre-merge run).
+- `tests/integration/sync-exhaustive.test.ts` + `tests/fakes/sync-world.ts`
+  — the acceptance checker: every action sequence up to
+  `ZF_EXHAUSTIVE_DEPTH` (2 in CI; 3 before merging, one
+  `ZF_EXHAUSTIVE_UNIVERSE` at a time), observing only services, row
+  statuses and the conflict list. `ZF_EXHAUSTIVE_REPORT=1` lists every kind
+  of violation with its shortest path.
+
+Run a wide search (model seeds, checker depth 3) after touching sync, and
+keep the fake server (`tests/fakes/zotero-server.ts`) as strict as the real
+API. A "no violation" result means something only together with a mutation
+check: break the rule on purpose and watch a test fail.
 
 Coverage is a map of what is untested, not a gate — there is no threshold, and
 a green number proves only that a line ran. When a sync branch matters, confirm
@@ -674,28 +706,41 @@ via the Comlink `WorkerBridge`.
 | `QueryService`      | `view.ts` (attachment lookup)      | `getAttachmentItem` (extensible for future `getItem`, etc.)            |
 | `AttachmentService` | `cache-section.ts`                 | `getCacheTotalSizeBytes`, `purgeCache`                                 |
 
-### Schema (current version: 6)
+### Schema (current version: 7)
 
 Primary keys are the `&`-prefixed declarations in `db/db.ts`, and the `Table<T, K>`
 type parameters mirror them. **There is no `localID` column** — `items`,
-`collections` and `files` are all keyed by the compound `[libraryID+key]`, which
-is why `db.items.get([libraryID, key])` and
-`db.items.update([libraryID, key], …)` are the correct way to address a row.
+`collections`, `files` and the sync tables are keyed by the compound
+`[libraryID+key]`, which is why `db.items.get([libraryID, key])` is the
+correct way to address a row.
 
-| Table         | Primary key        | Secondary indexes                                                                                                                                                                       |
-| ------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keys`        | `&key`             | —                                                                                                                                                                                       |
-| `groups`      | `&id`              | —                                                                                                                                                                                       |
-| `libraries`   | `&id`              | —                                                                                                                                                                                       |
-| `items`       | `&[libraryID+key]` | `[libraryID+syncStatus]`, `[libraryID+itemType+trashed]`, `[libraryID+parentItem+itemType+trashed]`, `*collections`, `*searchCreators`, `*searchTags`, `dateModified`, `lastAccessedAt` |
-| `collections` | `&[libraryID+key]` | `[libraryID+trashed]`, `[libraryID+syncStatus]`, `[libraryID+parentCollection]`                                                                                                         |
-| `files`       | `&[libraryID+key]` | `md5`, `lastAccessedAt`                                                                                                                                                                 |
-| `cslCache`    | `&key`             | — (string KV cache for CSL styles/locales/index)                                                                                                                                        |
+| Table           | Primary key        | Secondary indexes                                                                                                                                                                       |
+| --------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keys`          | `&key`             | —                                                                                                                                                                                       |
+| `groups`        | `&id`              | —                                                                                                                                                                                       |
+| `libraries`     | `&id`              | — (`itemVersion` is the download cursor; `needsFullSync`)                                                                                                                               |
+| `items`         | `&[libraryID+key]` | `[libraryID+syncStatus]`, `[libraryID+itemType+trashed]`, `[libraryID+parentItem+itemType+trashed]`, `*collections`, `*searchCreators`, `*searchTags`, `dateModified`, `lastAccessedAt` |
+| `collections`   | `&[libraryID+key]` | `[libraryID+trashed]`, `[libraryID+syncStatus]`, `[libraryID+parentCollection]`                                                                                                         |
+| `files`         | `&[libraryID+key]` | `md5`, `lastAccessedAt`                                                                                                                                                                 |
+| `cslCache`      | `&key`             | — (string KV cache for CSL styles/locales/index)                                                                                                                                        |
+| `syncCache`     | `&[libraryID+key]` | — merge base of an unsynced row (the server copy its local changes started from)                                                                                                       |
+| `syncDeleteLog` | `&[libraryID+key]` | — local deletes not yet uploaded (the row is already gone; `snapshot` restores it)                                                                                                      |
+| `syncConflicts` | `&[libraryID+key]` | `[libraryID+group]` — `kind`: `changed` / `local-deleted` / `remote-deleted` / `refused`                                                                                                |
+| `syncGroups`    | `&[libraryID+id]`  | — one remote deletion with local changes under it: its recorded members                                                                                                                 |
+| `syncQueue`     | `&[libraryID+key]` | `[libraryID+lastCheck]` — objects to retry with backoff                                                                                                                                 |
+| `uploadJournal` | `&[libraryID+key]` | — writes sent whose outcome is unknown (a copy of what was sent)                                                                                                                        |
+
+Item sync columns: `version` (last known server version, 0 = not created
+yet), `synced` (0/1), `localOnly`, `localRevision` (bumped by every local
+write), `treeFingerprint` (top-level items: hash of the subtree's
+`(key, version)`), and `syncStatus` — **derived** (`synced` / `created` /
+`updated` / `conflict` / `ignore`) by `commit.ts`, never written elsewhere.
 
 Version history: v1 base schema · v2 adds `[libraryID+parentCollection]` to
 `collections` · v3 adds `lastAccessedAt` to `items` · v4 clears `files` (cached
 bytes moved from `Blob` to `ArrayBuffer`) · v5 adds `cslCache` · v6 backfills
-base-mapped titles (`case.caseName`, `statute.nameOfAct`, `email.subject`).
+base-mapped titles (`case.caseName`, `statute.nameOfAct`, `email.subject`) ·
+v7 the sync model (`db/sync/migrate-v7.ts` maps every v6 `syncStatus`).
 
 `*`-prefixed entries are Dexie multi-valued indexes.
 
@@ -705,15 +750,33 @@ base-mapped titles (`case.caseName`, `statute.nameOfAct`, `email.subject`).
 - Use `getCombinations()` from `db/db.ts` for Cartesian product queries on compound indexes.
 - Use Dexie transactions (`db.transaction('rw', ...)`) for multi-table writes.
 - Local writes of Zotero item data go through `db/mutate.ts`, never a
-  hand-written `db.items.update`/`put`: `mutateItem()` (or `applyLocalEdit()`
-  for batched writes) for edits, `applyLocalDelete()` for a hard delete
-  (annotations; notes are trashed by editing `deleted`), `newLocalItem()` for
-  new rows. Index columns are derived from `raw.data` by `deriveIndexFields()`
-  (the same function sync uses), `dateModified` is stamped, and an edit may
-  not change `key`, `itemType` or `version`. Edits move `synced → updated`;
-  `created`, `conflict` and `ignore` stay; a row pending deletion refuses
-  edits. Sync-state transitions (pull, push results, conflict resolution) and
-  bookkeeping columns (`lastAccessedAt`, `csljson`, view state) are not edits.
+  hand-written `db.items.update`/`put`: `mutateItem()` / `mutateItems()` for
+  edits, `createLocalItems()` for rows built by `newLocalItem()`,
+  `deleteLocalItems()` for deletes (notes go to the trash — an edit of
+  `deleted`; everything else is hard-deleted into the delete log). An edit
+  may not change `key`, `itemType` or `version`; it marks the row unsynced,
+  bumps `localRevision`, keeps the server copy as merge base on the first
+  edit, and a row created or edited under a remote-deleted item joins that
+  deletion's group. A row in conflict stays in conflict. `mutateItem`
+  returning `undefined` means the item is gone (e.g. deleted in Zotero by a
+  sync meanwhile): callers must say so, never drop the edit silently
+  (`ItemNoteService.updateNoteContent` returns `{ status: "gone" }`).
+- Sync state is written only by `db/sync/commit.ts` (`SyncWriter`), from
+  states produced by the pure functions in `db/sync/decide.ts`. ESLint
+  rejects `syncStatus` / `synced` / `localRevision` / `localOnly` writes,
+  item `version` updates and any write to the sync tables outside
+  `db/sync/**`, `db/mutate.ts`, `db/normalize.ts` and `db/db.ts`.
+  Bookkeeping columns (`lastAccessedAt`, `csljson`, view state, image
+  versions) are not sync state.
+- Every read-decide-write is one Dexie transaction over `syncTables()`
+  (`syncTransaction`), awaiting only Dexie inside; network requests are
+  always outside. Snapshots stored anywhere are copies (`structuredClone`).
+- Decide from recorded facts only — never infer history from the current
+  parent/child structure. A conflict is ended only by the user (or when both
+  sides came to hold the same thing).
+- The download cursor moves only after a complete download at one library
+  version, or along the precondition chain of our own writes. No version
+  arithmetic.
 - When adding new indexes or tables, bump the Dexie version number and add a migration.
 - **Never import `db/` modules from main-thread code.** If the main thread needs data from IDB, add a method to an existing worker service (or create a new one) and call it via `workerBridge`.
 

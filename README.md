@@ -34,7 +34,7 @@ A full-featured PDF/EPUB/HTML reader, embedded right in your workspace and **the
 
 ### 🔄 True Bidirectional Sync
 
-Pull items, metadata, and annotations from Zotero — and push your changes back. Configure each library independently as **Bidirectional**, **Read-Only**, or **Ignored**. When conflicts happen, a field-level diff viewer lets you decide what to keep.
+Pull items, metadata, and annotations from Zotero — and push your changes back. Configure each library independently as **Bidirectional**, **Read-Only**, or **Ignored**. Sync works like Zotero's own: changes to different fields (or different tags) on both sides merge automatically, and only a field changed differently on both sides — or an item deleted on one side and changed on the other — becomes a conflict. A field-level diff viewer lets you decide what to keep; items deleted in Zotero together are resolved together.
 
 ![Bidirectional Sync](assets/sync.gif)
 
@@ -249,7 +249,10 @@ mid-sync). They need the instance launched, a fresh `npm run build:plugin`,
 and `zoteroApiKey` plus a `groups/<id>` `fixtureLibrary` in
 `.obsidian-test/config.json`. Every test resets the group to the fixture set,
 so use a group you only use for testing. Run a subset with
-`npm run live:sync -- pull conflicts`.
+`npm run live:sync -- pull conflicts`. `npm run live:sync -- server` probes,
+straight against the API and without Obsidian, the server behaviour the sync
+engine relies on (batch DELETE, `version: 0` creates, patch uploads, version
+checks).
 
 ### Memory leak checks
 
