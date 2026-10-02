@@ -212,12 +212,29 @@ export function onRemoteObject(state: KeyState, remote: AnyZoteroItem, ctx: Remo
     // landed, the base would be what was sent, and a field changed since on
     // both sides would be a conflict the pre-send base cannot show. Fields
     // that conflict under either base are conflicts.
+    // Likewise a field whose remote changes the two bases read differently
+    // (e.g. a tag the other client removed, or never had): which one holds
+    // depends on whether the write landed, so the user decides.
     if (journal && !ownWrite) {
         const fromSent = reconcile3(journal.sent, local, data);
         const listed = new Set(r.conflicts.map(([c]) => c.field));
         for (const pair of fromSent.conflicts) {
-            if (!listed.has(pair[0].field)) r.conflicts.push(pair);
+            if (!listed.has(pair[0].field)) {
+                r.conflicts.push(pair);
+                listed.add(pair[0].field);
+            }
         }
+        const changesOf = (changes: typeof r.changes, field: string) =>
+            JSON.stringify(changes.filter((c) => c.field === field).map((c) => [c.op, c.value]).sort());
+        for (const field of new Set([...r.changes, ...fromSent.changes].map((c) => c.field))) {
+            if (listed.has(field) || changesOf(r.changes, field) === changesOf(fromSent.changes, field)) continue;
+            listed.add(field);
+            r.conflicts.push([
+                { field, op: "modify", value: local[field] },
+                { field, op: "modify", value: data[field] },
+            ]);
+        }
+        r.changes = r.changes.filter((c) => !listed.has(c.field));
     }
 
     if (r.conflicts.length > 0) {
@@ -261,6 +278,9 @@ export function isLocalRecreation(state: KeyState): boolean {
 export function hasPendingChanges(state: KeyState): boolean {
     const { row, conflict } = state;
     if (!row || row.localOnly) return false;
+    // A draft that never reached the server and was trashed: nothing of it
+    // is worth recreating.
+    if (row.version === 0 && dataOf(row).deleted && !state.cache) return false;
     return row.synced === 0 || !!conflict;
 }
 
@@ -286,10 +306,12 @@ export function settleJournal(state: KeyState): KeyState {
     const next: KeyState = { ...state, journal: undefined };
     const { row, deleteLog } = state;
     // A create that never landed and was trashed or deleted since: there is
-    // nothing left to send.
-    if (row && row.version === 0 && dataOf(row).deleted && !state.conflict) {
+    // nothing left to send — also inside a remote-deletion group, which says
+    // only that its parent is gone.
+    if (row && row.version === 0 && dataOf(row).deleted && (!state.conflict || state.conflict.kind === "remote-deleted")) {
         next.row = undefined;
         next.cache = undefined;
+        next.conflict = undefined;
     }
     if (!row && deleteLog && deleteLog.version === 0 && !state.conflict) next.deleteLog = undefined;
     return next;

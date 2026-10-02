@@ -763,7 +763,10 @@ export class SyncService {
                 if (skip.has(j.key)) continue;
                 const state = await readKey(libraryID, j.key);
                 if (!state.journal) continue;
-                await writer.commit(j.key, state, settleJournal(state));
+                const next = settleJournal(state);
+                await writer.commit(j.key, state, next);
+                const group = state.conflict?.group;
+                if (group && !next.conflict) await this.leaveGroup(libraryID, group, j.key);
             }
             await writer.finish();
         });

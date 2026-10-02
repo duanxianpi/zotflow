@@ -253,6 +253,49 @@ describe("a lost answer followed by more local work", () => {
         expect(lib.items.get("NOTEKEY1")!.data.note).toBe("<p>theirs</p>");
     });
 
+    test("a remote tag change after a lost answer is a conflict: which tags it removed is unknown", async () => {
+        // Found by the depth-3 checker. Had our write landed, the other
+        // client removed our tag; had it not, they never saw it. The two
+        // readings merge differently, so the user decides.
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d) => {
+            d.tags = [{ tag: "ours" }];
+        });
+        failFirst("lost-response", "POST");
+        await h.sync.startSync();
+        lib.updateItem("AAAAAAAA", { tags: [{ tag: "theirs" }] });
+
+        await syncCleanly();
+
+        expect(await conflictKind("AAAAAAAA")).toBe("changed");
+        expect(lib.items.get("AAAAAAAA")!.data.tags).toEqual([{ tag: "theirs" }]);
+    });
+
+    test("a lost create under a parent deleted remotely, then deleted, never reaches the server", async () => {
+        // Found by the depth-3 checker: the create failed (no parent) but
+        // its answer was lost; the download proves it never landed, and the
+        // trashed draft must go even though it sits in the deletion group.
+        const lib = await syncedItem();
+        lib.deleteItem("PARENT01");
+        lib.deleteItem("NOTEKEY1");
+        const { ItemNoteService } = await import("worker/services/item-note");
+        const { ConvertService } = await import("worker/services/convert");
+        const notes = new ItemNoteService(h.settings, h.host, new ConvertService(), {
+            triggerUpdate: () => Promise.resolve(),
+        } as never);
+        const draft = await notes.createChildNote(USER_ID, "PARENT01");
+        failFirst("lost-response", "POST");
+        await h.sync.startSync();
+        await notes.deleteNote(USER_ID, draft);
+
+        await syncCleanly();
+        await new ConflictService(h.host).resolveAllItemConflicts("keep-local");
+        await syncCleanly();
+
+        expect(lib.items.has(draft)).toBe(false);
+        expect(await row(draft)).toBeUndefined();
+    });
+
     test("a further edit is pushed as an update, not a conflict", async () => {
         const lib = await syncedItem();
         await mutateItem(USER_ID, "AAAAAAAA", (d) => {
