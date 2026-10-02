@@ -22,6 +22,7 @@
  *   ZF_EXHAUSTIVE_PROGRESS=1      print states/transitions explored every 1000
  *                                 transitions (to stderr; depth 3 runs for hours)
  */
+import { createHash } from "node:crypto";
 import { describe, test, expect } from "vitest";
 import { db } from "db/db";
 import { ItemNoteService } from "worker/services/item-note";
@@ -180,7 +181,8 @@ async function explore(universe: Universe) {
                 continue;
             }
             const child = await w.capture();
-            const id = w.hash(child);
+            // A digest, not the state text: depth 3 visits tens of thousands.
+            const id = createHash("sha1").update(w.hash(child)).digest("base64");
             if ((seen.get(id) ?? -1) >= depth - 1) continue;
             seen.set(id, depth - 1);
             await visit(child, [...path, label], depth - 1);
@@ -189,7 +191,7 @@ async function explore(universe: Universe) {
 
     try {
         const root = await w.capture();
-        seen.set(w.hash(root), DEPTH);
+        seen.set(createHash("sha1").update(w.hash(root)).digest("base64"), DEPTH);
         await visit(root, [], DEPTH);
     } finally {
         w.dispose();
