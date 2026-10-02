@@ -6,7 +6,7 @@ import { beforeEach, describe, test } from "node:test";
 
 import spec from "../../../scripts/fixture-library.mjs";
 import { buildDesired } from "../../../scripts/zotero-fixtures-lib.mjs";
-import { fact, intercept, key, local, remote, requests, reset, writes } from "./lib.mjs";
+import { fact, inObsidian, intercept, key, LIBRARY_ID, local, remote, requests, reset, writes } from "./lib.mjs";
 
 const F = import.meta.filename;
 const fixtures = buildDesired(spec);
@@ -115,6 +115,40 @@ describe("remote changes", () => {
         await remote.patch(key("trashed-document"), { deleted: 0 });
         await local.sync();
         assert.equal((await local.row(key("trashed-document"))).trashed, 0);
+    });
+});
+
+describe("a child changed by another client", () => {
+    /** The source note's text, once it exists and carries `item-tree`. */
+    const noteText = (k) =>
+        inObsidian(async (t, h, lib, k) => {
+            const path = await t.bridge.libraryNote.ensureNote(lib, k, {});
+            for (let i = 0; i < 100; i++) {
+                const text = await window.app.vault.adapter.read(path).catch(() => "");
+                if (/item-tree:/.test(text)) return text;
+                await new Promise((r) => setTimeout(r, 200));
+            }
+            return window.app.vault.adapter.read(path);
+        }, LIBRARY_ID, k);
+    const treeOf = (text) => /item-tree:\s*"?(\w+)/.exec(text)?.[1];
+
+    test("leaves the parent's version, changes its item-tree, and a skip-up-to-date update re-renders the note", async () => {
+        const parent = key("attention");
+        const before = await local.row(parent);
+        const noteBefore = treeOf(await noteText(parent));
+        assert.equal(noteBefore, before.treeFingerprint, "the note carries the item's fingerprint");
+
+        await remote.patch(key("attention-pdf-highlight-transformer"), { annotationComment: "changed by another client" });
+        await local.sync();
+
+        const after = await local.row(parent);
+        fact(F, "parent version after a child annotation edit", { before: before.version, after: after.version });
+        assert.equal(after.version, before.version, "Zotero leaves the parent's version alone");
+        assert.notEqual(after.treeFingerprint, before.treeFingerprint);
+
+        // Not forced: only the fingerprint says the note is stale.
+        const noteAfter = treeOf(await noteText(parent));
+        assert.equal(noteAfter, after.treeFingerprint, "re-rendered by a skip-up-to-date update");
     });
 });
 
