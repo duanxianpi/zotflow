@@ -5,6 +5,7 @@ import { Zotero_Item_Types } from "types/zotero-item-const";
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
 import { getAnnotationJson } from "db/annotation";
+import { itemTreeFingerprint } from "db/sync/commit";
 import type { IParentProxy } from "bridge/types";
 import type { AttachmentService } from "./attachment";
 import type { DocumentWorkerService } from "./document-worker";
@@ -545,6 +546,11 @@ export class LibraryNoteService {
         return notePath;
     }
 
+    /** How far this device has downloaded the library (its sync cursor). */
+    private async librarySyncVersion(libraryID: number): Promise<number> {
+        return (await db.libraries.get(libraryID))?.itemVersion ?? 0;
+    }
+
     /**
      * Perform file update (with version check)
      */
@@ -568,10 +574,27 @@ export class LibraryNoteService {
         // fingerprint catches them (a note written before it existed has
         // none, and is refreshed once).
         const rawTree = fileCheck.frontmatter?.["item-tree"];
+        const tree = await itemTreeFingerprint(item.libraryID, item.key);
         const treeChanged =
-            !!item.treeFingerprint &&
-            (typeof rawTree === "string" ? rawTree : undefined) !==
-                item.treeFingerprint;
+            tree !== undefined &&
+            (typeof rawTree === "string" ? rawTree : undefined) !== tree;
+
+        // A note rendered on another device from a newer copy of the library
+        // must not be rewritten from this device's older one: "different"
+        // means "stale" only if this device has synced at least as far as
+        // the note's renderer had (a library version is ordered; the
+        // fingerprint is not).
+        const behind =
+            (await this.librarySyncVersion(item.libraryID)) <
+            noteLibraryVersion(fileCheck.frontmatter);
+        if (behind && !forceUpdate) {
+            this.parentHost.log(
+                "debug",
+                `Source note of ${item.key} is newer than this device's copy of the library; left alone until it syncs`,
+                "LibraryNoteService",
+            );
+            return;
+        }
 
         // Only update if the item or its subtree changed, or if forced
         if (forceUpdate || currentVersion !== newVersion || treeChanged) {
@@ -792,4 +815,13 @@ function assertSourceNoteItem(item: AnyIDBZoteroItem): void {
             `Only top-level items have source notes; ${item.key} belongs to ${item.parentItem}`,
         );
     }
+}
+
+/** The `library-version` a note was rendered at; 0 if it has none. */
+function noteLibraryVersion(
+    frontmatter: Record<string, unknown> | undefined | null,
+): number {
+    const raw = frontmatter?.["library-version"];
+    const n = typeof raw === "number" ? raw : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
 }

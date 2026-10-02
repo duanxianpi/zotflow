@@ -18,6 +18,7 @@ import {
     zoteroSelectItemUri,
 } from "utils/zotero-uri";
 import { getAnnotationJson } from "db/annotation";
+import { itemTreeFingerprint } from "db/sync/commit";
 import type { AnnotationJSON } from "types/zotero-reader";
 import { zoteroToZotflowLinks } from "worker/convert/note-links";
 import { createDbNoteLinkResolver } from "./note-link-resolver";
@@ -637,8 +638,13 @@ export class LibraryTemplateService {
             finalFrontmatter["item-version"] = item.version;
             // The subtree fingerprint: Zotero does not bump an item's version
             // when a child (attachment, annotation, note) changes.
-            if (item.treeFingerprint) {
-                finalFrontmatter["item-tree"] = item.treeFingerprint;
+            const tree = await itemTreeFingerprint(item.libraryID, item.key);
+            if (tree) finalFrontmatter["item-tree"] = tree;
+            // How far this device had synced the library: a device that is
+            // behind leaves the note alone (see LibraryNoteService).
+            const library = await db.libraries.get(item.libraryID);
+            if (library?.itemVersion) {
+                finalFrontmatter["library-version"] = library.itemVersion;
             }
             finalFrontmatter["library-id"] = item.libraryID;
 

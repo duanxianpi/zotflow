@@ -5,8 +5,7 @@
  * it: the row with its derived columns (index fields from `raw.data`,
  * `syncStatus` from `synced` / `version` / `localOnly` / the conflict),
  * copies of every snapshot, and the merge base, delete log, journal and
- * conflict records. Afterwards `finish()` recomputes the subtree fingerprint
- * of every top-level item a write touched.
+ * conflict records.
  *
  * Every function here must run inside a Dexie transaction over
  * `syncTables()`: callers read, decide and commit in one transaction, and
@@ -100,69 +99,13 @@ async function writeKey(libraryID: number, key: string, prev: KeyState, next: Ke
     }
 }
 
-/**
- * Whether a write leaves every fingerprint as it was: the row stays, under
- * the same parent, with the same version and `localOnly` (a local edit).
- */
-function sameFingerprintInput(a: AnyIDBZoteroItem | undefined, b: AnyIDBZoteroItem | undefined): boolean {
-    return (
-        !!a &&
-        !!b &&
-        a.parentItem === b.parentItem &&
-        a.version === b.version &&
-        !!a.localOnly === !!b.localOnly
-    );
-}
-
-/**
- * Writes decisions for one library and keeps the subtree fingerprints of
- * the top-level items they touch up to date. Use one per transaction:
- * `commit` each key, then `finish`.
- */
+/** Writes decisions for one library: `commit` (or `update`) each key. */
 export class SyncWriter {
-    private tops = new Set<string>();
-
     constructor(readonly libraryID: number) {}
-
-    /** The top-level ancestor of `key` (itself if top-level), or none. */
-    private async topOf(key: string, parentItem: string): Promise<string | undefined> {
-        let current = key;
-        let parent = parentItem;
-        const seen = new Set([key]);
-        while (parent) {
-            if (seen.has(parent)) return undefined;
-            seen.add(parent);
-            const row = await db.items.get([this.libraryID, parent]);
-            if (!row) return undefined;
-            current = row.key;
-            parent = row.parentItem;
-        }
-        return current;
-    }
-
-    private async touch(row: AnyIDBZoteroItem | undefined): Promise<void> {
-        if (!row) return;
-        const top = await this.topOf(row.key, row.parentItem);
-        if (top) this.tops.add(top);
-    }
 
     /** Writes `next` over `prev` for `key`. */
     async commit(key: string, prev: KeyState, next: KeyState): Promise<void> {
-        if (sameFingerprintInput(prev.row, next.row)) {
-            await writeKey(this.libraryID, key, prev, next);
-            return;
-        }
-        // Tops are found through the rows as they are before and after the
-        // write: a move or delete changes the subtree it leaves.
-        await this.touch(prev.row);
         await writeKey(this.libraryID, key, prev, next);
-        if (next.row) {
-            if (next.row.parentItem !== prev.row?.parentItem || !prev.row) {
-                await this.touch(next.row);
-            }
-            // A row's own fingerprint input is its version.
-            if (next.row.parentItem === "") this.tops.add(key);
-        }
     }
 
     /** Reads the current state of `key`, applies `decide`, commits the result. */
@@ -171,12 +114,6 @@ export class SyncWriter {
         const next = decide(prev);
         await this.commit(key, prev, next);
         return next;
-    }
-
-    /** Recomputes the fingerprints of the touched top-level items. */
-    async finish(): Promise<void> {
-        for (const top of this.tops) await refreshTreeFingerprint(this.libraryID, top);
-        this.tops.clear();
     }
 }
 
@@ -203,14 +140,15 @@ export async function getDescendants(libraryID: number, key: string): Promise<An
     return out;
 }
 
-/** Recomputes and stores one top-level item's subtree fingerprint. */
-export async function refreshTreeFingerprint(libraryID: number, key: string): Promise<void> {
+/**
+ * The subtree fingerprint of a top-level item (see `treeFingerprint`), or
+ * undefined for a child or a missing item. Computed when a source note is
+ * checked or rendered, never stored: nothing on the write paths keeps it.
+ */
+export async function itemTreeFingerprint(libraryID: number, key: string): Promise<string | undefined> {
     const top = await db.items.get([libraryID, key]);
-    if (!top || top.parentItem) return;
-    const fp = treeFingerprint([top, ...(await getDescendants(libraryID, key))]);
-    // A put of the row just read: same effect as update(), without
-    // update's cursor walk.
-    if (top.treeFingerprint !== fp) await db.items.put({ ...top, treeFingerprint: fp });
+    if (!top || top.parentItem) return undefined;
+    return treeFingerprint([top, ...(await getDescendants(libraryID, key))]);
 }
 
 /* ------------------------------------------------------------------ */

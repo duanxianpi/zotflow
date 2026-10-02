@@ -47,7 +47,6 @@ export const LOCAL_FIELDS = [
     "annotationImageVersion",
     "externalAnnotationExtractionFileMD5",
     "localRevision",
-    "treeFingerprint",
 ] as const;
 
 /** Copies the device-local fields of `from` onto `to` (a fresh object). */
@@ -93,35 +92,3 @@ export function treeFingerprint(rows: Pick<AnyIDBZoteroItem, "key" | "version" |
     return fnv1a(parts.join(";"));
 }
 
-/**
- * Fingerprints for every top-level item among `rows` (one library), keyed by
- * item key. Used by the migration and by tests as the reference the
- * incrementally maintained column must match.
- */
-export function allTreeFingerprints(
-    rows: Pick<AnyIDBZoteroItem, "key" | "version" | "localOnly" | "parentItem">[],
-): Map<string, string> {
-    const children = new Map<string, typeof rows>();
-    for (const r of rows) {
-        if (!r.parentItem) continue;
-        const list = children.get(r.parentItem) ?? [];
-        list.push(r);
-        children.set(r.parentItem, list);
-    }
-    const out = new Map<string, string>();
-    for (const top of rows) {
-        if (top.parentItem) continue;
-        const subtree: typeof rows = [];
-        const seen = new Set<string>();
-        const stack = [top];
-        while (stack.length > 0) {
-            const r = stack.pop()!;
-            if (seen.has(r.key)) continue;
-            seen.add(r.key);
-            subtree.push(r);
-            stack.push(...(children.get(r.key) ?? []));
-        }
-        out.set(top.key, treeFingerprint(subtree));
-    }
-    return out;
-}

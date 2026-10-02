@@ -20,7 +20,7 @@
  * structure, and it happens once.
  */
 import { reconcile2 } from "db/sync/reconcile";
-import { allTreeFingerprints, deriveSyncStatus } from "db/sync/model";
+import { deriveSyncStatus } from "db/sync/model";
 
 import type {
     AnyIDBZoteroItem,
@@ -142,12 +142,9 @@ export function planV7Migration(v6: V6Row[], now: string): V7Plan {
         // Group members found through a root may come later in the list;
         // a member that v6 had as clean keeps `synced = 1` (it is held only
         // to be restored with its descendants).
-        const fingerprints = allTreeFingerprints(kept);
         for (const row of kept) {
             const conflict = conflicts.get(row.key);
             row.syncStatus = deriveSyncStatus(row, conflict);
-            const fp = fingerprints.get(row.key);
-            if (fp !== undefined) row.treeFingerprint = fp;
             plan.rows.push(row);
         }
         plan.conflicts.push(...conflicts.values());

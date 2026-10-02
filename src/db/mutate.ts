@@ -163,7 +163,6 @@ export async function mutateItems(libraryID: number, edits: LocalEdit[]): Promis
             await writer.commit(key, state, next);
             written.push(true);
         }
-        await writer.finish();
         const out: (AnyIDBZoteroItem | undefined)[] = [];
         for (let i = 0; i < edits.length; i++) {
             out.push(written[i] ? await db.items.get([libraryID, edits[i]!.key]) : undefined);
@@ -242,7 +241,6 @@ export async function createLocalItems(libraryID: number, rows: AnyIDBZoteroItem
             const next = await joinDeletionAbove(libraryID, row.key, recreated(state, row));
             await writer.commit(row.key, state, next);
         }
-        await writer.finish();
     });
 }
 
@@ -294,7 +292,6 @@ export async function deleteLocalItems(libraryID: number, keys: string[]): Promi
             }
             result.removed.push(key);
         }
-        await writer.finish();
     });
     return result;
 }

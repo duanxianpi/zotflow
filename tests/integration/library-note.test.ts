@@ -13,6 +13,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { LibraryNoteService } from "worker/services/library-note";
 import { NotePathService } from "worker/services/note-path";
 import { DbHelperService } from "worker/services/db-helper";
+import { itemTreeFingerprint } from "db/sync/commit";
 import { LibraryService } from "worker/services/library";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
@@ -259,6 +260,7 @@ describe("updating an existing note", () => {
         placeNote("Source/@PARENT01.md", "existing body", {
             "zotero-key": "PARENT01",
             "item-version": 7,
+            "item-tree": await itemTreeFingerprint(LIB, "PARENT01"),
         });
 
         await service.ensureNote(LIB, "PARENT01", {});
@@ -267,16 +269,10 @@ describe("updating an existing note", () => {
         expect(renderCalls).toHaveLength(0);
     });
 
-    test("a changed child (same item version, new item-tree) re-renders the note", async () => {
-        // Zotero does not bump the parent's version when an annotation or
-        // child note changes; the subtree fingerprint does change.
-        await db.items.update([LIB, "PARENT01"], {
-            treeFingerprint: "newtree1",
-        });
-        placeNote("Source/@PARENT01.md", "stale body", {
+    test("a note written before item-tree existed is refreshed once", async () => {
+        placeNote("Source/@PARENT01.md", "old body", {
             "zotero-key": "PARENT01",
             "item-version": 7,
-            "item-tree": "oldtree1",
         });
 
         await service.ensureNote(LIB, "PARENT01", {});
@@ -284,19 +280,68 @@ describe("updating an existing note", () => {
         expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
     });
 
-    test("a note at the item's version and item-tree is left alone", async () => {
-        await db.items.update([LIB, "PARENT01"], {
-            treeFingerprint: "sametree",
+    test("a changed child (same item version, new item-tree) re-renders the note", async () => {
+        // Zotero does not bump the parent's version when an annotation or
+        // child note changes; the subtree fingerprint does change.
+        await seedItem({ libraryID: LIB, key: "ATTACH01", itemType: "attachment", parentItem: "PARENT01", version: 8 } as any);
+        const tree = await itemTreeFingerprint(LIB, "PARENT01");
+        placeNote("Source/@PARENT01.md", "stale body", {
+            "zotero-key": "PARENT01",
+            "item-version": 7,
+            "item-tree": tree,
         });
+        await db.items.update([LIB, "ATTACH01"], { version: 9 });
+
+        await service.ensureNote(LIB, "PARENT01", {});
+
+        expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
+    });
+
+    test("a note at the item's version and item-tree is left alone", async () => {
         placeNote("Source/@PARENT01.md", "existing body", {
             "zotero-key": "PARENT01",
             "item-version": 7,
-            "item-tree": "sametree",
+            "item-tree": await itemTreeFingerprint(LIB, "PARENT01"),
         });
 
         await service.ensureNote(LIB, "PARENT01", {});
 
         expect(host.vault.get("Source/@PARENT01.md")).toBe("existing body");
+    });
+
+    describe("a note rendered on a device that had synced further", () => {
+        // The vault syncs between devices, the library database does not:
+        // this device may hold an older copy of the library than the device
+        // that wrote the note.
+        beforeEach(async () => {
+            await db.libraries.update(LIB, { itemVersion: 40 });
+            placeNote("Source/@PARENT01.md", "newer body", {
+                "zotero-key": "PARENT01",
+                "item-version": 9,
+                "item-tree": "fromnewer",
+                "library-version": 50,
+            });
+        });
+
+        test("is not rewritten from this device's older copy", async () => {
+            await service.ensureNote(LIB, "PARENT01", {});
+
+            expect(host.vault.get("Source/@PARENT01.md")).toBe("newer body");
+        });
+
+        test("is refreshed once this device has synced as far", async () => {
+            await db.libraries.update(LIB, { itemVersion: 50 });
+
+            await service.ensureNote(LIB, "PARENT01", {});
+
+            expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
+        });
+
+        test("is still rewritten when the update is forced", async () => {
+            await service.ensureNote(LIB, "PARENT01", { forceUpdateContent: true });
+
+            expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
+        });
     });
 
     test("an out-of-date note is re-rendered", async () => {

@@ -95,11 +95,6 @@ interface _IDBZoteroItem<T extends ZoteroItemData> {
      */
     syncStatus: ItemSyncStatus;
     syncedAt: string;
-    /**
-     * Top-level items only: a short hash of `(key, version)` over the item
-     * and every descendant, so a source note can tell that a child changed.
-     */
-    treeFingerprint?: string;
 
     // External Annotation Extraction Tracking
     externalAnnotationExtractionFileMD5?: string;

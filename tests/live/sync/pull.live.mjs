@@ -136,7 +136,7 @@ describe("a child changed by another client", () => {
         const parent = key("attention");
         const before = await local.row(parent);
         const noteBefore = treeOf(await noteText(parent));
-        assert.equal(noteBefore, before.treeFingerprint, "the note carries the item's fingerprint");
+        assert.ok(noteBefore, "the note carries item-tree");
 
         await remote.patch(key("attention-pdf-highlight-transformer"), { annotationComment: "changed by another client" });
         await local.sync();
@@ -144,11 +144,11 @@ describe("a child changed by another client", () => {
         const after = await local.row(parent);
         fact(F, "parent version after a child annotation edit", { before: before.version, after: after.version });
         assert.equal(after.version, before.version, "Zotero leaves the parent's version alone");
-        assert.notEqual(after.treeFingerprint, before.treeFingerprint);
 
         // Not forced: only the fingerprint says the note is stale.
         const noteAfter = treeOf(await noteText(parent));
-        assert.equal(noteAfter, after.treeFingerprint, "re-rendered by a skip-up-to-date update");
+        assert.ok(noteAfter);
+        assert.notEqual(noteAfter, noteBefore, "re-rendered by a skip-up-to-date update");
     });
 });
 

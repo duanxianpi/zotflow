@@ -18,6 +18,7 @@ import { NotePathService } from "worker/services/note-path";
 import { ConvertService } from "worker/services/convert";
 import { LibraryService } from "worker/services/library";
 import { ZoteroAPIService } from "worker/services/zotero";
+import { itemTreeFingerprint } from "db/sync/commit";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
@@ -220,9 +221,18 @@ describe("frontmatter", () => {
 
     test("the subtree fingerprint is written as item-tree", async () => {
         const item = await seedArticle();
-        const out = await service.renderLibrarySourceNote({ ...item, treeFingerprint: "0badcafe" }, "body", {});
+        const out = await service.renderLibrarySourceNote(item, "body", {});
 
-        expect(out).toContain("item-tree: 0badcafe");
+        expect(out).toContain(`item-tree: ${await itemTreeFingerprint(LIB, item.key)}`);
+    });
+
+    test("the library's sync version is written as library-version", async () => {
+        const item = await seedArticle();
+        await db.libraries.update(LIB, { itemVersion: 1234 });
+
+        const out = await service.renderLibrarySourceNote(item, "body", {});
+
+        expect(out).toContain("library-version: 1234");
     });
 
     test("a bare template key overwrites what the note had", async () => {

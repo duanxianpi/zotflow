@@ -162,7 +162,6 @@ export class ConflictService {
                         }
                         return acceptRemote(state);
                     });
-                    await writer.finish();
                 });
             }
 
@@ -203,7 +202,6 @@ export class ConflictService {
                 }
             }
             if (record) await putGroup({ ...record, members: [] });
-            await writer.finish();
         });
     }
 

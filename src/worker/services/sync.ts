@@ -606,7 +606,6 @@ export class SyncService {
                     if (result.leftGroup) await this.leaveGroup(libraryID, result.leftGroup, remote.key);
                     if (entry) await deleteQueueEntry(libraryID, remote.key);
                 }
-                await writer.finish();
                 return out;
             });
             slice.forEach((remote, i) => {
@@ -666,7 +665,6 @@ export class SyncService {
                 }
                 await deleteQueueEntry(libraryID, key);
             }
-            await writer.finish();
         });
 
         const present = (await db.items.bulkGet(keys.map((k): [number, string] => [libraryID, k]))).filter(
@@ -731,7 +729,6 @@ export class SyncService {
                         "SyncService",
                     );
                 }
-                await writer.finish();
                 return gone;
             });
 
@@ -778,7 +775,6 @@ export class SyncService {
                 const group = state.conflict?.group;
                 if (group && !next.conflict) await this.leaveGroup(libraryID, group, j.key);
             }
-            await writer.finish();
         });
     }
 
@@ -870,7 +866,6 @@ export class SyncService {
             await syncTransaction(async () => {
                 const writer = new SyncWriter(libraryID);
                 for (const key of recreate) await writer.update(key, markForRecreation);
-                await writer.finish();
             });
         }
         await this.processDeletions(libraryID, removed, changedItems);
@@ -888,7 +883,6 @@ export class SyncService {
                     const state = await readKey(libraryID, l.key);
                     if (!state.row) await writer.commit(l.key, state, {});
                 }
-                await writer.finish();
             });
         }
 
@@ -1009,7 +1003,6 @@ export class SyncService {
                     await writer.commit(key, state, next);
                     out.push({ key, payload, revision: next.journal!.revision, data: next.journal!.sent });
                 }
-                await writer.finish();
                 return out;
             });
             if (sent.length === 0) continue;
@@ -1063,7 +1056,6 @@ export class SyncService {
                     }
                     if (followUp !== "none") followUps.push({ key, followUp });
                 }
-                await writer.finish();
                 await db.libraries.update(libraryID, { itemVersion: version });
             });
 
@@ -1126,7 +1118,6 @@ export class SyncService {
                     await writer.commit(key, state, {});
                     this.parentHost.log("debug", `Successfully deleted: ${key}`, "SyncService");
                 }
-                await writer.finish();
                 await db.libraries.update(libraryID, { itemVersion: version });
             });
         }
@@ -1142,7 +1133,6 @@ export class SyncService {
                 const state = await readKey(libraryID, key);
                 if (state.journal) await writer.commit(key, state, { ...state, journal: undefined });
             }
-            await writer.finish();
         });
     }
 
@@ -1167,7 +1157,6 @@ export class SyncService {
             if (!state.row || state.row.synced === 0 || state.conflict) return false;
             const writer = new SyncWriter(libraryID);
             await writer.commit(row.parentItem, state, markForRecreation(state));
-            await writer.finish();
             this.parentHost.log("warn", `Parent ${row.parentItem} of ${key} is missing on the server; recreating it.`, "SyncService");
             return true;
         });
@@ -1202,7 +1191,6 @@ export class SyncService {
                     remoteVersion: remote.version,
                 },
             });
-            await writer.finish();
         });
     }
 }

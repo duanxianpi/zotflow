@@ -737,9 +737,16 @@ correct way to address a row.
 
 Item sync columns: `version` (last known server version, 0 = not created
 yet), `synced` (0/1), `localOnly`, `localRevision` (bumped by every local
-write), `treeFingerprint` (top-level items: hash of the subtree's
-`(key, version)`), and `syncStatus` — **derived** (`synced` / `created` /
-`updated` / `conflict` / `ignore`) by `commit.ts`, never written elsewhere.
+write), and `syncStatus` — **derived** (`synced` / `created` / `updated` /
+`conflict` / `ignore`) by `commit.ts`, never written elsewhere.
+
+Source notes record what they were rendered from in frontmatter, because the
+vault syncs between devices and the database does not: `item-version`,
+`item-tree` (the subtree fingerprint, `itemTreeFingerprint()` — computed when a
+note is checked or rendered, never stored) and `library-version` (the
+library's sync cursor at render time). A note whose `library-version` is ahead
+of this device's cursor was rendered from a newer copy of the library and is
+left alone until this device catches up (unless the update is forced).
 
 Version history: v1 base schema · v2 adds `[libraryID+parentCollection]` to
 `collections` · v3 adds `lastAccessedAt` to `items` · v4 clears `files` (cached

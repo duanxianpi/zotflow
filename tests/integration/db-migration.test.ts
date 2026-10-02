@@ -9,7 +9,6 @@ import Dexie from "dexie";
 import { describe, test, expect, beforeEach } from "vitest";
 
 import { db } from "db/db";
-import { allTreeFingerprints } from "db/sync/model";
 
 import type { AnyIDBZoteroItem } from "types/db-schema";
 
@@ -235,19 +234,5 @@ describe("v7: the sync model", () => {
         await migrate([v6Row("EXTERN01", "ignore", {}, { itemType: "annotation" })]);
 
         expect(await db.items.get([LIB, "EXTERN01"])).toMatchObject({ localOnly: true, syncStatus: "ignore" });
-    });
-
-    test("every top-level item gets its subtree fingerprint", async () => {
-        await migrate([
-            v6Row("PARENT01", "synced", { version: 3 }),
-            v6Row("ATTACH01", "synced", { version: 4 }, { itemType: "attachment", parentItem: "PARENT01" }),
-            v6Row("ANNOTAT1", "synced", { version: 6 }, { itemType: "annotation", parentItem: "ATTACH01" }),
-        ]);
-
-        const rows = await db.items.toArray();
-        expect((await db.items.get([LIB, "PARENT01"]))!.treeFingerprint).toBe(
-            allTreeFingerprints(rows).get("PARENT01"),
-        );
-        expect((await db.items.get([LIB, "ATTACH01"]))!.treeFingerprint).toBeUndefined();
     });
 });
