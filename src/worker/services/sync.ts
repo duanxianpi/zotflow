@@ -578,40 +578,50 @@ export class SyncService {
 
         const queued = new Set<string>();
         const now = this.nowISO();
-        for (const remote of objects) {
-            const outcome = await syncTransaction(async () => {
+        // One transaction per slice: a subtree's fingerprint is recomputed
+        // once per slice, not once per object (a PDF with k annotations
+        // would otherwise cost k² row reads on its first download).
+        for (const slice of chunk(objects, FETCH_BULK_SIZE)) {
+            const outcomes = await syncTransaction(async () => {
                 const writer = new SyncWriter(libraryID);
-                const state = await readKey(libraryID, remote.key);
-                const parent = remote.data.parentItem;
-                const parentExists = !parent || !!(await db.items.get([libraryID, parent]));
-                const result = onRemoteObject(state, remote, { libraryID, parentExists, now });
-                if (result.outcome === "queue") {
+                const out: string[] = [];
+                for (const remote of slice) {
+                    const state = await readKey(libraryID, remote.key);
+                    const parent = remote.data.parentItem;
+                    const parentExists = !parent || !!(await db.items.get([libraryID, parent]));
+                    const result = onRemoteObject(state, remote, { libraryID, parentExists, now });
+                    out.push(result.outcome);
                     const entry = await db.syncQueue.get([libraryID, remote.key]);
-                    await putQueueEntry({
-                        libraryID,
-                        key: remote.key,
-                        reason: "missing-parent",
-                        tries: (entry?.tries ?? 0) + 1,
-                        lastCheck: this.now(),
-                    });
-                    return result.outcome;
+                    if (result.outcome === "queue") {
+                        await putQueueEntry({
+                            libraryID,
+                            key: remote.key,
+                            reason: "missing-parent",
+                            tries: (entry?.tries ?? 0) + 1,
+                            lastCheck: this.now(),
+                        });
+                        continue;
+                    }
+                    await writer.commit(remote.key, state, result.next);
+                    if (result.leftGroup) await this.leaveGroup(libraryID, result.leftGroup, remote.key);
+                    if (entry) await deleteQueueEntry(libraryID, remote.key);
                 }
-                await writer.commit(remote.key, state, result.next);
-                if (result.leftGroup) await this.leaveGroup(libraryID, result.leftGroup, remote.key);
-                await deleteQueueEntry(libraryID, remote.key);
                 await writer.finish();
-                return result.outcome;
+                return out;
             });
-            if (outcome === "queue") {
-                queued.add(remote.key);
-                this.parentHost.log(
-                    "warn",
-                    `Item ${remote.key} arrived before its parent; it will be retried later.`,
-                    "SyncService",
-                );
-            } else if (outcome !== "ignored") {
-                changedItems.push({ libraryID, itemKey: remote.key });
-            }
+            slice.forEach((remote, i) => {
+                const outcome = outcomes[i];
+                if (outcome === "queue") {
+                    queued.add(remote.key);
+                    this.parentHost.log(
+                        "warn",
+                        `Item ${remote.key} arrived before its parent; it will be retried later.`,
+                        "SyncService",
+                    );
+                } else if (outcome !== "ignored") {
+                    changedItems.push({ libraryID, itemKey: remote.key });
+                }
+            });
         }
         return queued;
     }

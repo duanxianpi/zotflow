@@ -101,6 +101,20 @@ async function writeKey(libraryID: number, key: string, prev: KeyState, next: Ke
 }
 
 /**
+ * Whether a write leaves every fingerprint as it was: the row stays, under
+ * the same parent, with the same version and `localOnly` (a local edit).
+ */
+function sameFingerprintInput(a: AnyIDBZoteroItem | undefined, b: AnyIDBZoteroItem | undefined): boolean {
+    return (
+        !!a &&
+        !!b &&
+        a.parentItem === b.parentItem &&
+        a.version === b.version &&
+        !!a.localOnly === !!b.localOnly
+    );
+}
+
+/**
  * Writes decisions for one library and keeps the subtree fingerprints of
  * the top-level items they touch up to date. Use one per transaction:
  * `commit` each key, then `finish`.
@@ -134,6 +148,10 @@ export class SyncWriter {
 
     /** Writes `next` over `prev` for `key`. */
     async commit(key: string, prev: KeyState, next: KeyState): Promise<void> {
+        if (sameFingerprintInput(prev.row, next.row)) {
+            await writeKey(this.libraryID, key, prev, next);
+            return;
+        }
         // Tops are found through the rows as they are before and after the
         // write: a move or delete changes the subtree it leaves.
         await this.touch(prev.row);
@@ -168,15 +186,17 @@ export async function getDescendants(libraryID: number, key: string): Promise<An
     const seen = new Set([key]);
     let frontier = [key];
     while (frontier.length > 0) {
+        // One query per level (a prefix of the compound parent index).
+        const children = await db.items
+            .where("[libraryID+parentItem]")
+            .anyOf(frontier.map((k): [number, string] => [libraryID, k]))
+            .toArray();
         const next: string[] = [];
-        for (const parent of frontier) {
-            const children = await db.items.where({ libraryID, parentItem: parent }).toArray();
-            for (const c of children) {
-                if (seen.has(c.key)) continue;
-                seen.add(c.key);
-                out.push(c);
-                next.push(c.key);
-            }
+        for (const c of children) {
+            if (seen.has(c.key)) continue;
+            seen.add(c.key);
+            out.push(c);
+            next.push(c.key);
         }
         frontier = next;
     }
@@ -188,9 +208,9 @@ export async function refreshTreeFingerprint(libraryID: number, key: string): Pr
     const top = await db.items.get([libraryID, key]);
     if (!top || top.parentItem) return;
     const fp = treeFingerprint([top, ...(await getDescendants(libraryID, key))]);
-    if (top.treeFingerprint !== fp) {
-        await db.items.update([libraryID, key], { treeFingerprint: fp });
-    }
+    // A put of the row just read: same effect as update(), without
+    // update's cursor walk.
+    if (top.treeFingerprint !== fp) await db.items.put({ ...top, treeFingerprint: fp });
 }
 
 /* ------------------------------------------------------------------ */
