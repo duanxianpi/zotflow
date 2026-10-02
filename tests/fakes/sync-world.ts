@@ -272,7 +272,19 @@ export class World {
         };
     }
 
+    /**
+     * fake-indexeddb keeps every transaction a database ever ran and filters
+     * the whole list each time it schedules one, so a long exploration slows
+     * down quadratically (a depth-3 run stalled after a few thousand steps).
+     * Between steps nothing is running; drop the finished ones.
+     */
+    private pruneFinishedTransactions(): void {
+        const raw = (db.backendDB() as unknown as { _rawDatabase?: { transactions: { _state: string }[] } })._rawDatabase;
+        if (raw) raw.transactions = raw.transactions.filter((t) => t._state !== "finished");
+    }
+
     async restore(s: Snapshot): Promise<void> {
+        this.pruneFinishedTransactions();
         await db.transaction("rw", TABLES.map((t) => db.table(t)), async () => {
             for (const t of TABLES) await db.table(t).clear();
             await db.items.bulkPut(structuredClone(s.items));
