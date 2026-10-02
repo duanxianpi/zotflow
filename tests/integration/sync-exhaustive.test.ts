@@ -19,6 +19,8 @@
  *   ZF_EXHAUSTIVE_REPORT=1        print every kind of violation found, with its
  *                                 shortest path, instead of failing on the first
  *   ZF_EXHAUSTIVE_TIMEOUT_MIN=<n> per-universe time limit in minutes (default 60)
+ *   ZF_EXHAUSTIVE_PROGRESS=1      print states/transitions explored every 1000
+ *                                 transitions (to stderr; depth 3 runs for hours)
  */
 import { describe, test, expect } from "vitest";
 import { db } from "db/db";
@@ -33,6 +35,7 @@ const DEPTH = Number(process.env.ZF_EXHAUSTIVE_DEPTH ?? 2);
 const ONLY = process.env.ZF_EXHAUSTIVE_UNIVERSE;
 const REPORT = process.env.ZF_EXHAUSTIVE_REPORT === "1";
 const TIMEOUT_MS = Number(process.env.ZF_EXHAUSTIVE_TIMEOUT_MIN ?? 60) * 60_000;
+const PROGRESS = process.env.ZF_EXHAUSTIVE_PROGRESS === "1";
 
 const position = JSON.stringify({ pageIndex: 0, rects: [[10, 10, 100, 20]] });
 
@@ -166,6 +169,9 @@ async function explore(universe: Universe) {
             const action = (await w.actions()).find((a) => a.label === label);
             if (!action) continue;
             transitions++;
+            if (PROGRESS && transitions % 1000 === 0) {
+                process.stderr.write(`${universe.name}: ${transitions} transitions, ${seen.size} states, ${found.size} kinds of violation\n`);
+            }
             try {
                 await action.run();
                 await w.checkStep(action.kind, action.label);
