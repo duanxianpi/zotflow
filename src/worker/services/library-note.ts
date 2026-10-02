@@ -347,6 +347,7 @@ export class LibraryNoteService {
                 `Item or Library not found: ${key}`,
             );
         }
+        assertSourceNoteItem(item);
 
         try {
             // Determine path
@@ -427,6 +428,7 @@ export class LibraryNoteService {
                 `Item not found: ${key}`,
             );
         }
+        assertSourceNoteItem(item);
 
         // Resolve target path
         const targetPath =
@@ -766,5 +768,28 @@ export class LibraryNoteService {
                 `Failed to delete image ${annotationKey}: ${(e as Error).message}`,
             );
         }
+    }
+}
+
+/**
+ * Source notes belong to top-level regular items and standalone attachments.
+ * A note is opened as a note, and a child (attachment, annotation, child
+ * note) is part of its parent's source note: giving one its own file would
+ * create a stray note that nothing keeps up to date.
+ */
+function assertSourceNoteItem(item: AnyIDBZoteroItem): void {
+    if (item.itemType === "note" || item.itemType === "annotation") {
+        throw new ZotFlowError(
+            ZotFlowErrorCode.INVALID_ITEM,
+            "LibraryNoteService",
+            `A ${item.itemType} has no source note of its own: ${item.key}`,
+        );
+    }
+    if (item.parentItem) {
+        throw new ZotFlowError(
+            ZotFlowErrorCode.INVALID_ITEM,
+            "LibraryNoteService",
+            `Only top-level items have source notes; ${item.key} belongs to ${item.parentItem}`,
+        );
     }
 }

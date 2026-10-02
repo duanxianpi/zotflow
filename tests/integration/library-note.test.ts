@@ -270,7 +270,9 @@ describe("updating an existing note", () => {
     test("a changed child (same item version, new item-tree) re-renders the note", async () => {
         // Zotero does not bump the parent's version when an annotation or
         // child note changes; the subtree fingerprint does change.
-        await db.items.update([LIB, "PARENT01"], { treeFingerprint: "newtree1" });
+        await db.items.update([LIB, "PARENT01"], {
+            treeFingerprint: "newtree1",
+        });
         placeNote("Source/@PARENT01.md", "stale body", {
             "zotero-key": "PARENT01",
             "item-version": 7,
@@ -283,7 +285,9 @@ describe("updating an existing note", () => {
     });
 
     test("a note at the item's version and item-tree is left alone", async () => {
-        await db.items.update([LIB, "PARENT01"], { treeFingerprint: "sametree" });
+        await db.items.update([LIB, "PARENT01"], {
+            treeFingerprint: "sametree",
+        });
         placeNote("Source/@PARENT01.md", "existing body", {
             "zotero-key": "PARENT01",
             "item-version": 7,
@@ -516,6 +520,56 @@ describe("ensureNotePath", () => {
         await expect(service.ensureNotePath(LIB, "MISSING1")).rejects.toThrow(
             /Item not found/,
         );
+    });
+});
+
+describe("which items get a source note", () => {
+    async function seedChild(
+        key: string,
+        itemType: string,
+        parentItem = "PARENT01",
+    ) {
+        await seedItem({ libraryID: LIB, key, itemType, parentItem } as any);
+    }
+
+    beforeEach(async () => {
+        await seedArticle();
+    });
+
+    test.each([
+        ["a child attachment", "ATTACH01", "attachment"],
+        ["an annotation", "ANNOT001", "annotation"],
+        ["a child note", "NOTE0001", "note"],
+    ])("%s is refused, and nothing is written", async (_, key, itemType) => {
+        await seedChild(key, itemType);
+
+        await expect(service.ensureNote(LIB, key, {})).rejects.toThrow(
+            /source note/,
+        );
+        await expect(service.ensureNotePath(LIB, key)).rejects.toThrow(
+            /source note/,
+        );
+        await expect(service.openNote(LIB, key)).rejects.toMatchObject({
+            code: "INVALID_ITEM",
+        });
+        expect(host.vault.size).toBe(0);
+    });
+
+    test("a standalone note is refused", async () => {
+        await seedChild("NOTE0001", "note", "");
+
+        await expect(service.ensureNote(LIB, "NOTE0001", {})).rejects.toThrow(
+            /note has no source note/,
+        );
+        expect(host.vault.size).toBe(0);
+    });
+
+    test("a standalone attachment gets one", async () => {
+        await seedChild("ATTACH01", "attachment", "");
+
+        const path = await service.ensureNote(LIB, "ATTACH01", {});
+
+        expect(host.vault.has(path)).toBe(true);
     });
 });
 

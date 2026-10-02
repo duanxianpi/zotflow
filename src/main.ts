@@ -700,6 +700,32 @@ export default class ZotFlow extends Plugin {
     /**
      * Handle protocol calls for zotflow
      */
+    /** Open an annotation's attachment, navigated to the annotation. */
+    private async openAnnotation(libID: number, key: string) {
+        const annotation = await workerBridge.dbHelper.getItem(libID, key);
+        if (!annotation || annotation.itemType !== "annotation") {
+            services.notificationService.notify(
+                "warning",
+                "Annotation not found.",
+            );
+            return;
+        }
+        const attachmentKey = annotation.parentItem;
+        if (!attachmentKey) {
+            services.notificationService.notify(
+                "warning",
+                "Annotation has no parent attachment.",
+            );
+            return;
+        }
+        await openAttachment(
+            libID,
+            attachmentKey,
+            this.app,
+            JSON.stringify({ annotationID: key }),
+        );
+    }
+
     private async handleProtocolCall(
         params: ObsidianProtocolData,
     ): Promise<void> {
@@ -730,11 +756,21 @@ export default class ZotFlow extends Plugin {
             }
 
             if (type === "open-note") {
-                // A select link can name a note (a standalone one has no
-                // source note of its own): open it as a note.
+                // Converted zotero://select links name any item. Only a
+                // top-level regular item or standalone attachment has a
+                // source note; anything else is shown as what it is.
                 const target = await workerBridge.dbHelper.getItem(libID, key);
-                if (target?.itemType === "note") {
+                if (!target) {
+                    services.notificationService.notify(
+                        "warning",
+                        "Item not found.",
+                    );
+                } else if (target.itemType === "note") {
                     await openItemNote(libID, key, this.app);
+                } else if (target.itemType === "annotation") {
+                    await this.openAnnotation(libID, key);
+                } else if (target.parentItem) {
+                    await openAttachment(libID, key, this.app, navigation);
                 } else {
                     await workerBridge.libraryNote.openNote(libID, key);
                 }
@@ -746,33 +782,7 @@ export default class ZotFlow extends Plugin {
             } else if (type === "open-attachment") {
                 await openAttachment(libID, key, this.app, navigation);
             } else if (type === "open-annotation") {
-                // Locate the annotation by key, then open its parent attachment
-                // navigated to the annotation. Only the annotation id is needed.
-                const annotation = await workerBridge.dbHelper.getItem(
-                    libID,
-                    key,
-                );
-                if (!annotation || annotation.itemType !== "annotation") {
-                    services.notificationService.notify(
-                        "warning",
-                        "Annotation not found.",
-                    );
-                    return;
-                }
-                const attachmentKey = annotation.parentItem;
-                if (!attachmentKey) {
-                    services.notificationService.notify(
-                        "warning",
-                        "Annotation has no parent attachment.",
-                    );
-                    return;
-                }
-                await openAttachment(
-                    libID,
-                    attachmentKey,
-                    this.app,
-                    JSON.stringify({ annotationID: key }),
-                );
+                await this.openAnnotation(libID, key);
             } else {
                 services.logService.log(
                     "warn",
