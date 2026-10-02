@@ -10,8 +10,12 @@ import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { WorkerTimeout } from "worker/timers";
 
-/** Child types keep their own names (filename, note first line). */
-const CHILD_TYPES = new Set(["attachment", "note", "annotation"]);
+/**
+ * Types that keep their own names (a note's first line, an annotation's
+ * text). Attachments are titled by the template too; it can tell them apart
+ * by `item.itemType` and use their `filename` / `contentType` / `linkMode`.
+ */
+const UNTEMPLATED_TYPES = new Set(["note", "annotation"]);
 
 /**
  * Pause after the last template edit before it takes effect. The settings
@@ -80,7 +84,7 @@ export class DisplayTitleService {
     /** The title to show for `item`. */
     get(item: AnyIDBZoteroItem): string {
         const fallback = item.title || "";
-        if (!this.templates || CHILD_TYPES.has(item.itemType)) return fallback;
+        if (!this.templates || UNTEMPLATED_TYPES.has(item.itemType)) return fallback;
 
         const id = `${item.libraryID}:${item.key}`;
         const cached = this.cache.get(id);
@@ -163,6 +167,7 @@ export class DisplayTitleService {
                     dateAdded: item.dateAdded,
                     dateModified: item.dateModified,
                     tags: item.raw?.data?.tags || [],
+                    ...attachmentFields(item),
                 },
             });
             // Titles are one line; collapse whatever whitespace the
@@ -183,4 +188,17 @@ export class DisplayTitleService {
             return "";
         }
     }
+}
+
+/** An attachment's file properties (not Zotero schema fields); {} otherwise. */
+function attachmentFields(item: AnyIDBZoteroItem): Record<string, string> {
+    if (item.itemType !== "attachment") return {};
+    const data = item.raw?.data as
+        | { filename?: string; contentType?: string; linkMode?: string }
+        | undefined;
+    return {
+        filename: data?.filename ?? "",
+        contentType: data?.contentType ?? "",
+        linkMode: data?.linkMode ?? "",
+    };
 }

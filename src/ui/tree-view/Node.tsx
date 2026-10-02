@@ -4,7 +4,11 @@ import { Menu, setIcon } from "obsidian";
 import type { ViewNode } from "./TreeView";
 import { TreeSearchContext } from "./TreeView";
 import { ObsidianIcon } from "../ObsidianIcon";
-import { getAttachmentFileIcon, getItemTypeIcon } from "ui/icons";
+import {
+    getAttachmentFileIcon,
+    getAttachmentFileTag,
+    getItemTypeIcon,
+} from "ui/icons";
 import { services } from "services/services";
 import { invalidateTagAutocompleteCache } from "ui/search/autocomplete-data";
 import { workerBridge } from "bridge";
@@ -701,11 +705,12 @@ export const NodeItem = ({ node, style }: NodeRendererProps<ViewNode>) => {
             </span>
 
             {/* File Tag */}
-            {node.data.itemType === "attachment" && (
-                <div className="nav-file-tag">
-                    {node.data.name.split(".").pop()}
-                </div>
-            )}
+            {node.data.itemType === "attachment" &&
+                getAttachmentFileTag(node.data.contentType) && (
+                    <div className="nav-file-tag">
+                        {getAttachmentFileTag(node.data.contentType)}
+                    </div>
+                )}
 
             {/* Note Tag */}
             {node.data.itemType === "note" && (

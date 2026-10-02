@@ -143,12 +143,45 @@ describe("DisplayTitleService", () => {
         expect(host.logsAt("warn")).toHaveLength(1);
     });
 
-    test("child items keep their own names", async () => {
-        const attachment = await article("ATTACH01", {
-            itemType: "attachment",
-            title: "paper.pdf",
+    test("notes and annotations keep their own names", async () => {
+        const note = await article("NOTE0001", {
+            itemType: "note",
+            title: "Reading notes",
         });
-        expect(service(TEMPLATE).get(attachment)).toBe("paper.pdf");
+        const annotation = await article("ANNOT001", {
+            itemType: "annotation",
+            title: "highlighted text",
+        });
+        expect(service(TEMPLATE).get(note)).toBe("Reading notes");
+        expect(service(TEMPLATE).get(annotation)).toBe("highlighted text");
+    });
+
+    test("attachments are titled by the template, with their file properties", async () => {
+        const attachment = await article(
+            "ATTACH01",
+            { itemType: "attachment", title: "Full Text PDF" },
+            {
+                itemType: "attachment",
+                title: "Full Text PDF",
+                creators: undefined,
+                filename: "Vaswani - 2017.pdf",
+                contentType: "application/pdf",
+                linkMode: "imported_file",
+            },
+        );
+        const titles = service(
+            '{% if item.itemType == "attachment" %}{{ item.title }} [{{ item.filename }}, {{ item.contentType }}, {{ item.linkMode }}]{% else %}{{ item.title }}{% endif %}',
+        );
+        expect(titles.get(attachment)).toBe(
+            "Full Text PDF [Vaswani - 2017.pdf, application/pdf, imported_file]",
+        );
+    });
+
+    test("a regular item has no attachment file properties", async () => {
+        const item = await article();
+        expect(service("{{ item.filename }}|{{ item.title }}").get(item)).toBe(
+            "|Attention Is All You Need",
+        );
     });
 
     test("a new item version is re-rendered", async () => {
@@ -308,6 +341,42 @@ describe("tree view", () => {
         expect(payload.entities.ARTICLE1?.name).toBe(
             "Vaswani (2017) Attention Is All You Need",
         );
+    });
+
+    test("attachments, top-level and child, are named by the display title; child notes are not", async () => {
+        // A fresh service applies the template at once.
+        const names = new DisplayTitleService(
+            settingsWith(
+                '{% if item.itemType == "attachment" %}File: {{ item.filename }}{% else %}{{ item.title }}{% endif %}',
+            ),
+            h.host,
+        );
+        await article(
+            "CHILDPDF",
+            { itemType: "attachment", title: "Full Text PDF", parentItem: "ARTICLE1" },
+            { itemType: "attachment", parentItem: "ARTICLE1", filename: "child.pdf", contentType: "application/pdf" },
+        );
+        await article(
+            "TOPPDF01",
+            { itemType: "attachment", title: "Lecture Notes" },
+            { itemType: "attachment", filename: "lecture.pdf", contentType: "application/pdf" },
+        );
+        await article(
+            "CHILDNOT",
+            { itemType: "note", title: "Reading notes", parentItem: "ARTICLE1" },
+            { itemType: "note", parentItem: "ARTICLE1", note: "<p>Reading notes</p>" },
+        );
+        const view = new TreeViewService(h.settings, h.host, h.library, new SearchMatcher(), names);
+
+        const { entities } = await view.getOptimizedTree();
+
+        expect(entities.CHILDPDF?.name).toBe("File: child.pdf");
+        expect(entities.TOPPDF01?.name).toBe("File: lecture.pdf");
+        // Its content type is where the tree's icon and file tag come from.
+        expect(entities.TOPPDF01?.contentType).toBe("application/pdf");
+        expect(entities.TOPPDF01?.citationKey).toBeUndefined();
+        expect(entities.CHILDPDF?.contentType).toBe("application/pdf");
+        expect(entities.CHILDNOT?.name).toBe("Reading notes");
     });
 
     test("a new template rebuilds the cached tree", async () => {

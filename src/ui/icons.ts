@@ -16,6 +16,33 @@ export function getAttachmentFileIcon(contentType?: string) {
     }
 }
 
+/** Short labels for content types whose subtype does not read as one. */
+const FILE_TAGS: Record<string, string> = {
+    "application/epub+zip": "epub",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        "docx",
+    "text/plain": "txt",
+    "text/markdown": "md",
+    "image/jpeg": "jpg",
+    "image/svg+xml": "svg",
+};
+
+/**
+ * The file-type tag shown next to an attachment in the tree, from its
+ * content type ("pdf", "epub", "html", …). Never from its name: the shown
+ * name follows the display title template and need not contain a file
+ * extension. Empty when there is nothing short to show.
+ */
+export function getAttachmentFileTag(contentType?: string): string {
+    if (!contentType) return "";
+    const type = contentType.split(";")[0]!.trim().toLowerCase();
+    const known = FILE_TAGS[type];
+    if (known) return known;
+    const subtype = type.split("/")[1]?.replace(/^x-/, "") ?? "";
+    return /^[a-z0-9]{1,5}$/.test(subtype) ? subtype : "";
+}
+
 /**
  * Get the icon for a given Zotero item type.
  * @param type The type of the Zotero item.

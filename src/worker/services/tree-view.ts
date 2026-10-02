@@ -310,12 +310,12 @@ export class TreeViewService {
                 if (item.itemType === "attachment") {
                     registerEntity(
                         item.key,
-                        item.title,
+                        displayNames.name,
                         item.itemType,
                         item.libraryID,
                         libName,
-                        item.raw.data.contentType,
                         undefined,
+                        item.raw.data.contentType,
                         item.dateAdded,
                         item.dateModified,
                         item.syncStatus,
@@ -360,8 +360,10 @@ export class TreeViewService {
                 // Process attachments
                 attachments.forEach((att) => {
                     const attId = `${itemId}-att-${att.key}`;
-                    // Attachment name logic
-                    let attName = att.title;
+                    // Attachments follow the display title template; child
+                    // notes keep their own names.
+                    const attNames = this.displayTitle.searchNames(att);
+                    const attName = attNames.name;
                     let attContentType;
                     if (att.itemType === "attachment") {
                         attContentType = att.raw.data.contentType;
@@ -383,6 +385,7 @@ export class TreeViewService {
 
                     registerSearch({
                         id: att.key,
+                        ...attNames,
                         name: attName || "Untitled",
                         itemType: att.itemType,
                         tags: att.searchTags,
