@@ -207,6 +207,24 @@ describe("a lost answer followed by more local work", () => {
         expect(await conflictKind("NEWITEM1")).toBe("remote-deleted");
     });
 
+    test("an edit after a lost create is an update of the created item, not a conflict", async () => {
+        // The create landed; the server copy equals what was sent, so it is
+        // recognised as ours and the later edit goes on top of it.
+        const lib = await syncedItem();
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created", version: 0 });
+        failFirst("lost-response", "POST");
+        await h.sync.startSync();
+        await mutateItem(USER_ID, "NEWITEM1", (d) => {
+            d.tags = [{ tag: "after the lost create" }];
+        });
+
+        await syncCleanly();
+
+        expect(await conflictKind("NEWITEM1")).toBeUndefined();
+        expect((await row("NEWITEM1"))!.syncStatus).toBe("synced");
+        expect(lib.items.get("NEWITEM1")!.data.tags).toEqual([{ tag: "after the lost create" }]);
+    });
+
     test("a further edit is pushed as an update, not a conflict", async () => {
         const lib = await syncedItem();
         await mutateItem(USER_ID, "AAAAAAAA", (d) => {
