@@ -178,7 +178,9 @@ describe("fake zotero server", () => {
         });
     });
 
-    test("POST /items assigns one new version to the whole write", async () => {
+    test("POST /items gives each object its own version, like the real API", async () => {
+        // Measured against api.zotero.org: a multi-object write moves the
+        // library by one version per object sent.
         server.library(1).addItem({ key: "AAAAAAAA" }); // v1
 
         const res = await fetch("https://api.zotero.org/users/1/items", {
@@ -194,10 +196,11 @@ describe("fake zotero server", () => {
         });
 
         expect(res.status).toBe(200);
-        expect(res.headers.get("Last-Modified-Version")).toBe("2");
+        expect(res.headers.get("Last-Modified-Version")).toBe("3");
         const body = (await res.json());
         expect(Object.keys(body.successful)).toEqual(["0", "1"]);
         expect(body.successful["0"].version).toBe(2);
+        expect(body.successful["1"].version).toBe(3);
         expect(server.library(1).items.get("BBBBBBBB")!.data.title).toBe("New");
     });
 

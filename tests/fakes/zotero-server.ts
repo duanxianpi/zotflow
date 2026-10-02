@@ -33,6 +33,8 @@ export interface FakeZoteroItem {
     library: { type: string; id: number; name: string };
     data: Record<string, unknown>;
     csljson?: Record<string, unknown>;
+    /** Sent on every response, as the real API does; not stored. */
+    meta?: Record<string, unknown>;
 }
 
 export interface FakeZoteroCollection {
@@ -141,6 +143,13 @@ export interface FakeZoteroServer {
     failNext(spec: FailureSpec): void;
     /** Clear recorded requests (leaves library state alone). */
     clearRequests(): void;
+    /** A deep copy of every library's state, for `loadState`. */
+    saveState(): unknown;
+    /**
+     * Put library state back to a `saveState` copy. Refills the existing
+     * collections in place, so `library()` handles stay valid.
+     */
+    loadState(saved: unknown): void;
 }
 
 interface LibraryState {
@@ -378,10 +387,13 @@ export function createFakeZoteroServer(
                     .map((key) => store.get(key))
                     .filter((entry): entry is FakeZoteroItem => Boolean(entry))
                     .map((entry) => {
+                        // The real API always sends `meta`; the reader reads
+                        // `meta.createdByUser` off every annotation.
                         const out: Record<string, unknown> = {
                             key: entry.key,
                             version: entry.version,
                             library: entry.library,
+                            meta: {},
                         };
                         if (include.includes("data")) out.data = entry.data;
                         if (include.includes("csljson") && "csljson" in entry) {
@@ -399,7 +411,6 @@ export function createFakeZoteroServer(
                 }
 
                 const payload = (req.body ?? []) as Record<string, any>[];
-                const newVersion = ++lib.version;
                 const successful: Record<string, FakeZoteroItem> = {};
                 const success: Record<string, string> = {};
                 const unchanged: Record<string, string> = {};
@@ -419,9 +430,34 @@ export function createFakeZoteroServer(
                         return;
                     }
 
+                    // Every object sent consumes a library version, unchanged
+                    // ones included — as the real API does (verified live).
                     if (lib.unchanged.has(submitted)) {
                         lib.unchanged.delete(submitted);
+                        ++lib.version;
                         unchanged[slot] = submitted;
+                        return;
+                    }
+
+                    // An update (it carries a version) to an item the server
+                    // does not have is a 404, as on the real API; only a
+                    // create (no version) may bring a deleted key back.
+                    const isUpdate =
+                        raw.version !== undefined ||
+                        raw.data?.version !== undefined;
+                    if (isUpdate && !lib.items.has(submitted)) {
+                        failed[slot] = { code: 404, message: "Item not found" };
+                        return;
+                    }
+
+                    // A child needs its parent on the server, including one
+                    // created earlier in this same request.
+                    const parent = String(raw.data?.parentItem ?? "");
+                    if (parent && !lib.items.has(parent)) {
+                        failed[slot] = {
+                            code: 400,
+                            message: `Parent item ${parent} not found`,
+                        };
                         return;
                     }
 
@@ -430,6 +466,7 @@ export function createFakeZoteroServer(
                     const key = lib.keyRemaps.get(submitted) ?? submitted;
                     lib.keyRemaps.delete(submitted);
 
+                    const newVersion = ++lib.version;
                     const stored: FakeZoteroItem = {
                         key,
                         version: newVersion,
@@ -438,13 +475,13 @@ export function createFakeZoteroServer(
                     };
                     lib.items.set(key, stored);
                     lib.deletedItems.delete(key);
-                    successful[slot] = stored;
+                    successful[slot] = { ...stored, meta: {} };
                     success[slot] = key;
                 });
 
                 return json(
                     { successful, success, unchanged, failed },
-                    newVersion,
+                    lib.version,
                 );
             }
         }
@@ -546,6 +583,27 @@ export function createFakeZoteroServer(
 
     return {
         library: handle,
+        saveState() {
+            return structuredClone([...libraries.values()]);
+        },
+        loadState(saved) {
+            for (const copy of saved as LibraryState[]) {
+                const lib = state(copy.id, copy.type);
+                lib.version = copy.version;
+                const refill = <K, V>(into: Map<K, V>, from: Map<K, V>) => {
+                    into.clear();
+                    for (const [k, v] of from) into.set(k, structuredClone(v));
+                };
+                refill(lib.items, copy.items);
+                refill(lib.collections, copy.collections);
+                refill(lib.deletedItems, copy.deletedItems);
+                refill(lib.deletedCollections, copy.deletedCollections);
+                refill(lib.rejects, copy.rejects);
+                refill(lib.keyRemaps, copy.keyRemaps);
+                lib.unchanged.clear();
+                for (const k of copy.unchanged) lib.unchanged.add(k);
+            }
+        },
         install() {
             if (originalFetch) throw new Error("fake zotero server already installed");
             originalFetch = globalThis.fetch;
