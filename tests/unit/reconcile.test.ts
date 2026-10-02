@@ -540,6 +540,17 @@ describe("reconcile3(): the cases sync relies on", () => {
         expect(r.changes).toEqual([{ field: "note", op: "modify", value: "<div>same text</div>" }]);
     });
 
+    test("the same tags added on both sides to an item without a tags field are no conflict", () => {
+        const noTags = { key: "K", version: 1, title: "t" };
+        const r = reconcile3(noTags, { ...noTags, tags: [{ tag: "same" }] }, { ...noTags, tags: [{ tag: "same" }] });
+        expect(r).toEqual({ changes: [], conflicts: [], localChanged: false });
+    });
+
+    test("structured values added identically on both sides are no conflict", () => {
+        const r = reconcile3({ title: "t" }, { title: "t", creators: [{ name: "A", creatorType: "author" }] }, { title: "t", creators: [{ name: "A", creatorType: "author" }] });
+        expect(r.conflicts).toEqual([]);
+    });
+
     test("dateModified never conflicts", () => {
         const r = reconcile3({ ...base, dateModified: "a" }, { ...base, dateModified: "b" }, { ...base, dateModified: "c" });
         expect(r).toEqual({ changes: [], conflicts: [], localChanged: false });

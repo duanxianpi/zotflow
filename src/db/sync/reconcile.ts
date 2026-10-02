@@ -190,6 +190,9 @@ function fieldChanged(field: string, a: unknown, b: unknown): boolean {
         case "relations":
             return relationsChanged(a as Relations, b as Relations | undefined);
         default:
+            if (a && b && typeof a === "object" && typeof b === "object") {
+                return JSON.stringify(a) !== JSON.stringify(b);
+            }
             return a !== b;
     }
 }
@@ -331,6 +334,14 @@ export function diff(a: ObjectJSON, b: ObjectJSON, ignoreFields: readonly string
     for (const field of Object.keys(b)) {
         if (skip.has(field)) continue;
         const v = b[field];
+        // A member field absent from `a` is an empty one: diffed member by
+        // member, so the same addition on two sides is recognised as such.
+        if (field === "tags" || field === "collections" || field === "relations") {
+            if (field === "tags") out = out.concat(tagsDiff([], v as Tag[] | undefined));
+            else if (field === "collections") out = out.concat(collectionsDiff([], v as string[] | undefined));
+            else out = out.concat(relationsDiff({}, v as Relations | undefined));
+            continue;
+        }
         if (
             v === false ||
             v === "" ||
@@ -534,7 +545,7 @@ export function reconcile3(
             const same =
                 (c1.op === "delete" && c2.op === "delete") ||
                 (c1.op === c2.op && /^(property-)?member-(add|remove)$/.test(c1.op)) ||
-                (c1.op !== "delete" && c2.op !== "delete" && c1.value === c2.value);
+                (c1.op !== "delete" && c2.op !== "delete" && !fieldChanged(c1.field, c1.value, c2.value));
             if (same) {
                 matchedLocal.add(i);
                 changeset2.splice(j--, 1);
