@@ -1,4 +1,5 @@
 import { db } from "db/db";
+import { isNeverPushed, mutateItem, newLocalItem } from "db/mutate";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import {
     zotflowToZoteroLinks,
@@ -111,23 +112,8 @@ export class ItemNoteService {
         const now = new Date().toISOString().split(".")[0] + "Z";
         const library = parentItem.raw.library;
 
-        const newItem: IDBZoteroItem<NoteData> = {
-            libraryID,
-            key,
-            itemType: "note",
-            parentItem: parentKey,
-            title: "",
-            collections: [],
-            dateAdded: now,
-            dateModified: now,
-            version: 0,
-            trashed: 0,
-            searchCreators: [],
-            searchTags: [],
-            syncStatus: "created",
-            syncedAt: now,
-            syncError: "",
-            raw: {
+        const newItem: IDBZoteroItem<NoteData> = newLocalItem(
+            {
                 key,
                 version: 0,
                 library,
@@ -146,7 +132,9 @@ export class ItemNoteService {
                     version: 0,
                 } as unknown as NoteData,
             },
-        };
+            libraryID,
+            "push",
+        );
 
         await db.transaction("rw", db.items, async () => {
             await db.items.put(newItem);
@@ -171,7 +159,7 @@ export class ItemNoteService {
 
     /**
      * Update the content of a Zotero child note item in IDB.
-     * Marks the item as "updated" so the next bidirectional sync pushes it to Zotero.
+     * Marks the item dirty (see `applyLocalEdit`) so the next sync pushes it to Zotero.
      *
      * @param origin — `"editor"` when called from the source-note editable
      *   region (skips re-rendering the source note to avoid a circular
@@ -195,7 +183,6 @@ export class ItemNoteService {
             return;
         }
 
-        const updatedRaw = structuredClone(item.raw);
         const vaultConfig = await this.parentHost.getVaultConfig();
 
         let noteHtmlContent = await this.convertService.md2html(content, {
@@ -211,21 +198,19 @@ export class ItemNoteService {
             );
         }
 
-        updatedRaw.data.note = noteHtmlContent;
-
-        // Derive title from the updated HTML (same logic as normalize.ts)
-        const noteHtml: string = updatedRaw.data.note ?? "";
-        const plainText = noteHtml.replace(/<[^>]+>/g, " ");
-        const title =
-            (plainText.split("\n")[0] ?? plainText).slice(0, 50).trim() ||
-            `Note ${noteKey}`;
-
-        await db.items.update([libraryID, noteKey], {
-            raw: updatedRaw,
-            title,
-            syncStatus: item.syncStatus === "created" ? "created" : "updated",
-            dateModified: new Date().toISOString(),
+        // The conversion above is async, so the row is re-read inside the
+        // write transaction rather than written back from `item`.
+        const updated = await mutateItem(libraryID, noteKey, "note", (data) => {
+            data.note = noteHtmlContent;
         });
+        if (!updated) {
+            this.parentHost.log(
+                "warn",
+                `updateNoteContent: note ${noteKey} disappeared during the edit`,
+                "ItemNoteService",
+            );
+            return;
+        }
 
         this.parentHost.log(
             "debug",
@@ -293,21 +278,18 @@ export class ItemNoteService {
         const item = await db.items.get([libraryID, noteKey]);
         if (!item || item.itemType !== "note") return;
 
-        if (item.syncStatus === "created") {
+        if (isNeverPushed(item)) {
             await db.items.delete([libraryID, noteKey]);
         } else {
-            const updatedRaw = structuredClone(item.raw);
-            updatedRaw.data.deleted = true;
-            await db.items.update([libraryID, noteKey], {
-                trashed: 1,
-                raw: updatedRaw,
-                syncStatus: "updated",
+            // Moves the note to Zotero's trash; `trashed` follows `deleted`.
+            await mutateItem(libraryID, noteKey, "note", (data) => {
+                data.deleted = true;
             });
         }
 
         this.parentHost.log(
             "info",
-            `Deleted note ${noteKey} (${item.syncStatus === "created" ? "hard" : "soft"})`,
+            `Deleted note ${noteKey} (${isNeverPushed(item) ? "hard" : "soft"})`,
             "ItemNoteService",
         );
     }

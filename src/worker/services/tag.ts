@@ -1,4 +1,5 @@
 import { db } from "db/db";
+import { mutateItem } from "db/mutate";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { IParentProxy } from "bridge/types";
@@ -48,25 +49,16 @@ export class TagService {
     /**
      * Replace the full tag list of a single item.
      *
-     * Tags live in `item.raw.data.tags`; this mutates that field, keeps the
-     * derived `searchTags` index in sync, and marks the item dirty so the
-     * existing sync engine pushes the change back to Zotero. Automatic tags
-     * (`type: 1`) are preserved; user-added tags default to manual (`type` 0).
+     * Tags live in `item.raw.data.tags`; `mutateItem` keeps the derived
+     * `searchTags` index in sync and marks the item dirty so the existing sync
+     * engine pushes the change back to Zotero. Automatic tags (`type: 1`) are
+     * preserved; user-added tags default to manual (`type` 0).
      */
     async setItemTags(
         libraryID: number,
         key: string,
         tags: TagInput[],
     ): Promise<void> {
-        const item = await db.items.get([libraryID, key]);
-        if (!item) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.RESOURCE_MISSING,
-                "TagService",
-                `Item not found: ${libraryID}/${key}`,
-            );
-        }
-
         // Normalize: trim, drop empties, de-duplicate (Zotero tags are
         // case-sensitive, so dedupe on the exact string).
         const seen = new Set<string>();
@@ -80,12 +72,15 @@ export class TagService {
             cleanTags.push(entry);
         }
 
-        item.raw.data.tags = cleanTags;
-        item.searchTags = cleanTags.map((t) => t.tag);
-        if (item.syncStatus === "synced") {
-            item.syncStatus = "updated";
+        const updated = await mutateItem(libraryID, key, (data) => {
+            data.tags = cleanTags;
+        });
+        if (!updated) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "TagService",
+                `Item not found: ${libraryID}/${key}`,
+            );
         }
-
-        await db.items.put(item);
     }
 }

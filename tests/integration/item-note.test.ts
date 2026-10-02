@@ -321,6 +321,25 @@ describe("updating note content", () => {
         );
     });
 
+    test("a conflicted note stays conflicted until the user resolves it", async () => {
+        // Moving it to `updated` would push the edit over the server copy.
+        await seedNote("NOTEKEY1", "<p>old</p>", { syncStatus: "conflict" });
+
+        await service.updateNoteContent(LIB, "NOTEKEY1", "edited");
+
+        expect((await db.items.get([LIB, "NOTEKEY1"]))!.syncStatus).toBe(
+            "conflict",
+        );
+    });
+
+    test("paragraphs end the title line, as they do after a sync", async () => {
+        await seedNote("NOTEKEY1", "");
+
+        await service.updateNoteContent(LIB, "NOTEKEY1", "First\n\nSecond");
+
+        expect((await db.items.get([LIB, "NOTEKEY1"]))!.title).toBe("First");
+    });
+
     test("dateModified is refreshed", async () => {
         await seedNote("NOTEKEY1", "<p>old</p>", {
             dateModified: "2020-01-01T00:00:00.000Z",
@@ -592,6 +611,28 @@ describe("deleting a note", () => {
         expect(
             host.logsAt("info").some((l) => /Deleted note NOTEKEY1 \(soft\)/.test(l.message)),
         ).toBe(true);
+    });
+
+    test("trashing a note stamps dateModified", async () => {
+        await seedNote("NOTEKEY1", "<p>real</p>", {
+            dateModified: "2020-01-01T00:00:00Z",
+        });
+
+        await service.deleteNote(LIB, "NOTEKEY1");
+
+        expect((await db.items.get([LIB, "NOTEKEY1"]))!.dateModified).not.toBe(
+            "2020-01-01T00:00:00Z",
+        );
+    });
+
+    test("trashing a conflicted note keeps the conflict", async () => {
+        await seedNote("NOTEKEY1", "<p>real</p>", { syncStatus: "conflict" });
+
+        await service.deleteNote(LIB, "NOTEKEY1");
+
+        const stored = (await db.items.get([LIB, "NOTEKEY1"]))!;
+        expect(stored.trashed).toBe(1);
+        expect(stored.syncStatus).toBe("conflict");
     });
 
     test("a missing item is a silent no-op", async () => {

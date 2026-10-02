@@ -620,6 +620,32 @@ describe("saveAnnotations: update", () => {
         expect((await h.getRow("ANNO0001"))!.syncStatus).toBe("updated");
     });
 
+    it("keeps the searchTags index in step with changed tags", async () => {
+        const attachment = await h.seedAttachment("ATTACH01");
+        await h.seedAnnotation("ANNO0001", "ATTACH01", {
+            tags: [{ tag: "one" }],
+        });
+
+        await h.service.saveAnnotations(attachment, h.keyInfo, [
+            makeAnnotationJson("ANNO0001", {
+                tags: [{ name: "one" }, { name: "two" }],
+            }),
+        ]);
+
+        expect((await h.getRow("ANNO0001"))!.searchTags).toEqual(["one", "two"]);
+    });
+
+    it("leaves a conflicted annotation conflicted", async () => {
+        const attachment = await h.seedAttachment("ATTACH01");
+        await h.seedAnnotation("ANNO0001", "ATTACH01", { syncStatus: "conflict" });
+
+        await h.service.saveAnnotations(attachment, h.keyInfo, [
+            makeAnnotationJson("ANNO0001", { comment: "changed" }),
+        ]);
+
+        expect((await h.getRow("ANNO0001"))!.syncStatus).toBe("conflict");
+    });
+
     it("treats a reordered tag list as unchanged", async () => {
         // The signature is order-independent on purpose: the reader hands tags
         // back in its own order, and a spurious "updated" would push a no-op
@@ -986,6 +1012,23 @@ describe("updateAnnotationComment", () => {
         await h.service.updateAnnotationComment(USER_ID, "ANNO0001", "edited");
 
         expect((await h.getRow("ANNO0001"))!.syncStatus).toBe("created");
+    });
+
+    it("ignores an annotation already deleted in the reader", async () => {
+        // Its region can linger in a source note until the next re-render;
+        // editing it must not resurrect it as an update.
+        await h.seedAttachment("ATTACH01");
+        await h.seedAnnotation("ANNO0001", "ATTACH01", {
+            comment: "old",
+            syncStatus: "deleted",
+        });
+
+        await h.service.updateAnnotationComment(USER_ID, "ANNO0001", "edited");
+
+        const stored = (await h.getRow("ANNO0001"))!;
+        expect(stored.syncStatus).toBe("deleted");
+        expect(stored.raw.data.annotationComment).toBe("old");
+        expect(h.host.events).toEqual([]);
     });
 
     it("tells the main thread the annotation changed", async () => {

@@ -143,31 +143,38 @@ export function itemTitle(data: AnyZoteroItem["data"]): string {
     }
 }
 
-/**
- * Normalize a raw Zotero item from the API into our IDB schema.
- *
- * @param raw The raw item object from Zotero API (containing .data, .key, etc.)
- * @param libraryID The library ID this item belongs to
- * @returns A normalized IDB item record
- */
-export function normalizeItem(
-    raw: AnyZoteroItem,
-    libraryID: number,
-): AnyIDBZoteroItem {
-    const title = itemTitle(raw.data);
+/** The item columns that are pure functions of `raw.data`. */
+export type ItemIndexFields = Pick<
+    AnyIDBZoteroItem,
+    | "title"
+    | "searchCreators"
+    | "searchTags"
+    | "citationKey"
+    | "trashed"
+    | "parentItem"
+    | "collections"
+>;
 
+/**
+ * Derives the indexed columns an item stores alongside its raw payload.
+ *
+ * Shared by sync (`normalizeItem`) and local edits (`applyLocalEdit`), so a
+ * note edited in ZotFlow gets the same title it would get from a pull, and a
+ * tag change is visible to tag search immediately.
+ */
+export function deriveIndexFields(data: AnyZoteroItem["data"]): ItemIndexFields {
     // Flatten creators for search
     const searchCreators: string[] = [];
     let creators: ZoteroCreator[] = [];
 
     if (
-        raw.data.itemType === "attachment" ||
-        raw.data.itemType === "note" ||
-        raw.data.itemType === "annotation"
+        data.itemType === "attachment" ||
+        data.itemType === "note" ||
+        data.itemType === "annotation"
     ) {
         creators = [];
     } else {
-        creators = raw.data.creators || [];
+        creators = data.creators || [];
     }
 
     creators.forEach((c) => {
@@ -182,30 +189,44 @@ export function normalizeItem(
 
     // Flatten tags for search
     const searchTags: string[] = [];
-    if (raw.data.tags && Array.isArray(raw.data.tags)) {
-        raw.data.tags.forEach((t) => {
+    if (data.tags && Array.isArray(data.tags)) {
+        data.tags.forEach((t) => {
             if (t.tag) searchTags.push(t.tag);
         });
     }
 
+    return {
+        title: itemTitle(data),
+        searchCreators,
+        searchTags,
+        citationKey:
+            ("citationKey" in data ? data.citationKey : undefined) ||
+            extractCitationKey("extra" in data ? data.extra : undefined),
+        trashed: data.deleted ? 1 : 0,
+        parentItem: data.parentItem || "",
+        collections: data.collections ?? [],
+    };
+}
+
+/**
+ * Normalize a raw Zotero item from the API into our IDB schema.
+ *
+ * @param raw The raw item object from Zotero API (containing .data, .key, etc.)
+ * @param libraryID The library ID this item belongs to
+ * @returns A normalized IDB item record
+ */
+export function normalizeItem(
+    raw: AnyZoteroItem,
+    libraryID: number,
+): AnyIDBZoteroItem {
     const item: AnyIDBZoteroItem = {
         key: raw.data.key,
         libraryID: libraryID,
         itemType: raw.data.itemType,
-        citationKey:
-            ("citationKey" in raw.data ? raw.data.citationKey : undefined) ||
-            extractCitationKey(
-                "extra" in raw.data ? raw.data.extra : undefined,
-            ),
-        parentItem: raw.data.parentItem || "",
-        collections: raw.data.collections ?? [],
-        title: title,
-        trashed: raw.data.deleted ? 1 : 0,
+        ...deriveIndexFields(raw.data),
         dateAdded: raw.data.dateAdded,
         dateModified: raw.data.dateModified,
         version: raw.data.version,
-        searchCreators: searchCreators,
-        searchTags: searchTags,
         syncError: "",
         syncStatus: "synced",
         syncedAt: new Date().toISOString(),

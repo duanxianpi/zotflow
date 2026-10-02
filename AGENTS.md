@@ -85,6 +85,7 @@ processing.
 │       ├── db.ts          (schema: keys, groups, items,       │
 │       │                   collections, libraries, files)     │
 │       ├── normalize.ts   (API response → IDB shape)          │
+│       ├── mutate.ts      (local item writes: mutateItem)     │
 │       └── annotation.ts  (IDB ↔ AnnotationJSON conversion)   │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -266,6 +267,7 @@ src/
 ├── db/
 │   ├── db.ts                       # Dexie schema & getCombinations() helper (WORKER-ONLY)
 │   ├── normalize.ts                # Zotero API → IDB normalization (WORKER-ONLY)
+│   ├── mutate.ts                   # mutateItem / applyLocalEdit / applyLocalDelete / newLocalItem (WORKER-ONLY)
 │   └── annotation.ts               # AnnotationJSON ↔ IDB conversion (WORKER-ONLY)
 │
 ├── services/
@@ -702,6 +704,16 @@ base-mapped titles (`case.caseName`, `statute.nameOfAct`, `email.subject`).
 - Always use `.where()` with compound indexes for queries (not `.filter()`).
 - Use `getCombinations()` from `db/db.ts` for Cartesian product queries on compound indexes.
 - Use Dexie transactions (`db.transaction('rw', ...)`) for multi-table writes.
+- Local writes of Zotero item data go through `db/mutate.ts`, never a
+  hand-written `db.items.update`/`put`: `mutateItem()` (or `applyLocalEdit()`
+  for batched writes) for edits, `applyLocalDelete()` for a hard delete
+  (annotations; notes are trashed by editing `deleted`), `newLocalItem()` for
+  new rows. Index columns are derived from `raw.data` by `deriveIndexFields()`
+  (the same function sync uses), `dateModified` is stamped, and an edit may
+  not change `key`, `itemType` or `version`. Edits move `synced → updated`;
+  `created`, `conflict` and `ignore` stay; a row pending deletion refuses
+  edits. Sync-state transitions (pull, push results, conflict resolution) and
+  bookkeeping columns (`lastAccessedAt`, `csljson`, view state) are not edits.
 - When adding new indexes or tables, bump the Dexie version number and add a migration.
 - **Never import `db/` modules from main-thread code.** If the main thread needs data from IDB, add a method to an existing worker service (or create a new one) and call it via `workerBridge`.
 

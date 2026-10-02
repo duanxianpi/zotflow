@@ -1,4 +1,5 @@
 import { BaseTask } from "../base";
+import { newLocalItem } from "db/mutate";
 import { annotationItemFromJSON } from "db/annotation";
 import { db } from "db/db";
 import { toZoteroDate } from "db/normalize";
@@ -291,23 +292,9 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
         const now = toZoteroDate();
         const importedItems = result.imported.map((annotation) => {
             const annotationData = annotationItemFromJSON(annotation);
-            const item: IDBZoteroItem<AnnotationData> = {
-                libraryID: attachment.libraryID,
-                key: annotation.id,
-                itemType: "annotation",
-                parentItem: attachment.key,
-                title: "",
-                collections: [],
-                dateAdded: now,
-                dateModified: now,
-                version: 0,
-                trashed: 0,
-                searchCreators: [],
-                searchTags: [],
-                syncStatus: "ignore",
-                syncedAt: now,
-                syncError: "",
-                raw: {
+            // Extracted from the PDF: local-only, never pushed.
+            return newLocalItem<AnnotationData>(
+                {
                     key: annotation.id,
                     version: 0,
                     library: attachment.raw.library,
@@ -326,8 +313,9 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
                         version: 0,
                     } as unknown as AnnotationData,
                 },
-            };
-            return item;
+                attachment.libraryID,
+                "local-only",
+            );
         });
 
         await db.transaction("rw", db.items, async () => {

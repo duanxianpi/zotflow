@@ -1,5 +1,12 @@
 import { db, getCombinations } from "db/db";
 import { annotationItemFromJSON, getAnnotationJson } from "db/annotation";
+import {
+    applyLocalDelete,
+    applyLocalEdit,
+    isNeverPushed,
+    mutateItem,
+    newLocalItem,
+} from "db/mutate";
 import { toZoteroDate } from "db/normalize";
 
 import type { IParentProxy } from "bridge/types";
@@ -115,7 +122,6 @@ export class AnnotationService {
 
         const existingMap = new Map(existingItems.map((i) => [i.key, i]));
 
-        const now = new Date().toISOString().split(".")[0] + "Z";
         const zoteroDate = toZoteroDate(new Date().toISOString());
 
         for (const json of annotations) {
@@ -156,67 +162,41 @@ export class AnnotationService {
                         )
                     ) {
                         hasChanges = true;
-                        const newSyncStatus =
-                            existing.syncStatus === "created"
-                                ? "created"
-                                : "updated";
-
-                        itemsToPut.push({
-                            ...existing,
-                            syncStatus: newSyncStatus,
-                            dateModified: now,
-                            raw: {
-                                ...existing.raw,
-                                data: {
-                                    ...existing.raw.data,
-                                    ...annotationData,
-                                    dateModified: zoteroDate,
-                                },
-                            },
-                        });
+                        itemsToPut.push(
+                            applyLocalEdit(existing, (data) => {
+                                Object.assign(data, annotationData);
+                            }),
+                        );
                     }
                 }
             } else {
                 // === Create ===
                 hasChanges = true;
                 const newItem: IDBZoteroItem<AnnotationData> = {
-                    libraryID,
-                    key,
-                    itemType: "annotation",
-                    parentItem: attachmentKey,
-                    title: "",
-                    collections: [],
-                    dateAdded: now,
-                    dateModified: now,
-                    version: 0,
-                    trashed: 0,
-                    searchCreators: [],
-                    searchTags: [],
-                    syncStatus: !json.isExternal
-                        ? "created"
-                        : "ignore",
-                    syncedAt: now,
-                    syncError: "",
-                    annotationImageVersion: 1,
-                    raw: {
-                        key,
-                        version: 0,
-                        library,
-                        links: {},
-                        meta: { numChildren: 0 },
-                        data: {
-                            ...annotationData,
+                    ...newLocalItem(
+                        {
                             key,
-                            itemType: "annotation",
-                            parentItem: attachmentKey,
-                            relations: {},
-                            dateAdded: zoteroDate,
-                            dateModified: zoteroDate,
-                            tags: annotationData.tags || [],
-                            deleted: false,
                             version: 0,
-                        } as unknown as AnnotationData,
-                    },
+                            library,
+                            links: {},
+                            meta: { numChildren: 0 },
+                            data: {
+                                ...annotationData,
+                                key,
+                                itemType: "annotation",
+                                parentItem: attachmentKey,
+                                relations: {},
+                                dateAdded: zoteroDate,
+                                dateModified: zoteroDate,
+                                tags: annotationData.tags || [],
+                                deleted: false,
+                                version: 0,
+                            } as unknown as AnnotationData,
+                        },
+                        libraryID,
+                        json.isExternal ? "local-only" : "push",
+                    ),
+                    annotationImageVersion: 1,
                 };
 
                 if (library.type === "group" && keyInfo) {
@@ -293,7 +273,6 @@ export class AnnotationService {
 
         const itemsToDeletePhysical: [number, string][] = [];
         const itemsToDeleteSoft: IDBZoteroItem<AnnotationData>[] = [];
-        const now = new Date().toISOString().split(".")[0] + "Z";
 
         const items = (await db.items
             .where(["libraryID", "key"])
@@ -329,21 +308,10 @@ export class AnnotationService {
         }
 
         for (const existing of items) {
-            if (existing.syncStatus === "created") {
+            if (isNeverPushed(existing)) {
                 itemsToDeletePhysical.push([libraryID, existing.key]);
             } else {
-                itemsToDeleteSoft.push({
-                    ...existing,
-                    syncStatus: "deleted",
-                    dateModified: now,
-                    raw: {
-                        ...existing.raw,
-                        data: {
-                            ...existing.raw.data,
-                            deleted: true,
-                        },
-                    },
-                });
+                itemsToDeleteSoft.push(applyLocalDelete(existing));
             }
         }
 
@@ -422,18 +390,22 @@ export class AnnotationService {
 
         const newComment = this.convertService.annoMd2html(markdownComment);
 
+        // Deleted in the reader but still shown in a source note that has not
+        // re-rendered yet — the edit has nothing left to apply to.
+        if (annotation.syncStatus === "deleted") {
+            this.parentHost.log(
+                "debug",
+                `updateAnnotationComment: skipping deleted annotation ${annotationKey}`,
+                "AnnotationService",
+            );
+            return;
+        }
+
         // Skip write if comment hasn't changed
         if (annotation.raw.data.annotationComment === newComment) return;
 
-        const updatedRaw = structuredClone(annotation.raw);
-        (updatedRaw.data).annotationComment = newComment;
-
-        const now = new Date().toISOString();
-        await db.items.update([libraryID, annotationKey], {
-            raw: updatedRaw,
-            syncStatus:
-                annotation.syncStatus === "created" ? "created" : "updated",
-            dateModified: now,
+        await mutateItem(libraryID, annotationKey, "annotation", (data) => {
+            data.annotationComment = newComment;
         });
 
         this.parentHost.log(
