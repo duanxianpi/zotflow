@@ -21,11 +21,12 @@ import { ConflictService } from "worker/services/conflict";
 import { ConvertService } from "worker/services/convert";
 import { ItemNoteService } from "worker/services/item-note";
 import { TagService } from "worker/services/tag";
-import { createSyncHarness, USER_ID } from "./sync-harness";
+import { API_KEY, createSyncHarness, USER_ID } from "./sync-harness";
 
 import type { SyncHarness } from "./sync-harness";
 import type { FakeLibraryHandle } from "./zotero-server";
 import type { AnyIDBZoteroItem } from "types/db-schema";
+import type { ConflictItemInfo } from "worker/services/conflict";
 import type { LibraryNoteService } from "worker/services/library-note";
 
 export const LIB = USER_ID;
@@ -51,6 +52,8 @@ export interface Universe {
     without?: ActionKind[];
     /** Also try syncs with two disturbances (for multi-batch pushes). */
     combos?: boolean;
+    /** Let the user create an annotation on an attachment. */
+    newAnnotations?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -96,7 +99,20 @@ interface Intent {
     lastRemote: Record<string, string>;
     /** Counters for deterministic new keys. */
     localNotes: number;
+    localAnnotations: number;
     remoteNotes: number;
+    /**
+     * key → a value another client gave a field the user does not edit here
+     * (title, or tags of a note or annotation). Changes to different fields
+     * merge, so it must survive on the server.
+     */
+    remoteOther: Record<string, { field: "title" | "tags"; value: string }>;
+    /**
+     * key → a value another client gave the field the user had a pending
+     * change to. Once this device has seen it, it must be listed as a
+     * conflict (or merged into the local copy), never silently overwritten.
+     */
+    contested: Record<string, string>;
     /**
      * Change counters: bumped for an item and everything under it whenever
      * another client acts on it. `seen` is how far this device has observed
@@ -114,10 +130,25 @@ interface Intent {
     everOnServer: string[];
 }
 
+/** The tables a world snapshot covers: every table sync reads or writes. */
+const TABLES = [
+    "items",
+    "collections",
+    "libraries",
+    "syncCache",
+    "syncDeleteLog",
+    "syncConflicts",
+    "syncGroups",
+    "syncQueue",
+    "uploadJournal",
+] as const;
+
 interface Snapshot {
     items: AnyIDBZoteroItem[];
     collections: unknown[];
     libraries: unknown[];
+    /** The sync bookkeeping tables (cache, delete log, conflicts, …). */
+    sync: Record<string, unknown[]>;
     server: unknown;
     intent: Intent;
     conflicts: string[];
@@ -138,7 +169,10 @@ export class World {
         lastLocal: {},
         lastRemote: {},
         localNotes: 0,
+        localAnnotations: 0,
         remoteNotes: 0,
+        remoteOther: {},
+        contested: {},
         touched: {},
         seen: {},
         cleanAt: {},
@@ -201,16 +235,19 @@ export class World {
         return db.items.get([LIB, key]);
     }
 
+    /** Conflicts as the user sees them: the conflict list. */
+    conflictInfos(): Promise<ConflictItemInfo[]> {
+        return this.conflictService.getItemConflicts();
+    }
+
     async conflictKeys(): Promise<string[]> {
-        return (await this.rows()).filter((r) => r.syncStatus === "conflict").map((r) => r.key).sort();
+        return (await this.conflictInfos()).map((c) => c.key).sort();
     }
 
     /** A row the user can still see and change. */
     private editable(r: AnyIDBZoteroItem): boolean {
-        if (r.syncStatus === "deleted" || r.trashed === 1) return false;
-        if (r.raw?.data?.deleted) return false;
-        const c = (r as { conflict?: { pendingOp?: string } }).conflict;
-        return c?.pendingOp !== "delete";
+        if (r.trashed === 1) return false;
+        return !r.raw?.data?.deleted;
     }
 
     private focus(key: string): boolean {
@@ -221,10 +258,13 @@ export class World {
     /* --------------------------- snapshots -------------------------- */
 
     async capture(): Promise<Snapshot> {
+        const sync: Record<string, unknown[]> = {};
+        for (const t of TABLES.slice(3)) sync[t] = await db.table(t).toArray();
         return {
             items: await db.items.toArray(),
             collections: await db.collections.toArray(),
             libraries: await db.libraries.toArray(),
+            sync,
             server: this.h.server.saveState(),
             intent: structuredClone(this.intent),
             conflicts: [...this.conflicts],
@@ -232,13 +272,12 @@ export class World {
     }
 
     async restore(s: Snapshot): Promise<void> {
-        await db.transaction("rw", db.items, db.collections, db.libraries, async () => {
-            await db.items.clear();
-            await db.collections.clear();
-            await db.libraries.clear();
+        await db.transaction("rw", TABLES.map((t) => db.table(t)), async () => {
+            for (const t of TABLES) await db.table(t).clear();
             await db.items.bulkPut(structuredClone(s.items));
             await db.collections.bulkPut(structuredClone(s.collections) as never[]);
             await db.libraries.bulkPut(structuredClone(s.libraries) as never[]);
+            for (const [t, rows] of Object.entries(s.sync)) await db.table(t).bulkPut(structuredClone(rows));
         });
         this.h.server.loadState(s.server);
         this.intent = structuredClone(s.intent);
@@ -254,6 +293,13 @@ export class World {
             ...[...server.items.values()].map((i) => i.version),
             ...s.items.map((r) => r.version),
             ...(s.libraries as { itemVersion?: number }[]).map((l) => l.itemVersion ?? 0),
+            ...Object.values(s.sync).flatMap((rows) =>
+                (rows as { version?: number; remoteVersion?: number; baseVersion?: number }[]).flatMap((r) => [
+                    r.version ?? 0,
+                    r.remoteVersion ?? 0,
+                    r.baseVersion ?? 0,
+                ]),
+            ),
         ].filter((v) => v > 0);
         const base = versions.length > 0 ? Math.min(...versions) - 1 : 0;
         const rel = (v: number | undefined) => (v && v > 0 ? v - base : v ?? 0);
@@ -265,15 +311,11 @@ export class World {
         const local = s.items
             .filter((r) => r.libraryID === LIB)
             .map((r) => {
-                const { dateModified: _m, syncedAt: _s, lastAccessedAt: _l, dateAdded: _a, ...rest } = r;
+                const { dateModified: _m, syncedAt: _s, lastAccessedAt: _l, dateAdded: _a, treeFingerprint: _f, ...rest } = r;
                 return {
                     ...rest,
                     version: rel(r.version),
                     raw: { ...r.raw, version: rel(r.raw?.version), data: strip(r.raw?.data as unknown as Record<string, unknown>) },
-                    serverCopyRaw: r.serverCopyRaw
-                        ? { version: rel(r.serverCopyRaw.version), data: strip(r.serverCopyRaw.data as unknown as Record<string, unknown>) }
-                        : undefined,
-                    sentData: strip((r as { sentData?: Record<string, unknown> }).sentData),
                 };
             })
             .sort((a, b) => a.key.localeCompare(b.key));
@@ -281,8 +323,28 @@ export class World {
             .map((i) => ({ v: rel(i.version), data: strip(i.data) }))
             .sort((a, b) => String(a.data?.key).localeCompare(String(b.data?.key)));
         const lib = (s.libraries as { id: number; itemVersion?: number }[]).find((l) => l.id === LIB);
+        const book = Object.fromEntries(
+            Object.entries(s.sync).map(([t, rows]) => [
+                t,
+                (rows as Record<string, unknown>[])
+                    .map((r) => {
+                        const { createdAt: _c, sentAt: _t, dateDeleted: _d, lastCheck: _l, snapshot: _s, ...rest } = r;
+                        return {
+                            ...rest,
+                            version: rel(r.version as number | undefined),
+                            remoteVersion: rel(r.remoteVersion as number | undefined),
+                            baseVersion: rel(r.baseVersion as number | undefined),
+                            data: strip(r.data as Record<string, unknown> | undefined),
+                            sent: strip(r.sent as Record<string, unknown> | undefined),
+                            remote: strip(r.remote as Record<string, unknown> | undefined),
+                        };
+                    })
+                    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+            ]),
+        );
         return JSON.stringify({
             local,
+            book,
             remote,
             deleted: [...server.deletedItems.keys()].sort(),
             cursor: rel(lib?.itemVersion),
@@ -355,13 +417,16 @@ export class World {
             this.inSync = false;
         }
         const keys = new Set([...Object.keys(this.intent.touched), ...this.lib.items.keys()]);
+        const infos = new Map((await this.conflictInfos()).map((c) => [c.key, c]));
         for (const key of keys) {
             const r = await this.row(key);
             const server = this.lib.items.get(key);
+            const info = infos.get(key);
             const current =
-                (!r && !server) ||
-                (r && server && (r.version === server.version || r.serverCopyRaw?.version === server.version)) ||
-                (r && !server && r.syncStatus === "conflict");
+                (!r && !server && !info) ||
+                (r && server && r.version === server.version) ||
+                (server && info?.remoteVersion === server.version) ||
+                (!server && info?.kind === "remote-deleted");
             // A sync can fail partway (e.g. its item fetch), so changes made
             // before it are not seen merely because it ran.
             if (current) this.intent.seen[key] = this.touched(key);
@@ -381,6 +446,33 @@ export class World {
     private async localActions(): Promise<Action[]> {
         const out: Action[] = [];
         for (const r of await this.rows()) {
+            if (r.itemType === "attachment" && this.universe.newAnnotations && this.intent.localAnnotations < 1 && this.editable(r)) {
+                const attachmentKey = r.key;
+                out.push({
+                    kind: "local",
+                    label: `new annotation on ${attachmentKey}`,
+                    run: async () => {
+                        const key = `NEWANNO${++this.intent.localAnnotations}`;
+                        const attachment = await this.row(attachmentKey);
+                        if (!attachment) return this.drop(`new annotation on ${attachmentKey}`);
+                        const keyInfo = await db.keys.get(API_KEY);
+                        await this.annotations.saveAnnotations(attachment as never, keyInfo!, [
+                            {
+                                id: key,
+                                type: "highlight",
+                                text: "new",
+                                comment: "",
+                                color: "#ffd400",
+                                pageLabel: "1",
+                                sortIndex: "00000|000300|00200",
+                                position: { pageIndex: 0, rects: [[10, 30, 100, 40]] },
+                                tags: [],
+                            } as never,
+                        ]);
+                        this.setIntent(key, "");
+                    },
+                });
+            }
             if (!this.editable(r) || !this.focus(r.key)) continue;
             const key = r.key;
             if (r.itemType === "note") {
@@ -466,6 +558,7 @@ export class World {
         for (const [key, item] of this.lib.items) {
             if (!this.focus(key) || item.data.deleted) continue;
             out.push({ kind: "remote", label: `remote edit ${key}`, run: () => this.remoteEdit(key) });
+            out.push({ kind: "remote", label: `remote edit other field of ${key}`, run: () => this.remoteEditOther(key) });
             out.push({ kind: "remote", label: `remote delete ${key}`, run: () => this.remoteDelete(key) });
             if (item.data.itemType !== "note" && item.data.itemType !== "attachment" && item.data.itemType !== "annotation" && this.intent.remoteNotes < 1) {
                 out.push({
@@ -488,6 +581,11 @@ export class World {
                 run: async () => {
                     await this.noteRemoteChange(key);
                     this.lib.addItem({ key, data: seed.data });
+                    delete this.intent.remoteOther[key];
+                    delete this.intent.contested[key];
+                    // The server had deleted it, so a delete of the user's
+                    // was carried out; the re-creation is a new remote change.
+                    this.intent.deleted = this.intent.deleted.filter((k) => k !== key);
                 },
             });
         }
@@ -508,8 +606,27 @@ export class World {
         if (t === "note") this.lib.updateItem(key, { note: `<p>${v}</p>` });
         else if (t === "annotation") this.lib.updateItem(key, { annotationComment: v });
         else this.lib.updateItem(key, { tags: [{ tag: v }] });
-        // With nothing pending locally, the remote change simply wins.
+        // With nothing pending locally, the remote change simply wins;
+        // otherwise the two are in conflict.
         if (await this.locallyClean(key)) this.forget(key);
+        else this.intent.contested[key] = v;
+    }
+
+    /** Another client changes a field the user does not edit here: it must merge. */
+    async remoteEditOther(key: string): Promise<void> {
+        const item = this.lib.items.get(key);
+        if (!item) return;
+        const v = flip(this.intent.lastRemote[`${key}#other`], "Oa", "Ob");
+        this.intent.lastRemote[`${key}#other`] = v;
+        const t = item.data.itemType;
+        await this.noteRemoteChange(key);
+        if (t === "note" || t === "annotation") {
+            this.lib.updateItem(key, { tags: [{ tag: v }] });
+            this.intent.remoteOther[key] = { field: "tags", value: v };
+        } else {
+            this.lib.updateItem(key, { title: v });
+            this.intent.remoteOther[key] = { field: "title", value: v };
+        }
     }
 
     async remoteDelete(key: string): Promise<void> {
@@ -523,6 +640,8 @@ export class World {
             if (!this.lib.items.has(k)) continue;
             await this.noteRemoteChange(k);
             this.lib.deleteItem(k);
+            delete this.intent.remoteOther[k];
+            delete this.intent.contested[k];
             if (await this.locallyClean(k)) this.forget(k);
         }
     }
@@ -603,7 +722,7 @@ export class World {
             out.push(between(a.label, a.run));
         }
         for (const a of await this.localActions()) {
-            if (a.label.startsWith("new note")) continue;
+            if (a.label.startsWith("new ")) continue;
             out.push(between(a.label, a.run));
         }
         return out;
@@ -618,7 +737,7 @@ export class World {
         if (!this.universe.combos) return [];
         const out: Action[] = [];
         for (const a of await this.localActions()) {
-            if (a.label.startsWith("new note")) continue;
+            if (a.label.startsWith("new ")) continue;
             out.push({
                 kind: "combo",
                 label: `sync, ${a.label} after write #0, write #1 answer lost`,
@@ -646,6 +765,22 @@ export class World {
         const out: Action[] = [];
         const locals = await this.localActions();
         const find = (prefix: string) => locals.find((a) => a.label === prefix);
+        for (const create of locals.filter((a) => a.label.startsWith("new "))) {
+            out.push({
+                kind: "shortcut",
+                label: `lost: ${create.label}, its create applied but the answer lost`,
+                run: async () => {
+                    await create.run();
+                    let first = true;
+                    await this.syncThrough(async (_n, method, _url, send) => {
+                        if (method === "GET" || !first) return send();
+                        first = false;
+                        await send();
+                        throw new TypeError("Failed to fetch");
+                    });
+                },
+            });
+        }
         for (const r of await this.rows()) {
             const key = r.key;
             if (!this.editable(r) || !this.focus(key) || !this.lib.items.has(key)) continue;
@@ -720,12 +855,21 @@ export class World {
 
     /** Run a resolution; accept-remote gives up the local side of what it ended. */
     private async resolve(action: "keep-local" | "accept-remote", run: () => Promise<unknown>) {
-        const before = await this.conflictKeys();
+        const infos = await this.conflictInfos();
+        const listed = new Map(infos.map((c) => [c.key, c.conflictFields]));
+        const before = infos.map((c) => c.key).sort();
         await run();
         const after = new Set(await this.conflictKeys());
         const ended = before.filter((k) => !after.has(k));
+        for (const key of ended) delete this.intent.contested[key];
         if (action === "keep-local") {
-            for (const key of ended) this.intent.kept[key] = this.intent.seen[key] ?? 0;
+            for (const key of ended) {
+                this.intent.kept[key] = this.intent.seen[key] ?? 0;
+                // Keeping the local side of a field the conflict listed is
+                // the user's choice over the remote value there.
+                const other = this.intent.remoteOther[key];
+                if (other && listed.get(key)?.includes(other.field)) delete this.intent.remoteOther[key];
+            }
             return;
         }
         const present = new Set((await this.rows()).map((r) => r.key));
@@ -756,9 +900,11 @@ export class World {
     /* ---------------------------- checks ---------------------------- */
 
     /** Invariants that hold after every step. `resolved` steps may end conflicts. */
-    async checkStep(kind: ActionKind): Promise<void> {
+    async checkStep(kind: ActionKind, label = ""): Promise<void> {
         const rows = await this.rows();
         const byKey = new Map(rows.map((r) => [r.key, r]));
+        const infos = new Map((await this.conflictInfos()).map((c) => [c.key, c]));
+        const conflictsNow = [...infos.keys()].sort();
         for (const r of rows) {
             const n = normalizeItem(r.raw, LIB);
             const cols = (x: AnyIDBZoteroItem) => ({
@@ -773,10 +919,14 @@ export class World {
             if (JSON.stringify(cols(r)) !== JSON.stringify(cols(n))) {
                 throw new Violation(`${r.key}: index columns out of step with raw (${JSON.stringify(cols(r))} vs ${JSON.stringify(cols(n))})`);
             }
-            if (r.syncStatus === "synced" && r.serverCopyRaw) {
-                throw new Violation(`${r.key}: synced with a server copy`);
+            const info = infos.get(r.key);
+            if (r.syncStatus === "synced" && info) {
+                throw new Violation(`${r.key}: synced but listed as a conflict`);
             }
-            if (r.syncStatus === "conflict" && r.serverCopyRaw && sameUserContent(r.raw.data, r.serverCopyRaw.data)) {
+            if (r.syncStatus === "conflict" && !info) {
+                throw new Violation(`${r.key}: marked as a conflict the conflict list does not show`);
+            }
+            if (info?.kind === "changed" && info.remoteData && sameUserContent(r.raw.data, info.remoteData)) {
                 throw new Violation(`${r.key}: a conflict with nothing to choose (both sides hold the same content)`);
             }
             if (r.parentItem && !byKey.has(r.parentItem)) {
@@ -785,31 +935,49 @@ export class World {
         }
         if (kind !== "resolve") {
             for (const key of this.conflicts) {
-                const r = byKey.get(key);
+                if (infos.has(key)) continue;
+                // Deleting the item is the user's answer to its conflict.
+                if (kind === "local" && label.startsWith("delete ") && label.endsWith(` ${key}`)) continue;
                 const intended = key in this.intent.values || this.intent.deleted.includes(key);
-                if (!r) {
-                    if (intended && !this.intent.deleted.includes(key)) {
-                        throw new Violation(`${key}: conflict row vanished without the user`);
-                    }
-                } else if (r.syncStatus !== "conflict" && intended) {
-                    throw new Violation(`${key}: conflict ended without the user (now ${r.syncStatus})`);
+                // Deleted on both sides: the user's intent holds already.
+                const settled = this.intent.deleted.includes(key) && !this.lib.items.has(key);
+                if (intended && !settled) {
+                    const r = byKey.get(key);
+                    throw new Violation(`${key}: conflict ended without the user (now ${r ? r.syncStatus : "gone"})`);
                 }
             }
         }
-        const conflictsNow = rows.filter((r) => r.syncStatus === "conflict").map((r) => r.key).sort();
         for (const key of conflictsNow) {
             if (this.conflicts.includes(key)) continue;
-            const r = byKey.get(key)!;
+            const info = infos.get(key)!;
             // A refusal for another reason (a 4xx other than 404/412) needs no
-            // remote change; every other conflict does.
-            const error = r.syncError ?? "";
-            const refused = /^4\d\d:/.test(error) && !/^(404|412):/.test(error);
-            if (!refused && this.touched(key) === (this.intent.cleanAt[key] ?? 0)) {
+            // remote change; every other conflict does — on the item itself,
+            // or, for a remote deletion, on the deleted item above it (a row
+            // created after that deletion joins its conflict).
+            const refused = info.kind === "refused";
+            const changed = (k: string) => this.touched(k) !== (this.intent.cleanAt[k] ?? 0);
+            const viaRoot = info.kind === "remote-deleted" && !!info.group && changed(info.group);
+            if (!refused && !changed(key) && !viaRoot) {
                 throw new Violation(`${key}: a conflict without any remote change behind it`);
             }
             if (key in this.intent.kept && this.touched(key) === this.intent.kept[key]) {
                 throw new Violation(`${key}: a conflict resolved as keep-local came back without a new remote change`);
             }
+        }
+        for (const [key, value] of Object.entries(this.intent.contested)) {
+            if (infos.has(key)) continue;
+            if (!this.lib.items.has(key)) {
+                delete this.intent.contested[key];
+                continue;
+            }
+            // Not observed yet: the next sync may still raise it.
+            if ((this.intent.seen[key] ?? 0) !== this.touched(key)) continue;
+            const r = byKey.get(key);
+            if (r && userContent(r.raw.data).includes(value)) {
+                delete this.intent.contested[key];
+                continue;
+            }
+            throw new Violation(`${key}: another client's change (${value}) was overwritten without a conflict`);
         }
         for (const r of rows) {
             if (r.syncStatus === "synced") {
@@ -841,13 +1009,23 @@ export class World {
                 }
                 const blocked = (c as { keepLocalBlocked?: string }).keepLocalBlocked;
                 await this.conflictService.resolveItemConflict(LIB, c.key, blocked ? "accept-remote" : "keep-local");
-                if (!blocked) this.intent.kept[c.key] = this.intent.seen[c.key] ?? 0;
+                if (!blocked) {
+                    this.intent.kept[c.key] = this.intent.seen[c.key] ?? 0;
+                    const other = this.intent.remoteOther[c.key];
+                    if (other && c.conflictFields.includes(other.field)) delete this.intent.remoteOther[c.key];
+                }
             }
             await this.runSync(() => this.h.sync.startSync());
             const dirty = (await this.rows()).filter((r) => r.syncStatus !== "synced");
-            if (dirty.length === 0) break;
+            const open = await this.conflictInfos();
+            if (dirty.length === 0 && open.length === 0) break;
             if (round === 7) {
-                throw new Violation(`does not settle: ${dirty.map((r) => `${r.key}:${r.syncStatus}:${r.syncError ?? ""}`).join(" ")}`);
+                const reasons = new Map(open.map((c) => [c.key, `${c.kind}:${c.syncError}`]));
+                throw new Violation(
+                    `does not settle: ${[...new Set([...dirty.map((r) => r.key), ...reasons.keys()])]
+                        .map((k) => `${k}:${dirty.find((r) => r.key === k)?.syncStatus ?? "-"}:${reasons.get(k) ?? ""}`)
+                        .join(" ")}`,
+                );
             }
         }
         const rows = await this.rows();
@@ -885,6 +1063,13 @@ export class World {
         for (const key of this.intent.deleted) {
             const item = server.get(key);
             if (item && !item.data.deleted) throw new Violation(`${key}: the user's delete was lost`);
+        }
+        for (const [key, { field, value }] of Object.entries(this.intent.remoteOther)) {
+            const item = server.get(key);
+            if (!item) continue;
+            const v = item.data[field];
+            const kept = field === "title" ? v === value : JSON.stringify(v ?? []).includes(`"${value}"`);
+            if (!kept) throw new Violation(`${key}: another client's ${field} (${value}) was overwritten; server has ${JSON.stringify(v)}`);
         }
         for (const key of this.intent.deletedUnseen) {
             if (server.has(key)) throw new Violation(`${key}: a local-only item the user deleted reached the server`);

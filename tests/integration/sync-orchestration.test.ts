@@ -220,8 +220,8 @@ describe("progress and notices", () => {
         h.server.library(GROUP_ID, "group").addItem({ key: "GRUPITEM" });
 
         const controller = new AbortController();
-        // Fires before the first library syncs; the second iteration then sees
-        // an aborted signal and throws out of the loop.
+        // Fires before the first library syncs; its first round sees the
+        // aborted signal and the run throws out of the loop.
         await expect(
             h.sync.startSync(controller.signal, () => controller.abort()),
         ).rejects.toThrow(/Aborted/);
@@ -235,20 +235,15 @@ describe("progress and notices", () => {
             h.host.logsAt("info").some((l) => l.message === "Sync finished."),
         ).toBe(true);
 
-        // The first library completed before the abort took effect.
-        expect((await db.items.toArray()).map((i) => i.key)).toEqual(["USERITEM"]);
+        // The abort is honoured inside a library too: nothing was stored.
+        expect(await db.items.count()).toBe(0);
     });
 });
 
-describe("push retry loop", () => {
-    test("a 412 on push triggers a re-pull and a retry", async () => {
+describe("upload/download rounds", () => {
+    test("a 412 on upload downloads, then retries", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-            version: 0,
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created", version: 0 });
         // First write 412s; the retry is allowed through.
         h.server.failNext({ status: 412, pathIncludes: "/items", method: "POST" });
 
@@ -256,46 +251,87 @@ describe("push retry loop", () => {
 
         expect(result.failCount).toBe(0);
         expect(
-            h.host.logsAt("info").some((l) => /Push returned 412 \(attempt 1\/3\)/.test(l.message)),
+            h.host.logsAt("info").some((l) => /changed during upload \(412, attempt 1\/5\)/.test(l.message)),
         ).toBe(true);
         // Two POSTs: the rejected one and the successful retry.
-        expect(
-            h.server.requests.filter((r) => r.method === "POST"),
-        ).toHaveLength(2);
-        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe(
-            "synced",
-        );
+        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(2);
+        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe("synced");
     });
 
-    test("a persistently conflicting library gives up after MAX_PUSH_RETRIES", async () => {
+    test("upload comes before download", async () => {
+        h = await createSyncHarness({ versions: { itemVersion: 1 } });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created", version: 0 });
+
+        await h.sync.startSync();
+
+        const first = h.server.requests.findIndex((r) => r.path.endsWith("/items"));
+        expect(h.server.requests[first]!.method).toBe("POST");
+    });
+
+    test("a persistently conflicting library gives up after five rounds", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-            version: 0,
-        });
-        for (let i = 0; i < 3; i++) {
-            h.server.failNext({
-                status: 412,
-                pathIncludes: "/items",
-                method: "POST",
-            });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created", version: 0 });
+        for (let i = 0; i < 5; i++) {
+            h.server.failNext({ status: 412, pathIncludes: "/items", method: "POST" });
         }
 
         const result = await h.sync.startSync();
 
         // Giving up is not a failure: the item stays dirty for the next run.
         expect(result.failCount).toBe(0);
-        expect(
-            h.server.requests.filter((r) => r.method === "POST"),
-        ).toHaveLength(3);
-        expect(
-            h.host.logsAt("warn").some((l) => /Push failed after 3 retries/.test(l.message)),
-        ).toBe(true);
-        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe(
-            "created",
-        );
+        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(5);
+        expect(h.host.logsAt("warn").some((l) => /changes still waiting after 5 rounds/.test(l.message))).toBe(true);
+        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe("created");
+    });
+
+    test("a library that changes during a download restarts it, and gives up after three restarts", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "AAAAAAAA" });
+        let fetches = 0;
+        const real = globalThis.fetch;
+        globalThis.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            // Another client writes between the version listing and the
+            // item fetch, every time.
+            if (url.includes("itemKey=")) {
+                fetches++;
+                lib.addItem({ key: `OTHER${String(fetches).padStart(3, "0")}` });
+            }
+            return real(input, init);
+        };
+        try {
+            const result = await h.sync.startSync();
+            expect(result.failCount).toBe(1);
+        } finally {
+            globalThis.fetch = real;
+        }
+        expect(fetches).toBe(4);
+        // The cursor never moved past a version the download did not finish.
+        expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(0);
+    });
+
+    test("a download restarted once completes", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "AAAAAAAA" });
+        let raced = false;
+        const real = globalThis.fetch;
+        globalThis.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (url.includes("itemKey=") && !raced) {
+                raced = true;
+                lib.addItem({ key: "BBBBBBBB" });
+            }
+            return real(input, init);
+        };
+        try {
+            expect((await h.sync.startSync()).failCount).toBe(0);
+        } finally {
+            globalThis.fetch = real;
+        }
+        expect((await db.items.toArray()).map((r) => r.key).sort()).toEqual(["AAAAAAAA", "BBBBBBBB"]);
+        expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(lib.version);
     });
 
     test("readonly libraries never push", async () => {

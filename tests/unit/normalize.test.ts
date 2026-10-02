@@ -610,10 +610,10 @@ describe("normalizeItem: scalar fields", () => {
         ).toEqual(["COLL0001"]);
     });
 
-    test("a freshly normalized item is marked synced with no error", () => {
+    test("a freshly normalized item is marked synced", () => {
         const out = normalizeItem(article(), LIBRARY_ID);
         expect(out.syncStatus).toBe("synced");
-        expect(out.syncError).toBe("");
+        expect(out.synced).toBe(1);
         expect(Number.isNaN(Date.parse(out.syncedAt))).toBe(false);
     });
 

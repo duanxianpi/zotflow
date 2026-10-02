@@ -1,16 +1,17 @@
 /**
- * `applyLocalEdit` / `mutateItem` — the single write path for local edits of
- * Zotero data.
+ * `db/mutate.ts` — the single write path for local changes of Zotero data.
  *
- * The invariants are what the services used to maintain by hand, each slightly
- * differently: derived columns follow `raw.data`, the sync status advances
- * without clobbering `created` or `conflict`, and `dateModified` is stamped.
+ * Derived columns follow `raw.data`; an edit marks the row unsynced, bumps
+ * `localRevision` and keeps the server copy it started from as the merge
+ * base; a conflict stays a conflict; deletes go to the trash (notes) or the
+ * delete log (everything else); a row created under an item the server
+ * deleted joins that conflict.
  */
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
-    applyLocalDelete,
     applyLocalEdit,
-    isNeverPushed,
+    createLocalItems,
+    deleteLocalItems,
     mutateItem,
     newLocalItem,
 } from "db/mutate";
@@ -58,6 +59,13 @@ function storedItem(
     } as unknown as AnyZoteroItem;
     const item = normalizeItem(raw, LIB);
     item.syncStatus = syncStatus;
+    item.synced = syncStatus === "synced" || syncStatus === "ignore" ? 1 : 0;
+    if (syncStatus === "ignore") item.localOnly = true;
+    if (syncStatus === "created") {
+        item.version = 0;
+        item.raw.version = 0;
+        item.raw.data.version = 0;
+    }
     return item;
 }
 
@@ -167,21 +175,16 @@ describe("applyLocalEdit: sync status", () => {
         expect(next.syncStatus).toBe(to);
     });
 
-    test("an item pending deletion refuses the edit", () => {
-        expect(() =>
-            applyLocalEdit(storedItem({}, "deleted"), (d) => (d.title = "x")),
-        ).toThrow(ZotFlowError);
+    test("an edit marks the row unsynced and advances its revision", () => {
+        const item = storedItem({});
+        item.localRevision = 4;
+        const next = applyLocalEdit(item, (d) => (d.title = "x"));
+        expect(next.synced).toBe(0);
+        expect(next.localRevision).toBe(5);
     });
 
-    test("a conflict keeps its reason and the parked server copy", () => {
-        const item = storedItem({}, "conflict");
-        item.syncError = "Remote update conflict";
-        item.serverCopyRaw = structuredClone(item.raw);
-
-        const next = applyLocalEdit(item, (d) => (d.title = "x"));
-
-        expect(next.syncError).toBe("Remote update conflict");
-        expect(next.serverCopyRaw).toEqual(item.serverCopyRaw);
+    test("a local-only row stays out of sync", () => {
+        expect(applyLocalEdit(storedItem({}, "ignore"), (d) => (d.title = "x")).synced).toBe(1);
     });
 });
 
@@ -196,25 +199,71 @@ describe("applyLocalEdit: dateModified", () => {
     });
 });
 
-describe("applyLocalDelete", () => {
-    test.each(["synced", "updated", "deleted", "ignore", "conflict"] as const)(
-        "%s is queued for deletion",
-        (from) => {
-            expect(applyLocalDelete(storedItem({}, from)).syncStatus).toBe("deleted");
-        },
-    );
+describe("deleteLocalItems", () => {
+    beforeEach(() => resetDb());
 
-    test("records the delete in raw.data and the derived columns", () => {
-        const next = applyLocalDelete(storedItem({}));
+    const annotation = (key: string, status: AnyIDBZoteroItem["syncStatus"] = "synced") =>
+        storedItem({ key, itemType: "annotation", title: undefined, annotationType: "highlight" }, status) as AnyIDBZoteroItem;
 
-        expect(next.raw.data.deleted).toBe(true);
-        expect(next.trashed).toBe(1);
-        expect(columnsOf(next)).toEqual(deriveIndexFields(next.raw.data));
+    test("an annotation Zotero has is removed and queued for a DELETE", async () => {
+        await db.items.put(annotation("ANNOAAAA"));
+
+        const result = await deleteLocalItems(LIB, ["ANNOAAAA"]);
+
+        expect(result.removed).toEqual(["ANNOAAAA"]);
+        expect(await db.items.get([LIB, "ANNOAAAA"])).toBeUndefined();
+        const log = (await db.syncDeleteLog.get([LIB, "ANNOAAAA"]))!;
+        expect(log.version).toBe(3);
+        expect(log.snapshot.key).toBe("ANNOAAAA");
     });
 
-    test("a never-pushed item is refused: its row should just be removed", () => {
-        expect(() => applyLocalDelete(storedItem({}, "created"))).toThrow(ZotFlowError);
-        expect(isNeverPushed(storedItem({}, "created") as AnyIDBZoteroItem)).toBe(true);
+    test("an annotation never sent leaves nothing behind", async () => {
+        await db.items.put(annotation("ANNOAAAA", "created"));
+
+        await deleteLocalItems(LIB, ["ANNOAAAA"]);
+
+        expect(await db.items.get([LIB, "ANNOAAAA"])).toBeUndefined();
+        expect(await db.syncDeleteLog.count()).toBe(0);
+    });
+
+    test("an annotation whose create was sent is logged: it may have landed", async () => {
+        await db.items.put(annotation("ANNOAAAA", "created"));
+        await db.uploadJournal.put({ libraryID: LIB, key: "ANNOAAAA", sent: {}, baseVersion: 0, revision: 0, sentAt: OLD });
+
+        await deleteLocalItems(LIB, ["ANNOAAAA"]);
+
+        expect((await db.syncDeleteLog.get([LIB, "ANNOAAAA"]))!.version).toBe(0);
+    });
+
+    test("a local-only annotation is removed without a trace", async () => {
+        await db.items.put(annotation("ANNOAAAA", "ignore"));
+
+        await deleteLocalItems(LIB, ["ANNOAAAA"]);
+
+        expect(await db.items.count()).toBe(0);
+        expect(await db.syncDeleteLog.count()).toBe(0);
+    });
+
+    test("a note goes to the trash: an edit of deleted", async () => {
+        await db.items.put(storedItem({ key: "NOTEAAAA", itemType: "note", note: "<p>n</p>", title: undefined }) as AnyIDBZoteroItem);
+
+        const result = await deleteLocalItems(LIB, ["NOTEAAAA"]);
+
+        expect(result.trashed).toEqual(["NOTEAAAA"]);
+        const row = (await db.items.get([LIB, "NOTEAAAA"]))!;
+        expect(row.raw.data.deleted).toBe(true);
+        expect(row.trashed).toBe(1);
+        expect(row.syncStatus).toBe("updated");
+        expect(await db.syncDeleteLog.count()).toBe(0);
+    });
+
+    test("a note never sent is removed", async () => {
+        await db.items.put(storedItem({ key: "NOTEAAAA", itemType: "note", note: "", title: undefined }, "created") as AnyIDBZoteroItem);
+
+        const result = await deleteLocalItems(LIB, ["NOTEAAAA"]);
+
+        expect(result.removed).toEqual(["NOTEAAAA"]);
+        expect(await db.items.count()).toBe(0);
     });
 });
 
@@ -242,7 +291,15 @@ describe("newLocalItem", () => {
     });
 
     test("a local-only row is never pushed", () => {
-        expect(newLocalItem(raw({ itemType: "note", note: "" }), LIB, "local-only").syncStatus).toBe("ignore");
+        const row = newLocalItem(raw({ itemType: "note", note: "" }), LIB, "local-only");
+        expect(row.syncStatus).toBe("ignore");
+        expect(row.localOnly).toBe(true);
+    });
+
+    test("a pushed row starts unsynced at version 0", () => {
+        const row = newLocalItem(raw({ itemType: "note", note: "" }), LIB, "push");
+        expect(row.synced).toBe(0);
+        expect(row.version).toBe(0);
     });
 });
 
@@ -262,6 +319,24 @@ describe("mutateItem", () => {
         expect(stored.syncStatus).toBe("updated");
     });
 
+    test("the first edit keeps the server copy as the merge base; later ones keep that base", async () => {
+        await db.items.put(storedItem({ key: "ITEMKEY1", title: "Server" }) as AnyIDBZoteroItem);
+
+        await mutateItem(LIB, "ITEMKEY1", (d: any) => (d.title = "One"));
+        await mutateItem(LIB, "ITEMKEY1", (d: any) => (d.title = "Two"));
+
+        const cache = (await db.syncCache.get([LIB, "ITEMKEY1"]))!;
+        expect(cache.version).toBe(3);
+        expect(cache.data.title).toBe("Server");
+        expect((await db.items.get([LIB, "ITEMKEY1"]))!.localRevision).toBe(2);
+    });
+
+    test("a new row has no merge base", async () => {
+        await db.items.put(storedItem({ key: "ITEMKEY1" }, "created") as AnyIDBZoteroItem);
+        await mutateItem(LIB, "ITEMKEY1", (d: any) => (d.title = "One"));
+        expect(await db.syncCache.count()).toBe(0);
+    });
+
     test("a missing item yields undefined and writes nothing", async () => {
         expect(await mutateItem(LIB, "NOSUCH01", () => {})).toBeUndefined();
         expect(await db.items.count()).toBe(0);
@@ -276,6 +351,42 @@ describe("mutateItem", () => {
 
         expect(result).toBeUndefined();
         expect((await db.items.get([LIB, "ITEMKEY1"]))!.syncStatus).toBe("synced");
+    });
+});
+
+describe("rows under an item the server deleted", () => {
+    beforeEach(() => resetDb());
+
+    test("a note created under a member of a deletion conflict joins it", async () => {
+        await db.items.put(storedItem({ key: "PARENT01" }) as AnyIDBZoteroItem);
+        await db.syncConflicts.put({
+            libraryID: LIB,
+            key: "PARENT01",
+            kind: "remote-deleted",
+            remoteVersion: 0,
+            fields: [],
+            group: "PARENT01",
+            createdAt: OLD,
+        });
+        await db.syncGroups.put({ libraryID: LIB, id: "PARENT01", root: "PARENT01", members: ["PARENT01"] });
+
+        const note = newLocalItem(
+            {
+                key: "NEWNOTE1",
+                version: 0,
+                library: { type: "user", id: LIB, name: "Library" },
+                links: {},
+                meta: { numChildren: 0 },
+                data: { key: "NEWNOTE1", version: 0, itemType: "note", parentItem: "PARENT01", note: "", tags: [], relations: {} },
+            } as never,
+            LIB,
+            "push",
+        );
+        await createLocalItems(LIB, [note as unknown as AnyIDBZoteroItem]);
+
+        expect((await db.items.get([LIB, "NEWNOTE1"]))!.syncStatus).toBe("conflict");
+        expect((await db.syncConflicts.get([LIB, "NEWNOTE1"]))!.group).toBe("PARENT01");
+        expect((await db.syncGroups.get([LIB, "PARENT01"]))!.members).toEqual(["PARENT01", "NEWNOTE1"]);
     });
 });
 
@@ -297,20 +408,15 @@ describe("editing a conflicted item, end to end", () => {
     afterEach(() => h?.dispose());
 
     test("the edit is held until the conflict is resolved", async () => {
-        // Pull already advanced the row's version to the server's, so if the
-        // edit moved the item to `updated`, the next push would be accepted
-        // and silently overwrite the remote change.
         h = await createSyncHarness();
         const lib = h.server.library(USER_ID);
         lib.addItem({ key: "AAAAAAAA", data: { title: "Original" } });
         await h.sync.startSync();
 
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "updated" });
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Local title"));
         lib.updateItem("AAAAAAAA", { title: "Remote title" });
         await h.sync.startSync();
-        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe(
-            "conflict",
-        );
+        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe("conflict");
 
         await mutateItem(USER_ID, "AAAAAAAA", (d) => {
             d.tags = [{ tag: "local" }];

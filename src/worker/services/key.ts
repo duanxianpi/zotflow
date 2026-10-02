@@ -1,3 +1,5 @@
+import Dexie from "dexie";
+
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
@@ -24,7 +26,7 @@ export interface LibraryRow {
     changedCount: number;
 }
 
-const DIRTY_STATUSES = ["created", "updated", "deleted", "conflict"] as const;
+const DIRTY_STATUSES = ["created", "updated", "conflict"] as const;
 
 /**
  * Worker-side service for Zotero API key, group, and library metadata.
@@ -185,9 +187,13 @@ export class KeyService {
         return { keyInfo: verifiedKeyInfo, username: verifiedKeyInfo.username };
     }
 
-    // Count items + collections with a non-synced status for a library.
+    // Count items + collections with a non-synced status for a library,
+    // plus local deletes not yet uploaded (their rows are already gone).
     private async countChangedItems(libraryID: number): Promise<number> {
-        let total = 0;
+        let total = await db.syncDeleteLog
+            .where("[libraryID+key]")
+            .between([libraryID, Dexie.minKey], [libraryID, Dexie.maxKey])
+            .count();
         for (const status of DIRTY_STATUSES) {
             total += await db.items
                 .where("[libraryID+syncStatus]")

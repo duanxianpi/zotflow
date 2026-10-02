@@ -1,10 +1,9 @@
 /**
  * Guards that `startSync` cannot reach on its own.
  *
- * `pushDirtyItems` is public — the task layer calls it directly after a note
- * edit — so its preconditions have to hold without a preceding startSync. The
- * DB failure path likewise needs the store to break, which no amount of
- * fixture data will do on its own.
+ * `upload` is public, so its preconditions have to hold without a preceding
+ * startSync. The DB failure path likewise needs the store to break, which no
+ * amount of fixture data will do on its own.
  */
 import { describe, test, expect, afterEach, vi } from "vitest";
 import { db, seedItem } from "../fakes/db";
@@ -18,69 +17,47 @@ afterEach(() => {
     h?.dispose();
 });
 
-describe("pushDirtyItems called directly", () => {
-    test("pushes without a preceding pull", async () => {
+describe("upload called directly", () => {
+    test("uploads without a preceding download", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
 
-        expect(await h.sync.pushDirtyItems("user", USER_ID)).toEqual({
-            retryNeeded: false,
-        });
+        expect(await h.sync.upload("user", USER_ID)).toBe("success");
         expect(h.server.library(USER_ID).items.has("NEWITEM1")).toBe(true);
     });
 
-    test("refuses to push without an API key", async () => {
+    test("refuses to upload without an API key", async () => {
         h = await createSyncHarness();
         h.settings.zoteroapikey = "";
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
 
-        await expect(h.sync.pushDirtyItems("user", USER_ID)).rejects.toThrow(
-            /No API key found for push/i,
-        );
+        await expect(h.sync.upload("user", USER_ID)).rejects.toThrow(/No API key found for push/i);
         expect(h.server.requests).toHaveLength(0);
     });
 
-    test("reports retryNeeded so the caller can re-pull", async () => {
+    test("reports a library conflict so the caller downloads first", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
         h.server.failNext({ status: 412, pathIncludes: "/items", method: "POST" });
 
-        expect(await h.sync.pushDirtyItems("user", USER_ID)).toEqual({
-            retryNeeded: true,
-        });
+        expect(await h.sync.upload("user", USER_ID)).toBe("library-conflict");
+        // Nothing was applied, so nothing is in flight.
+        expect(await db.uploadJournal.count()).toBe(0);
     });
 
-    test("a library with nothing dirty makes no request", async () => {
+    test("a library with nothing to upload makes no request", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "AAAAAAAA",
-            syncStatus: "synced",
-        });
+        await seedItem({ libraryID: USER_ID, key: "AAAAAAAA", syncStatus: "synced" });
 
-        expect(await h.sync.pushDirtyItems("user", USER_ID)).toEqual({
-            retryNeeded: false,
-        });
+        expect(await h.sync.upload("user", USER_ID)).toBe("nothing");
         expect(h.server.requests).toHaveLength(0);
     });
 
-    test("dirty rows in another library are left alone", async () => {
+    test("rows in another library are left alone", async () => {
         h = await createSyncHarness({ groups: [{ id: 777 }] });
         await seedItem({ libraryID: 777, key: "GROUPNEW", syncStatus: "created" });
 
-        await h.sync.pushDirtyItems("user", USER_ID);
+        await h.sync.upload("user", USER_ID);
 
         expect(h.server.requests).toHaveLength(0);
         expect((await db.items.get([777, "GROUPNEW"]))!.syncStatus).toBe("created");

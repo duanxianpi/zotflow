@@ -10,6 +10,7 @@ import { TFile } from "obsidian";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { LocalDataManager } from "ui/reader/local-data-manager";
+import { NoteGoneModal } from "ui/modals/note-gone-modal";
 import {
     parseEditableRegions,
     type EditableRegion,
@@ -225,13 +226,26 @@ const editableRegionSyncPlugin = ViewPlugin.fromClass(
                         syncFrom,
                         region.to,
                     );
+                    const libraryID = target.libraryId;
                     workerBridge.itemNote
                         .updateNoteContent(
-                            target.libraryId,
+                            libraryID,
                             region.key,
                             noteContent,
                             "editor",
                         )
+                        .then((result) => {
+                            if (result.status !== "gone") return;
+                            // The note was deleted in Zotero: the text stays
+                            // in this source note until the user chooses.
+                            NoteGoneModal.show(services.app, {
+                                libraryID,
+                                noteKey: region.key,
+                                parentKey: result.parentKey,
+                                parentExists: result.parentExists,
+                                content: () => noteContent,
+                            });
+                        })
                         .catch(() => {
                             // Background sync — errors logged by worker
                         });

@@ -33,6 +33,13 @@ export class NoteEditorView extends ItemView {
     private saveTimer?: number;
     private unsubscribeSyncFinished?: () => void;
     private unsubscribeNoteChanged?: () => void;
+    /**
+     * Set once a save finds the note gone (deleted in Zotero): saves stop,
+     * the text stays in the editor, and a banner offers to save it as a new
+     * note.
+     */
+    private gone?: { parentKey: string; parentExists: boolean };
+    private goneBanner?: HTMLElement;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -166,16 +173,22 @@ export class NoteEditorView extends ItemView {
     }
 
     private async saveContent() {
-        if (!this.noteItem || !this.editor) return;
+        if (!this.noteItem || !this.editor || this.gone) return;
 
         const content = this.metaLine + this.editor.value;
 
         try {
-            await workerBridge.itemNote.updateNoteContent(
+            const result = await workerBridge.itemNote.updateNoteContent(
                 this.noteItem.libraryID,
                 this.noteItem.key,
                 content,
+                "note-view",
+                this.noteItem.parentItem,
             );
+            if (result.status === "gone") {
+                this.showGone(result.parentKey, result.parentExists);
+                return;
+            }
 
             // Re-fetch to pick up the derived title
             const updated = await workerBridge.dbHelper.getItem(
@@ -263,12 +276,67 @@ export class NoteEditorView extends ItemView {
             this.noteItem.key,
         );
 
-        if (!item || item.itemType !== "note") return;
+        if (!item || item.itemType !== "note") {
+            // Deleted in Zotero: keep what is on screen and say so.
+            const parentKey = this.noteItem.parentItem;
+            const parent = parentKey
+                ? await workerBridge.dbHelper.getItem(
+                      this.noteItem.libraryID,
+                      parentKey,
+                  )
+                : undefined;
+            this.showGone(parentKey, !!parent);
+            return;
+        }
 
         this.noteItem = item;
         this.updateTitle();
 
         await this.renderContent();
+    }
+
+    /** The note is gone: keep the text, stop saving, offer to save it as a new note. */
+    private showGone(parentKey: string, parentExists: boolean) {
+        if (this.gone) return;
+        this.gone = { parentKey, parentExists };
+        services.notificationService.notify(
+            "warning",
+            "This note was deleted in Zotero.",
+        );
+        const banner = createDiv({ cls: "zotflow-note-gone-banner" });
+        banner.createSpan({
+            text: parentExists
+                ? "This note was deleted in Zotero. Your text is kept here until you save it as a new note under the same item."
+                : "This note and its parent were deleted in Zotero. Your text is kept here until you save it as a standalone note.",
+        });
+        const button = banner.createEl("button", {
+            text: "Save as new note",
+            cls: "mod-cta",
+        });
+        button.addEventListener("click", () => {
+            ff(this.saveAsNewNote(), "Failed to save the note");
+        });
+        this.contentEl.prepend(banner);
+        this.goneBanner = banner;
+    }
+
+    private async saveAsNewNote() {
+        if (!this.noteItem || !this.editor || !this.gone) return;
+        const libraryID = this.noteItem.libraryID;
+        const key = await workerBridge.itemNote.saveAsNewNote(
+            libraryID,
+            this.gone.parentExists ? this.gone.parentKey : "",
+            this.metaLine + this.editor.value,
+        );
+        const item = await workerBridge.dbHelper.getItem(libraryID, key);
+        if (!item || item.itemType !== "note") return;
+        // Keep editing in place, now against the new note.
+        this.noteItem = item;
+        this.gone = undefined;
+        this.goneBanner?.remove();
+        this.goneBanner = undefined;
+        this.updateTitle();
+        services.notificationService.notify("success", "Saved as a new note.");
     }
 
     private updateTitle() {

@@ -250,12 +250,11 @@ describe("getAnnotations", () => {
         expect(back!.dateModified).toBe("2024-12-31T00:00:00.000Z");
     });
 
-    it("hides soft-deleted annotations", async () => {
+    it("does not show a deleted annotation awaiting its upload", async () => {
         const attachment = await h.seedAttachment("ATTACH01");
         await h.seedAnnotation("KEEPME01", "ATTACH01");
-        await h.seedAnnotation("GONE0001", "ATTACH01", {
-            syncStatus: "deleted",
-        });
+        await h.seedAnnotation("GONE0001", "ATTACH01");
+        await h.service.deleteAnnotations(attachment, ["GONE0001"]);
 
         const back = await h.service.getAnnotations(attachment, API_KEY);
         expect(back.map((a) => a.id)).toEqual(["KEEPME01"]);
@@ -727,21 +726,23 @@ describe("saveAnnotations: update", () => {
         );
     });
 
-    it("does not resurrect a soft-deleted annotation by updating it", async () => {
-        // The deleted row is invisible to the existing-items query, so the save
-        // takes the create path and overwrites it as a fresh local annotation.
+    it("saving an annotation deleted but not yet uploaded takes the delete back", async () => {
+        // The reader can hand back an annotation it still showed. Zotero has
+        // the item; the pending DELETE is dropped and the save becomes an
+        // edit of it, not a create that Zotero would refuse.
         const attachment = await h.seedAttachment("ATTACH01");
-        await h.seedAnnotation("ANNO0001", "ATTACH01", {
-            syncStatus: "deleted",
-        });
+        await h.seedAnnotation("ANNO0001", "ATTACH01");
+        await h.service.deleteAnnotations(attachment, ["ANNO0001"]);
 
         await h.service.saveAnnotations(attachment, h.keyInfo, [
             makeAnnotationJson("ANNO0001", { comment: "re-added" }),
         ]);
 
         const row = await h.getRow("ANNO0001");
-        expect(row!.syncStatus).toBe("created");
+        expect(row!.syncStatus).toBe("updated");
+        expect(row!.version).toBe(1);
         expect(row!.raw.data.annotationComment).toBe("re-added");
+        expect(await db.syncDeleteLog.count()).toBe(0);
     });
 });
 
@@ -829,7 +830,7 @@ describe("deleteAnnotations", () => {
         expect(await h.getRow("LOCAL001")).toBeUndefined();
     });
 
-    it("soft-deletes a synced annotation so the deletion can be pushed", async () => {
+    it("removes a synced annotation and queues its DELETE", async () => {
         const attachment = await h.seedAttachment("ATTACH01");
         await h.seedAnnotation("SYNCED01", "ATTACH01", {
             syncStatus: "synced",
@@ -837,9 +838,8 @@ describe("deleteAnnotations", () => {
 
         await h.service.deleteAnnotations(attachment, ["SYNCED01"]);
 
-        const row = await h.getRow("SYNCED01");
-        expect(row).toMatchObject({ syncStatus: "deleted" });
-        expect(row!.raw.data.deleted).toBe(true);
+        expect(await h.getRow("SYNCED01")).toBeUndefined();
+        expect(await db.syncDeleteLog.get([USER_ID, "SYNCED01"])).toMatchObject({ version: 1 });
     });
 
     it("handles a mixed batch in one pass", async () => {
@@ -854,7 +854,8 @@ describe("deleteAnnotations", () => {
         await h.service.deleteAnnotations(attachment, ["LOCAL001", "SYNCED01"]);
 
         expect(await h.getRow("LOCAL001")).toBeUndefined();
-        expect((await h.getRow("SYNCED01"))!.syncStatus).toBe("deleted");
+        expect(await h.getRow("SYNCED01")).toBeUndefined();
+        expect((await db.syncDeleteLog.toArray()).map((l) => l.key)).toEqual(["SYNCED01"]);
     });
 
     it.each(["image", "ink"] as const)(
@@ -1016,18 +1017,15 @@ describe("updateAnnotationComment", () => {
 
     it("ignores an annotation already deleted in the reader", async () => {
         // Its region can linger in a source note until the next re-render;
-        // editing it must not resurrect it as an update.
-        await h.seedAttachment("ATTACH01");
-        await h.seedAnnotation("ANNO0001", "ATTACH01", {
-            comment: "old",
-            syncStatus: "deleted",
-        });
+        // editing it must not resurrect it.
+        const attachment = await h.seedAttachment("ATTACH01");
+        await h.seedAnnotation("ANNO0001", "ATTACH01", { comment: "old" });
+        await h.service.deleteAnnotations(attachment, ["ANNO0001"]);
 
         await h.service.updateAnnotationComment(USER_ID, "ANNO0001", "edited");
 
-        const stored = (await h.getRow("ANNO0001"))!;
-        expect(stored.syncStatus).toBe("deleted");
-        expect(stored.raw.data.annotationComment).toBe("old");
+        expect(await h.getRow("ANNO0001")).toBeUndefined();
+        expect((await db.syncDeleteLog.get([USER_ID, "ANNO0001"]))!.snapshot.raw.data).toMatchObject({ annotationComment: "old" });
         expect(h.host.events).toEqual([]);
     });
 

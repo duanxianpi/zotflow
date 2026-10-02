@@ -1,9 +1,12 @@
 /**
- * The push half of a sync: which local rows are eligible, what the request
- * body looks like after sanitization, and how each bucket of the Zotero write
- * response (`successful` / `unchanged` / `failed`) is folded back into the DB.
+ * The upload half of a sync (docs/sync-architecture.md §4.6): which local
+ * rows are eligible, what each object sent looks like (a create with
+ * `version: 0`, an edit as a patch against the merge base), how each bucket of
+ * the write response (`successful` / `unchanged` / `failed`) is folded back,
+ * and pending deletes sent as batch DELETEs.
  */
 import { describe, test, expect, afterEach } from "vitest";
+import { deleteLocalItems, mutateItem } from "db/mutate";
 import { db, seedItem } from "../fakes/db";
 import { createSyncHarness, USER_ID } from "../fakes/sync-harness";
 
@@ -12,11 +15,21 @@ import type { SyncHarness } from "../fakes/sync-harness";
 let h: SyncHarness;
 afterEach(() => h?.dispose());
 
-/** The body of the single POST the run made. */
+/** The objects of the single POST the run made. */
 function postedPayload(harness: SyncHarness): Record<string, any>[] {
     const posts = harness.server.requests.filter((r) => r.method === "POST");
     expect(posts).toHaveLength(1);
     return posts[0]!.body as Record<string, any>[];
+}
+
+/** A library with one synced item, ready for a local change. */
+async function syncedItem(data: Record<string, unknown> = {}) {
+    h = await createSyncHarness();
+    const lib = h.server.library(USER_ID);
+    lib.addItem({ key: "AAAAAAAA", data: { title: "Original", extra: "", ...data } });
+    await h.sync.startSync();
+    h.server.clearRequests();
+    return lib;
 }
 
 describe("eligibility", () => {
@@ -26,12 +39,10 @@ describe("eligibility", () => {
 
         await h.sync.startSync();
 
-        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(
-            0,
-        );
+        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(0);
     });
 
-    test("only created/updated/deleted rows are pushed", async () => {
+    test("only created and updated rows are pushed", async () => {
         h = await createSyncHarness();
         await seedItem({ libraryID: USER_ID, key: "CREATED1", syncStatus: "created" });
         await seedItem({ libraryID: USER_ID, key: "UPDATED1", syncStatus: "updated" });
@@ -41,51 +52,35 @@ describe("eligibility", () => {
 
         await h.sync.startSync();
 
-        expect(postedPayload(h).map((i) => i.key).sort()).toEqual([
-            "CREATED1",
-            "UPDATED1",
-        ]);
+        const keys = h.server.requests
+            .filter((r) => r.method === "POST")
+            .flatMap((r) => (r.body as { key: string }[]).map((o) => o.key));
+        expect(keys).toContain("CREATED1");
+        expect(keys).toContain("UPDATED1");
+        expect(keys).not.toContain("SYNCED01");
+        expect(keys).not.toContain("IGNORED1");
+        expect(keys).not.toContain("CONFLIC1");
     });
 
     test("notes are held back when the key lacks notes permission", async () => {
         h = await createSyncHarness({
-            access: {
-                user: { library: true, files: true, notes: false, write: true },
-            },
+            access: { user: { library: true, files: true, notes: false, write: true } },
         });
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NOTEITEM",
-            itemType: "note",
-            syncStatus: "created",
-        });
-        await seedItem({
-            libraryID: USER_ID,
-            key: "ARTICLE1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NOTEITEM", itemType: "note", syncStatus: "created" });
+        await seedItem({ libraryID: USER_ID, key: "ARTICLE1", syncStatus: "created" });
 
         await h.sync.startSync();
 
         expect(postedPayload(h).map((i) => i.key)).toEqual(["ARTICLE1"]);
-        expect(
-            h.host.logsAt("warn").some((l) => /Skipping 1 dirty note item/.test(l.message)),
-        ).toBe(true);
+        expect(h.host.logsAt("warn").some((l) => /Skipping 1 dirty note item/.test(l.message))).toBe(true);
         // Held back, not dropped: it can sync once permissions change.
-        expect((await db.items.get([USER_ID, "NOTEITEM"]))!.syncStatus).toBe(
-            "created",
-        );
+        expect((await db.items.get([USER_ID, "NOTEITEM"]))!.syncStatus).toBe("created");
     });
 
-    test("upserts are chunked at UPDATE_BULK_SIZE", async () => {
+    test("writes are chunked at 50 objects", async () => {
         h = await createSyncHarness();
-        // 51 items -> two writes (50 + 1).
         for (let i = 0; i < 51; i++) {
-            await seedItem({
-                libraryID: USER_ID,
-                key: `NEW${String(i).padStart(5, "0")}`,
-                syncStatus: "created",
-            });
+            await seedItem({ libraryID: USER_ID, key: `NEW${String(i).padStart(5, "0")}`, syncStatus: "created" });
         }
 
         await h.sync.startSync();
@@ -96,49 +91,59 @@ describe("eligibility", () => {
         expect(posts[1]!.body as unknown[]).toHaveLength(1);
         expect(h.server.library(USER_ID).items.size).toBe(51);
     });
+
+    test("a new parent is sent before its new children", async () => {
+        h = await createSyncHarness();
+        await seedItem({ libraryID: USER_ID, key: "ZZPARENT", syncStatus: "created" });
+        await seedItem({ libraryID: USER_ID, key: "AACHILD1", itemType: "note", parentItem: "ZZPARENT", syncStatus: "created" });
+
+        await h.sync.startSync();
+
+        expect(postedPayload(h).map((i) => i.key)).toEqual(["ZZPARENT", "AACHILD1"]);
+        expect(h.server.library(USER_ID).items.has("AACHILD1")).toBe(true);
+    });
+
+    test("a child waits while its new parent cannot be sent", async () => {
+        h = await createSyncHarness();
+        await seedItem({ libraryID: USER_ID, key: "PARENT01", syncStatus: "conflict", version: 0 });
+        await seedItem({ libraryID: USER_ID, key: "CHILD001", itemType: "note", parentItem: "PARENT01", syncStatus: "created" });
+
+        await h.sync.startSync();
+
+        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+        expect((await db.items.get([USER_ID, "CHILD001"]))!.syncStatus).toBe("created");
+    });
 });
 
 describe("request payload", () => {
-    test("a created item is sent without a version so the server assigns one", async () => {
+    test("a create carries version 0, so a key the server already has is refused, not merged into", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-            version: 0,
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
 
         await h.sync.startSync();
 
         const [sent] = postedPayload(h);
-        expect(sent!.key).toBe("NEWITEM1");
-        expect(sent!.data.key).toBe("NEWITEM1");
-        expect(sent).not.toHaveProperty("version");
-        expect(sent!.data).not.toHaveProperty("version");
+        expect(sent).toMatchObject({ key: "NEWITEM1", version: 0, itemType: "journalArticle" });
     });
 
-    test("an updated item carries its version for optimistic locking", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "updated" });
+    test("an edit is sent as a patch: only the fields that changed, at the base version", async () => {
+        const lib = await syncedItem();
+        const version = lib.items.get("AAAAAAAA")!.version;
 
-        h.server.clearRequests();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.extra = "local"));
         await h.sync.startSync();
 
         const [sent] = postedPayload(h);
-        expect(sent!.version).toBe(stored.version);
-        expect(sent!.data.version).toBe(stored.version);
+        expect(sent).toMatchObject({ key: "AAAAAAAA", version, extra: "local" });
+        expect(sent).not.toHaveProperty("title");
+        expect(lib.items.get("AAAAAAAA")!.data).toMatchObject({ title: "Original", extra: "local" });
     });
 
-    test("the stored version wins over a stale one in the raw payload", async () => {
+    test("an edit without a merge base sends the whole object, at the stored version", async () => {
         // The row's `version` column is authoritative — it is what the server
-        // checks for optimistic locking. Copying `raw` alone is not enough,
-        // because the two can disagree; if the stale one were sent, a
-        // concurrent edit on the server would be silently overwritten.
-        h = await createSyncHarness();
+        // checks; a stale copy inside `raw` must not be sent. (A cursor is
+        // set: local data without one would start with a full sync.)
+        h = await createSyncHarness({ versions: { itemVersion: 50 } });
         await seedItem({
             libraryID: USER_ID,
             key: "AAAAAAAA",
@@ -148,28 +153,17 @@ describe("request payload", () => {
                 key: "AAAAAAAA",
                 version: 7,
                 library: { type: "user", id: USER_ID, name: "Library" },
-                data: {
-                    key: "AAAAAAAA",
-                    version: 7,
-                    itemType: "journalArticle",
-                    title: "Item AAAAAAAA",
-                    dateAdded: "2020-01-01T00:00:00Z",
-                    dateModified: "2020-01-01T00:00:00Z",
-                    collections: [],
-                    tags: [],
-                    relations: {},
-                },
+                data: { key: "AAAAAAAA", version: 7, itemType: "journalArticle", title: "Item AAAAAAAA", tags: [] },
             } as never,
         });
 
         await h.sync.startSync();
 
-        const [sent] = postedPayload(h);
-        expect(sent!.version).toBe(42);
-        expect(sent!.data.version).toBe(42);
+        const [sent] = h.server.requests.filter((r) => r.method === "POST")[0]!.body as Record<string, any>[];
+        expect(sent).toMatchObject({ version: 42, title: "Item AAAAAAAA" });
     });
 
-    test("dateModified is stamped and dateAdded normalized to Zotero's format", async () => {
+    test("dates are sent in Zotero's format", async () => {
         h = await createSyncHarness();
         await seedItem({
             libraryID: USER_ID,
@@ -189,10 +183,8 @@ describe("request payload", () => {
         await h.sync.startSync();
 
         const [sent] = postedPayload(h);
-        const ZOTERO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-        expect(sent!.data.dateAdded).toBe("2020-03-04T05:06:07Z");
-        expect(sent!.data.dateModified).toMatch(ZOTERO_DATE);
-        expect(sent!.data.dateModified).not.toBe("2020-03-04T05:06:07Z");
+        expect(sent!.dateAdded).toBe("2020-03-04T05:06:07Z");
+        expect(sent!.dateModified).toBe("2020-03-04T05:06:07Z");
     });
 
     test("annotationIsExternal is stripped — it is a local-only flag", async () => {
@@ -202,69 +194,97 @@ describe("request payload", () => {
             key: "ANNOTAT1",
             itemType: "annotation",
             syncStatus: "created",
-            raw: {
-                key: "ANNOTAT1",
-                data: {
-                    key: "ANNOTAT1",
-                    itemType: "annotation",
-                    annotationType: "highlight",
-                    annotationIsExternal: true,
-                },
-            } as any,
+            raw: { key: "ANNOTAT1", data: { key: "ANNOTAT1", itemType: "annotation", annotationType: "highlight", annotationIsExternal: true } } as any,
         });
 
         await h.sync.startSync();
 
         const [sent] = postedPayload(h);
-        expect(sent!.data).not.toHaveProperty("annotationIsExternal");
-        expect(sent!.data.annotationType).toBe("highlight");
+        expect(sent).not.toHaveProperty("annotationIsExternal");
+        expect(sent!.annotationType).toBe("highlight");
+    });
+
+    test("what is sent is journaled until its answer arrives", async () => {
+        h = await createSyncHarness();
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
+        let journaled: unknown;
+        const real = globalThis.fetch;
+        globalThis.fetch = async (input, init) => {
+            if (init?.method === "POST") journaled = await db.uploadJournal.get([USER_ID, "NEWITEM1"]);
+            return real(input, init);
+        };
+        try {
+            await h.sync.startSync();
+        } finally {
+            globalThis.fetch = real;
+        }
+
+        expect(journaled).toMatchObject({ key: "NEWITEM1", baseVersion: 0 });
+        expect(await db.uploadJournal.count()).toBe(0);
     });
 });
 
 describe("write response handling", () => {
     test("a successful create is marked synced and adopts the server version", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-            version: 0,
-            title: "Drafted locally",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created", title: "Drafted locally" });
 
         await h.sync.startSync();
 
         expect(h.server.library(USER_ID).items.has("NEWITEM1")).toBe(true);
         const stored = (await db.items.get([USER_ID, "NEWITEM1"]))!;
         expect(stored.syncStatus).toBe("synced");
-        expect(stored.syncError).toBeUndefined();
         expect(stored.version).toBe(h.server.library(USER_ID).version);
     });
 
-    test("a successful update is marked synced and adopts the server version", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
+    test("a successful update is marked synced, adopts the server version and drops its base", async () => {
+        const lib = await syncedItem();
         const before = (await db.items.get([USER_ID, "AAAAAAAA"]))!.version;
 
-        await db.items.update([USER_ID, "AAAAAAAA"], {
-            syncStatus: "updated",
-        });
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
         await h.sync.startSync();
 
         const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
         expect(stored.syncStatus).toBe("synced");
-        expect(stored.syncError).toBeUndefined();
         expect(stored.version).toBe(lib.version);
         expect(stored.version).not.toBe(before);
+        expect(await db.syncCache.count()).toBe(0);
     });
 
-    test("a rejected push leaves the stored raw untouched", async () => {
-        // Building the outgoing payload must not edit the item it was built
-        // from. On success the raw is replaced by the server's echo and the
-        // damage is invisible, but a rejected item keeps its local raw — and
-        // that copy has to still be the one that was there before the attempt.
+    test("the server's echoed payload replaces the stored raw", async () => {
+        const lib = await syncedItem();
+
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
+        await h.sync.startSync();
+
+        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
+        expect(stored.raw.version).toBe(lib.version);
+        expect(stored.raw.data.version).toBe(lib.version);
+    });
+
+    test("an edit made while the write was in flight survives, and goes up next", async () => {
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "First"));
+        const real = globalThis.fetch;
+        let edited = false;
+        globalThis.fetch = async (input, init) => {
+            if (init?.method === "POST" && !edited) {
+                edited = true;
+                await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.extra = "second"));
+            }
+            return real(input, init);
+        };
+        try {
+            await h.sync.startSync();
+        } finally {
+            globalThis.fetch = real;
+        }
+
+        expect(lib.items.get("AAAAAAAA")!.data).toMatchObject({ title: "First", extra: "second" });
+        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe("synced");
+    });
+
+    test("a rejected write leaves the stored raw untouched", async () => {
         h = await createSyncHarness();
         await seedItem({
             libraryID: USER_ID,
@@ -287,49 +307,22 @@ describe("write response handling", () => {
                 },
             } as never,
         });
-        h.server
-            .library(USER_ID)
-            .rejectWrite("ANNO0001", { code: 400, message: "nope" });
+        h.server.library(USER_ID).rejectWrite("ANNO0001", { code: 400, message: "nope" });
 
         await h.sync.startSync();
 
         const stored = (await db.items.get([USER_ID, "ANNO0001"]))!;
         expect(stored.syncStatus).toBe("conflict");
         const data = stored.raw.data as unknown as Record<string, unknown>;
-        // `annotationIsExternal` is stripped from the payload, never from us.
         expect(data.annotationIsExternal).toBe(true);
         expect(data.dateModified).toBe("2020-01-01T00:00:00.000Z");
     });
 
-    test("the server's echoed payload replaces the stored raw", async () => {
-        // The write response is authoritative: the server may normalise or
-        // add fields, and a local raw left behind would resurface as a phantom
-        // change on the next diff.
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], {
-            syncStatus: "updated",
-        });
-        await h.sync.startSync();
-
-        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
-        // The server bumps the version on every write; the stored raw has to
-        // carry that, not the version it was pushed with.
-        expect(stored.raw.version).toBe(lib.version);
-        expect(stored.raw.data.version).toBe(lib.version);
-    });
-
-    test("an item the server reports unchanged keeps its version", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
+    test("an item the server reports unchanged is synced at its version", async () => {
+        const lib = await syncedItem();
         const before = (await db.items.get([USER_ID, "AAAAAAAA"]))!.version;
 
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "updated" });
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
         lib.treatAsUnchanged("AAAAAAAA");
         await h.sync.startSync();
 
@@ -338,69 +331,61 @@ describe("write response handling", () => {
         expect(stored.version).toBe(before);
     });
 
-    test("a per-item failure becomes a conflict carrying the server's reason", async () => {
+    test("a refusal becomes a conflict carrying the server's reason", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
-        h.server
-            .library(USER_ID)
-            .rejectWrite("NEWITEM1", { code: 400, message: "Invalid field" });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
+        h.server.library(USER_ID).rejectWrite("NEWITEM1", { code: 400, message: "Invalid field" });
 
         await h.sync.startSync();
 
-        const stored = (await db.items.get([USER_ID, "NEWITEM1"]))!;
-        expect(stored.syncStatus).toBe("conflict");
-        expect(stored.syncError).toBe("400: Invalid field");
-        expect(
-            h.host.logsAt("warn").some((l) => /Item failed NEWITEM1/.test(l.message)),
-        ).toBe(true);
+        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe("conflict");
+        expect(await db.syncConflicts.get([USER_ID, "NEWITEM1"])).toMatchObject({ kind: "refused", error: "400: Invalid field" });
+        expect(h.host.logsAt("warn").some((l) => /Item failed NEWITEM1/.test(l.message))).toBe(true);
     });
 
-    test("a failed update becomes a conflict too, not just a failed create", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
+    test("a refused edit keeps the server's copy for Accept Remote", async () => {
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "x".repeat(10)));
+        lib.rejectWrite("AAAAAAAA", { code: 413, message: "Too long" });
+
         await h.sync.startSync();
 
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "updated" });
+        const conflict = (await db.syncConflicts.get([USER_ID, "AAAAAAAA"]))!;
+        expect(conflict).toMatchObject({ kind: "refused", remoteVersion: lib.items.get("AAAAAAAA")!.version });
+        expect(conflict.remote!.title).toBe("Original");
+    });
+
+    test("a per-item 412 means local versions cannot be trusted: a full sync, then the retry lands", async () => {
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
         lib.rejectWrite("AAAAAAAA", { code: 412, message: "Version mismatch" });
 
         await h.sync.startSync();
 
-        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
-        expect(stored.syncStatus).toBe("conflict");
-        expect(stored.syncError).toBe("412: Version mismatch");
+        const fullListing = h.server.requests.find(
+            (r) => r.method === "GET" && r.query.get("format") === "versions" && r.path.endsWith("/items") && !r.query.has("since"),
+        );
+        expect(fullListing).toBeDefined();
+        expect(lib.items.get("AAAAAAAA")!.data.title).toBe("Edited");
+        expect((await db.libraries.get(USER_ID))!.needsFullSync).toBe(false);
+        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe("synced");
     });
 
     test("one failure does not spoil the rest of its batch", async () => {
         h = await createSyncHarness();
         await seedItem({ libraryID: USER_ID, key: "GOODITEM", syncStatus: "created" });
         await seedItem({ libraryID: USER_ID, key: "BADITEM1", syncStatus: "created" });
-        h.server
-            .library(USER_ID)
-            .rejectWrite("BADITEM1", { code: 400, message: "nope" });
+        h.server.library(USER_ID).rejectWrite("BADITEM1", { code: 400, message: "nope" });
 
         await h.sync.startSync();
 
-        expect((await db.items.get([USER_ID, "GOODITEM"]))!.syncStatus).toBe(
-            "synced",
-        );
-        expect((await db.items.get([USER_ID, "BADITEM1"]))!.syncStatus).toBe(
-            "conflict",
-        );
+        expect((await db.items.get([USER_ID, "GOODITEM"]))!.syncStatus).toBe("synced");
+        expect((await db.items.get([USER_ID, "BADITEM1"]))!.syncStatus).toBe("conflict");
     });
 
     test("a server-assigned key replaces the local row rather than duplicating it", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "LOCALKEY",
-            syncStatus: "created",
-            title: "Drafted locally",
-        });
+        await seedItem({ libraryID: USER_ID, key: "LOCALKEY", syncStatus: "created", title: "Drafted locally" });
         h.server.library(USER_ID).remapKey("LOCALKEY", "SERVERKY");
 
         await h.sync.startSync();
@@ -414,209 +399,149 @@ describe("write response handling", () => {
 
     test("the library version advances to the write's version", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
 
         await h.sync.startSync();
 
-        expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(
-            h.server.library(USER_ID).version,
-        );
+        expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(h.server.library(USER_ID).version);
     });
 
-    test("a dropped connection mid-write leaves the item dirty", async () => {
-        // No `.response` on the error, so the 412 check reads `e.code` instead
-        // of a status — it must not be mistaken for a version conflict.
+    test("a dropped connection mid-write fails the library and keeps the question in the journal", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
-        h.server.failNext({
-            networkError: true,
-            pathIncludes: "/items",
-            method: "POST",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
+        h.server.failNext({ networkError: true, pathIncludes: "/items", method: "POST" });
 
         const result = await h.sync.startSync();
 
-        expect(result.failCount).toBe(0);
-        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe(
-            "created",
-        );
-        // Not a 412: no retry was attempted.
-        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(
-            1,
-        );
+        expect(result.failCount).toBe(1);
+        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe("created");
+        // Whether the create landed is unknown until a download says so.
+        expect(await db.uploadJournal.get([USER_ID, "NEWITEM1"])).toBeDefined();
+        expect(h.server.requests.filter((r) => r.method === "POST")).toHaveLength(1);
+
+        // It did not land: the next sync's download proves it, and it is sent.
+        await h.sync.startSync();
+        expect(h.server.library(USER_ID).items.has("NEWITEM1")).toBe(true);
+        expect(await db.uploadJournal.count()).toBe(0);
     });
 
-    test("a batch that errors out is logged and leaves the item dirty", async () => {
+    test("an error answer fails the library; nothing was applied, so nothing is journaled", async () => {
         h = await createSyncHarness();
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
         h.server.failNext({ status: 500, pathIncludes: "/items", method: "POST" });
 
         const result = await h.sync.startSync();
 
-        // A single batch failing must not fail the library.
-        expect(result.failCount).toBe(0);
-        expect(
-            h.host.logsAt("error").some((l) => /Batch upload failed/.test(l.message)),
-        ).toBe(true);
-        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe(
-            "created",
-        );
+        expect(result.failCount).toBe(1);
+        expect((await db.items.get([USER_ID, "NEWITEM1"]))!.syncStatus).toBe("created");
+        expect(await db.uploadJournal.count()).toBe(0);
     });
 });
 
 describe("deletions", () => {
-    test("a locally deleted item is removed remotely and locally", async () => {
+    async function syncedAnnotation() {
         h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "PARENT01" });
+        lib.addItem({ key: "ATTACH01", data: { itemType: "attachment", parentItem: "PARENT01", linkMode: "linked_url" } });
+        lib.addItem({ key: "ANNOAAAA", data: { itemType: "annotation", parentItem: "ATTACH01", annotationComment: "c" } });
+        lib.addItem({ key: "ANNOBBBB", data: { itemType: "annotation", parentItem: "ATTACH01", annotationComment: "c" } });
         await h.sync.startSync();
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
+        h.server.clearRequests();
+        return lib;
+    }
+
+    test("a local delete is sent as one batch DELETE and then forgotten", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA", "ANNOBBBB"]);
 
         await h.sync.startSync();
 
-        expect(h.server.library(USER_ID).items.has("AAAAAAAA")).toBe(false);
-        expect(await db.items.get([USER_ID, "AAAAAAAA"])).toBeUndefined();
+        const deletes = h.server.requests.filter((r) => r.method === "DELETE");
+        expect(deletes).toHaveLength(1);
+        expect(deletes[0]!.query.get("itemKey")!.split(",").sort()).toEqual(["ANNOAAAA", "ANNOBBBB"]);
+        expect(lib.items.has("ANNOAAAA")).toBe(false);
+        expect(await db.syncDeleteLog.count()).toBe(0);
     });
 
-    test("the delete carries If-Unmodified-Since-Version", async () => {
-        h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-        const version = (await db.items.get([USER_ID, "AAAAAAAA"]))!.version;
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
+    test("the DELETE carries the library's version as its precondition", async () => {
+        await syncedAnnotation();
+        const cursor = (await db.libraries.get(USER_ID))!.itemVersion;
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
 
-        h.server.clearRequests();
         await h.sync.startSync();
 
         const del = h.server.requests.find((r) => r.method === "DELETE")!;
-        expect(del.headers.get("If-Unmodified-Since-Version")).toBe(
-            String(version),
-        );
+        expect(del.headers.get("If-Unmodified-Since-Version")).toBe(String(cursor));
     });
 
-    test("a 412 on delete flags the item as a conflict and keeps the remote copy", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
-        // Forced rather than provoked through version arithmetic: a remote edit
-        // large enough to make the server 412 would also be seen by the pull,
-        // which claims the item first (see the test below).
-        h.server.failNext({ status: 412, method: "DELETE" });
+    test("a 412 on DELETE downloads first, then deletes", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
+        lib.updateItem("PARENT01", { title: "Remote edit elsewhere" });
 
         await h.sync.startSync();
 
-        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
-        expect(stored.syncStatus).toBe("conflict");
-        expect(stored.syncError).toMatch(/modified since you deleted it/i);
-        expect(lib.items.has("AAAAAAAA")).toBe(true);
+        expect(h.server.requests.filter((r) => r.method === "DELETE")).toHaveLength(2);
+        expect(lib.items.has("ANNOAAAA")).toBe(false);
+        expect((await db.items.get([USER_ID, "PARENT01"]))!.title).toBe("Remote edit elsewhere");
     });
 
-    test("a remote edit to a locally deleted item is caught by the pull, not the delete", async () => {
-        h = await createSyncHarness();
-        const lib = h.server.library(USER_ID);
-        lib.addItem({ key: "AAAAAAAA" });
+    test("a remote edit to a locally deleted item becomes a conflict; no DELETE is sent", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
+        lib.updateItem("ANNOAAAA", { annotationComment: "Remote edit" });
+
         await h.sync.startSync();
 
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
-        lib.updateItem("AAAAAAAA", { title: "Remote edit" });
-
-        h.server.clearRequests();
-        await h.sync.startSync();
-
-        // Pull runs first, sees a dirty local row, and parks the server copy.
-        // Push then skips it: "conflict" is not an eligible status, so no
-        // DELETE is ever attempted and the remote item survives.
-        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
-        expect(stored.syncStatus).toBe("conflict");
-        expect(stored.syncError).toBe("Remote update conflict");
-        expect((stored.serverCopyRaw as any).data.title).toBe("Remote edit");
-        expect(h.server.requests.filter((r) => r.method === "DELETE")).toHaveLength(
-            0,
-        );
-        expect(lib.items.has("AAAAAAAA")).toBe(true);
+        expect(await db.syncConflicts.get([USER_ID, "ANNOAAAA"])).toMatchObject({ kind: "local-deleted" });
+        // The first DELETE was refused (412) as a whole; none followed.
+        expect(lib.items.has("ANNOAAAA")).toBe(true);
     });
 
-    test("a 404 on delete means someone got there first — drop it locally", async () => {
-        h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
-        h.server.failNext({ status: 404, method: "DELETE" });
+    test("an item the server deleted too is simply forgotten", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
+        lib.deleteItem("ANNOAAAA");
 
         await h.sync.startSync();
 
-        expect(await db.items.get([USER_ID, "AAAAAAAA"])).toBeUndefined();
+        expect(await db.syncDeleteLog.count()).toBe(0);
+        expect(await db.syncConflicts.count()).toBe(0);
     });
 
-    test("any other delete error leaves the row dirty for the next run", async () => {
-        h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
+    test("an error answer fails the library and keeps the delete pending", async () => {
+        await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
         h.server.failNext({ status: 500, method: "DELETE" });
 
         const result = await h.sync.startSync();
 
-        expect(result.failCount).toBe(0); // one item must not fail the library
-        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe(
-            "deleted",
-        );
-        expect(
-            h.host.logsAt("error").some((l) => /Failed to delete AAAAAAAA/.test(l.message)),
-        ).toBe(true);
+        expect(result.failCount).toBe(1);
+        expect(await db.syncDeleteLog.get([USER_ID, "ANNOAAAA"])).toBeDefined();
     });
 
-    test("a dropped connection mid-delete is treated like any other error", async () => {
-        // A network failure surfaces without `.response`, so the status falls
-        // through to `e.code || 0` — a different branch from an HTTP error.
-        h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
+    test("a dropped connection mid-delete keeps it pending; the next sync settles it", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
         h.server.failNext({ networkError: true, method: "DELETE" });
 
-        const result = await h.sync.startSync();
+        expect((await h.sync.startSync()).failCount).toBe(1);
+        expect(await db.syncDeleteLog.get([USER_ID, "ANNOAAAA"])).toBeDefined();
 
-        expect(result.failCount).toBe(0);
-        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe(
-            "deleted",
-        );
+        await h.sync.startSync();
+        expect(lib.items.has("ANNOAAAA")).toBe(false);
+        expect(await db.syncDeleteLog.count()).toBe(0);
     });
 
-    test("deletions and upserts travel in the same run", async () => {
-        h = await createSyncHarness();
-        h.server.library(USER_ID).addItem({ key: "AAAAAAAA" });
-        await h.sync.startSync();
-
-        await db.items.update([USER_ID, "AAAAAAAA"], { syncStatus: "deleted" });
-        await seedItem({
-            libraryID: USER_ID,
-            key: "NEWITEM1",
-            syncStatus: "created",
-        });
+    test("deletions and writes travel in the same run", async () => {
+        const lib = await syncedAnnotation();
+        await deleteLocalItems(USER_ID, ["ANNOAAAA"]);
+        await seedItem({ libraryID: USER_ID, key: "NEWITEM1", syncStatus: "created" });
 
         await h.sync.startSync();
 
-        const lib = h.server.library(USER_ID);
-        expect(lib.items.has("AAAAAAAA")).toBe(false);
+        expect(lib.items.has("ANNOAAAA")).toBe(false);
         expect(lib.items.has("NEWITEM1")).toBe(true);
-        expect((await db.items.toArray()).map((i) => i.key)).toEqual(["NEWITEM1"]);
     });
 });

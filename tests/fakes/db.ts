@@ -81,7 +81,7 @@ export async function seedItem(
         searchCreators: [],
         searchTags: [],
         syncStatus: "synced",
-        syncError: "",
+        synced: 1,
         syncedAt: ISO,
         raw: {
             key,
@@ -101,7 +101,28 @@ export async function seedItem(
         },
         ...overrides,
     } as unknown as AnyIDBZoteroItem;
+    // `synced` follows a `syncStatus` override (the column v7 derives from
+    // it), unless the test sets it itself.
+    if (overrides.synced === undefined) {
+        item.synced = ["created", "updated", "conflict"].includes(item.syncStatus) ? 0 : 1;
+    }
+    if (item.syncStatus === "ignore") item.localOnly = true;
+    if (item.syncStatus === "created" && overrides.version === undefined) item.version = 0;
     await db.items.put(item);
+    // v7 keeps a conflict's facts in its own table: a row seeded in
+    // conflict gets a plain both-sides-changed record (tests that need
+    // another kind overwrite it).
+    if (item.syncStatus === "conflict") {
+        await db.syncConflicts.put({
+            libraryID,
+            key,
+            kind: "changed",
+            remote: { ...(item.raw?.data as unknown as Record<string, unknown>), title: `Remote ${key}` },
+            remoteVersion: (item.version ?? 1) + 1,
+            fields: ["title"],
+            createdAt: ISO,
+        });
+    }
     return item;
 }
 

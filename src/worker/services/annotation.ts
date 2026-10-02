@@ -1,10 +1,10 @@
 import { db, getCombinations } from "db/db";
 import { annotationItemFromJSON, getAnnotationJson } from "db/annotation";
 import {
-    applyLocalDelete,
-    applyLocalEdit,
-    isNeverPushed,
+    createLocalItems,
+    deleteLocalItems,
     mutateItem,
+    mutateItems,
     newLocalItem,
 } from "db/mutate";
 import { toZoteroDate } from "db/normalize";
@@ -51,11 +51,7 @@ export class AnnotationService {
         attachmentItem: IDBZoteroItem<AttachmentData>,
         apiKey: string,
     ): Promise<AnnotationJSON[]> {
-        return getAnnotationJson(
-            attachmentItem,
-            apiKey,
-            (item) => item.syncStatus !== "deleted",
-        );
+        return getAnnotationJson(attachmentItem, apiKey);
     }
 
     /**
@@ -74,11 +70,7 @@ export class AnnotationService {
 
         const results: AnnotationJSON[] = [];
         for (const child of children) {
-            const annots = await getAnnotationJson(
-                child,
-                apiKey,
-                (item) => item.syncStatus !== "deleted",
-            );
+            const annots = await getAnnotationJson(child, apiKey);
             results.push(...annots);
         }
         return results;
@@ -105,9 +97,10 @@ export class AnnotationService {
         const attachmentKey = attachmentItem.key;
 
         let hasChanges = false;
-        const itemsToPut: IDBZoteroItem<AnnotationData>[] = [];
+        const itemsToCreate: IDBZoteroItem<AnnotationData>[] = [];
+        const edits: { key: string; data: Partial<AnnotationData> }[] = [];
 
-        // Fetch existing non-deleted, non-ignored annotations
+        // Fetch existing synced (non-local-only) annotations
         const existingItems = (
             await db.items
                 .where({
@@ -116,9 +109,7 @@ export class AnnotationService {
                     itemType: "annotation",
                 })
                 .toArray()
-        ).filter(
-            (i) => i.syncStatus !== "deleted" && i.syncStatus !== "ignore",
-        ) as IDBZoteroItem<AnnotationData>[];
+        ).filter((i) => !i.localOnly) as IDBZoteroItem<AnnotationData>[];
 
         const existingMap = new Map(existingItems.map((i) => [i.key, i]));
 
@@ -162,11 +153,7 @@ export class AnnotationService {
                         )
                     ) {
                         hasChanges = true;
-                        itemsToPut.push(
-                            applyLocalEdit(existing, (data) => {
-                                Object.assign(data, annotationData);
-                            }),
-                        );
+                        edits.push({ key, data: annotationData });
                     }
                 }
             } else {
@@ -208,15 +195,39 @@ export class AnnotationService {
                     };
                 }
 
-                itemsToPut.push(newItem);
+                itemsToCreate.push(newItem);
             }
         }
 
-        // Batch write
-        if (itemsToPut.length > 0) {
-            await db.transaction("rw", db.items, async () => {
-                await db.items.bulkPut(itemsToPut);
-            });
+        // Batch write: edits re-read each row in the write transaction.
+        await createLocalItems(
+            libraryID,
+            itemsToCreate,
+        );
+        const written = await mutateItems(
+            libraryID,
+            edits.map(({ key, data }) => ({
+                key,
+                itemType: "annotation",
+                edit: (d) => {
+                    Object.assign(d, data);
+                },
+            })),
+        );
+        written.forEach((row, i) => {
+            if (!row) {
+                this.parentHost.log(
+                    "warn",
+                    `Annotation ${edits[i]!.key} was deleted in Zotero; the edit was not saved`,
+                    "AnnotationService",
+                );
+            }
+        });
+        if (written.some((row) => !row)) {
+            this.parentHost.notify(
+                "warning",
+                "An annotation you edited was deleted in Zotero meanwhile.",
+            );
         }
 
         // Trigger source-note update (debounced, fire & forget)
@@ -251,8 +262,9 @@ export class AnnotationService {
     }
 
     /**
-     * Delete annotations from IDB (soft-delete for synced, hard-delete for
-     * locally-created ones). Triggers source-note update afterwards.
+     * Delete annotations: the rows go at once, and those Zotero has are
+     * queued for a DELETE (see `deleteLocalItems`). Triggers a source-note
+     * update afterwards.
      *
      * This method replaces `ZoteroReaderView.handleAnnotationsDeleted`.
      */
@@ -270,9 +282,6 @@ export class AnnotationService {
             `Handling deleted annotations: ${ids.join(", ")}`,
             "AnnotationService",
         );
-
-        const itemsToDeletePhysical: [number, string][] = [];
-        const itemsToDeleteSoft: IDBZoteroItem<AnnotationData>[] = [];
 
         const items = (await db.items
             .where(["libraryID", "key"])
@@ -307,25 +316,12 @@ export class AnnotationService {
             if (!foundKeys.has(id)) void deleteImage(id);
         }
 
-        for (const existing of items) {
-            if (isNeverPushed(existing)) {
-                itemsToDeletePhysical.push([libraryID, existing.key]);
-            } else {
-                itemsToDeleteSoft.push(applyLocalDelete(existing));
-            }
-        }
-
-        // Batch write
-        if (itemsToDeletePhysical.length > 0 || itemsToDeleteSoft.length > 0) {
-            await db.transaction("rw", db.items, async () => {
-                if (itemsToDeletePhysical.length > 0) {
-                    await db.items.bulkDelete(itemsToDeletePhysical);
-                }
-                if (itemsToDeleteSoft.length > 0) {
-                    await db.items.bulkPut(itemsToDeleteSoft);
-                }
-            });
-        }
+        // Annotations are hard-deleted: the row goes now, the delete log
+        // carries the DELETE to Zotero.
+        await deleteLocalItems(
+            libraryID,
+            items.map((i) => i.key),
+        );
 
         // Trigger source-note update
         this.noteService
@@ -390,23 +386,30 @@ export class AnnotationService {
 
         const newComment = this.convertService.annoMd2html(markdownComment);
 
-        // Deleted in the reader but still shown in a source note that has not
-        // re-rendered yet — the edit has nothing left to apply to.
-        if (annotation.syncStatus === "deleted") {
-            this.parentHost.log(
-                "debug",
-                `updateAnnotationComment: skipping deleted annotation ${annotationKey}`,
-                "AnnotationService",
-            );
-            return;
-        }
-
         // Skip write if comment hasn't changed
         if (annotation.raw.data.annotationComment === newComment) return;
 
-        await mutateItem(libraryID, annotationKey, "annotation", (data) => {
-            data.annotationComment = newComment;
-        });
+        const updated = await mutateItem(
+            libraryID,
+            annotationKey,
+            "annotation",
+            (data) => {
+                data.annotationComment = newComment;
+            },
+        );
+        if (!updated) {
+            // Deleted (here or in Zotero) while the comment was being edited.
+            this.parentHost.log(
+                "warn",
+                `updateAnnotationComment: annotation ${annotationKey} was deleted during the edit`,
+                "AnnotationService",
+            );
+            this.parentHost.notify(
+                "warning",
+                "This annotation was deleted in Zotero; the comment was not saved.",
+            );
+            return;
+        }
 
         this.parentHost.log(
             "debug",

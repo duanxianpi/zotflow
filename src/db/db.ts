@@ -1,6 +1,7 @@
 import Dexie from "dexie";
 
 import { itemTitle } from "db/normalize";
+import { planV7Migration } from "db/sync/migrate-v7";
 import { BASE_FIELD_MAP } from "types/zotero-base-fields";
 
 import type { IndexableTypePart, Table } from "dexie";
@@ -12,7 +13,14 @@ import type {
     IDBZoteroKey,
     IDBZoteroGroup,
     IDBCslCacheEntry,
+    IDBSyncCache,
+    IDBSyncConflict,
+    IDBSyncDeleteLog,
+    IDBSyncGroup,
+    IDBSyncQueueEntry,
+    IDBUploadJournal,
 } from "types/db-schema";
+import type { V6Row } from "db/sync/migrate-v7";
 
 /** Dexie subclass defining the IndexedDB schema for ZotFlow. */
 export class ZotFlowDB extends Dexie {
@@ -23,6 +31,12 @@ export class ZotFlowDB extends Dexie {
     libraries!: Table<IDBZoteroLibrary, number>;
     files!: Table<IDBZoteroFile, [number, string]>;
     cslCache!: Table<IDBCslCacheEntry, string>;
+    syncCache!: Table<IDBSyncCache, [number, string]>;
+    syncDeleteLog!: Table<IDBSyncDeleteLog, [number, string]>;
+    syncConflicts!: Table<IDBSyncConflict, [number, string]>;
+    syncGroups!: Table<IDBSyncGroup, [number, string]>;
+    syncQueue!: Table<IDBSyncQueueEntry, [number, string]>;
+    uploadJournal!: Table<IDBUploadJournal, [number, string]>;
 
     constructor() {
         super("zotflow-dev");
@@ -116,6 +130,34 @@ export class ZotFlowDB extends Dexie {
                     if (item.raw?.data) item.title = itemTitle(item.raw.data);
                 });
         });
+
+        // v7: the sync model of docs/sync-architecture.md. Each sync fact
+        // gets its own place: `synced` on the row, the merge base in
+        // `syncCache`, pending deletes in `syncDeleteLog`, conflicts (and
+        // remote-deletion groups) in their tables, retries in `syncQueue`,
+        // writes of unknown outcome in `uploadJournal`. `syncStatus` stays,
+        // derived. See src/db/sync/migrate-v7.ts for the mapping.
+        this.version(7)
+            .stores({
+                syncCache: "&[libraryID+key]",
+                syncDeleteLog: "&[libraryID+key]",
+                syncConflicts: "&[libraryID+key], [libraryID+group]",
+                syncGroups: "&[libraryID+id]",
+                syncQueue: "&[libraryID+key], [libraryID+lastCheck]",
+                uploadJournal: "&[libraryID+key]",
+            })
+            .upgrade(async (tx) => {
+                const items = tx.table<V6Row, [number, string]>("items");
+                const plan = planV7Migration(
+                    await items.toArray(),
+                    new Date().toISOString(),
+                );
+                await items.bulkDelete(plan.removed);
+                await items.bulkPut(plan.rows);
+                await tx.table("syncDeleteLog").bulkPut(plan.deleteLog);
+                await tx.table("syncConflicts").bulkPut(plan.conflicts);
+                await tx.table("syncGroups").bulkPut(plan.groups);
+            });
     }
 }
 

@@ -26,6 +26,12 @@ describe("resetDb", () => {
             "items",
             "keys",
             "libraries",
+            "syncCache",
+            "syncConflicts",
+            "syncDeleteLog",
+            "syncGroups",
+            "syncQueue",
+            "uploadJournal",
         ]);
     });
 

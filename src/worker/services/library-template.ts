@@ -864,11 +864,7 @@ export class LibraryTemplateService {
         );
 
         const annotations = (
-            await getAnnotationJson(
-                item,
-                this.settings.zoteroapikey,
-                (item) => item.syncStatus !== "deleted",
-            )
+            await getAnnotationJson(item, this.settings.zoteroapikey)
         ).map((a) => this.mapToAnnotationContext(a, item.key));
 
         const attachmentAnnotations = attachments.flatMap(
@@ -1011,11 +1007,7 @@ export class LibraryTemplateService {
         item: IDBZoteroItem<AttachmentData>,
     ): Promise<AttachmentTemplateContext> {
         const annotations = (
-            await getAnnotationJson(
-                item,
-                this.settings.zoteroapikey,
-                (item) => item.syncStatus !== "deleted",
-            )
+            await getAnnotationJson(item, this.settings.zoteroapikey)
         ).map((a) => this.mapToAnnotationContext(a, item.key));
 
         const data = item.raw.data || {};

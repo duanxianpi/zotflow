@@ -64,6 +64,7 @@ const UNIVERSES: Universe[] = [
             },
         ],
         focus: ["PARENT01", "ANNOAAAA"],
+        newAnnotations: true,
     },
     {
         name: "two items",
@@ -129,7 +130,11 @@ async function explore(universe: Universe) {
     const w = new World(universe);
     await w.init();
     const found = new Map<string, Found>();
-    const seen = new Set<string>();
+    // State → the most depth left it was explored with. A state reached
+    // again with more depth left is explored again: a shortcut can reach a
+    // state a longer path already reached at the bound, and what lies past
+    // it must still be covered.
+    const seen = new Map<string, number>();
     let transitions = 0;
 
     const record = (e: unknown, path: string[]) => {
@@ -161,22 +166,22 @@ async function explore(universe: Universe) {
             transitions++;
             try {
                 await action.run();
-                await w.checkStep(action.kind);
+                await w.checkStep(action.kind, action.label);
             } catch (e) {
                 record(e, [...path, label]);
                 continue;
             }
             const child = await w.capture();
             const id = w.hash(child);
-            if (seen.has(id)) continue;
-            seen.add(id);
+            if ((seen.get(id) ?? -1) >= depth - 1) continue;
+            seen.set(id, depth - 1);
             await visit(child, [...path, label], depth - 1);
         }
     };
 
     try {
         const root = await w.capture();
-        seen.add(w.hash(root));
+        seen.set(w.hash(root), DEPTH);
         await visit(root, [], DEPTH);
     } finally {
         w.dispose();

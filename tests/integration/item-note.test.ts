@@ -487,13 +487,30 @@ describe("updating note content", () => {
         ).toContain("obsidian://zotflow");
     });
 
-    test("a missing item is a no-op with a warning", async () => {
-        await service.updateNoteContent(LIB, "MISSING1", "content");
+    test("a missing note is reported gone, with a warning, and nothing is written", async () => {
+        // Deleted in Zotero and removed by a sync while the user typed: the
+        // caller keeps the text and offers to save it as a new note.
+        const result = await service.updateNoteContent(LIB, "MISSING1", "content", "editor", "PARENT01");
 
+        expect(result).toEqual({ status: "gone", parentKey: "PARENT01", parentExists: false });
         expect(await db.items.count()).toBe(0);
-        expect(
-            host.logsAt("warn").some((l) => /not found or not a note/.test(l.message)),
-        ).toBe(true);
+        expect(host.logsAt("warn").some((l) => /is gone/.test(l.message))).toBe(true);
+    });
+
+    test("the text of a gone note can be saved as a new note under its parent", async () => {
+        await seedItem({ libraryID: LIB, key: "PARENT01" });
+
+        const key = await service.saveAsNewNote(LIB, "PARENT01", "kept text");
+
+        const row = (await db.items.get([LIB, key]))!;
+        expect(row).toMatchObject({ itemType: "note", parentItem: "PARENT01", syncStatus: "created" });
+        expect((row.raw.data as any).note).toContain("kept text");
+    });
+
+    test("with its parent gone too, the text becomes a standalone note", async () => {
+        const key = await service.saveAsNewNote(LIB, "PARENT01", "kept text");
+
+        expect((await db.items.get([LIB, key]))!.parentItem).toBe("");
     });
 
     test("a non-note item is never rewritten", async () => {
@@ -579,7 +596,7 @@ describe("update notifications and source-note refresh", () => {
 
         await expect(
             service.updateNoteContent(LIB, "NOTEKEY1", "edited", "note-view"),
-        ).resolves.toBeUndefined();
+        ).resolves.toEqual({ status: "saved" });
         await logged;
 
         expect((await db.items.get([LIB, "NOTEKEY1"]))!.title).toBe("edited");

@@ -1,5 +1,10 @@
 import { db } from "db/db";
-import { isNeverPushed, mutateItem, newLocalItem } from "db/mutate";
+import {
+    createLocalItems,
+    deleteLocalItems,
+    mutateItem,
+    newLocalItem,
+} from "db/mutate";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import {
     zotflowToZoteroLinks,
@@ -13,6 +18,15 @@ import type { IParentProxy } from "bridge/types";
 import type { ConvertService } from "./convert";
 import type { LibraryNoteService } from "./library-note";
 import type { ZotFlowSettings } from "settings/types";
+
+/**
+ * What happened to a note edit. `gone`: the note no longer exists (deleted in
+ * Zotero and removed by a sync, or deleted elsewhere) — the caller must keep
+ * the user's text and offer to save it as a new note (`saveAsNewNote`).
+ */
+export type NoteSaveResult =
+    | { status: "saved" }
+    | { status: "gone"; parentKey: string; parentExists: boolean };
 
 /**
  * CRUD service for Zotero **child note items** (the note items attached to
@@ -108,37 +122,12 @@ export class ItemNoteService {
             );
         }
 
-        const key = this.generateTempKey();
-        const now = new Date().toISOString().split(".")[0] + "Z";
-        const library = parentItem.raw.library;
-
-        const newItem: IDBZoteroItem<NoteData> = newLocalItem(
-            {
-                key,
-                version: 0,
-                library,
-                links: {},
-                meta: { numChildren: 0 },
-                data: {
-                    key,
-                    itemType: "note",
-                    parentItem: parentKey,
-                    note: "",
-                    relations: {},
-                    dateAdded: now,
-                    dateModified: now,
-                    tags: [],
-                    deleted: false,
-                    version: 0,
-                } as unknown as NoteData,
-            },
+        const key = await this.createNote(
             libraryID,
-            "push",
+            parentKey,
+            "",
+            parentItem.raw.library,
         );
-
-        await db.transaction("rw", db.items, async () => {
-            await db.items.put(newItem);
-        });
 
         this.parentHost.log(
             "info",
@@ -157,6 +146,111 @@ export class ItemNoteService {
         return key;
     }
 
+    /** Stores a new note (`parentKey` "" for a standalone note) and returns its key. */
+    private async createNote(
+        libraryID: number,
+        parentKey: string,
+        html: string,
+        library: IDBZoteroItem<NoteData>["raw"]["library"],
+    ): Promise<string> {
+        const key = this.generateTempKey();
+        const now = new Date().toISOString().split(".")[0] + "Z";
+        const newItem: IDBZoteroItem<NoteData> = newLocalItem(
+            {
+                key,
+                version: 0,
+                library,
+                links: {},
+                meta: { numChildren: 0 },
+                data: {
+                    key,
+                    itemType: "note",
+                    ...(parentKey ? { parentItem: parentKey } : {}),
+                    note: html,
+                    relations: {},
+                    dateAdded: now,
+                    dateModified: now,
+                    tags: [],
+                    deleted: false,
+                    version: 0,
+                } as unknown as NoteData,
+            },
+            libraryID,
+            "push",
+        );
+        await createLocalItems(libraryID, [
+            newItem,
+        ]);
+        return key;
+    }
+
+    /** Markdown from the editor → the note HTML stored in Zotero. */
+    private async noteHtml(content: string): Promise<string> {
+        const vaultConfig = await this.parentHost.getVaultConfig();
+        let html = await this.convertService.md2html(content, {
+            strictLineBreaks: vaultConfig.strictLineBreaks,
+        });
+        // Canonical storage keeps native zotero:// links so the note
+        // navigates with Zotero's reader after sync.
+        if (this.settings.convertNoteLinks) {
+            html = await zotflowToZoteroLinks(html, createDbNoteLinkResolver());
+        }
+        return html;
+    }
+
+    /**
+     * Saves text whose note is gone (see `NoteSaveResult`) as a new note:
+     * under `parentKey` if that item still exists, otherwise standalone.
+     *
+     * @returns the new note's key.
+     */
+    async saveAsNewNote(
+        libraryID: number,
+        parentKey: string,
+        content: string,
+    ): Promise<string> {
+        const parent = parentKey
+            ? await db.items.get([libraryID, parentKey])
+            : undefined;
+        const usable =
+            parent &&
+            !["attachment", "note", "annotation"].includes(parent.itemType);
+        const library =
+            parent?.raw.library ??
+            (await this.anyLibraryStub(libraryID));
+        const key = await this.createNote(
+            libraryID,
+            usable ? parentKey : "",
+            await this.noteHtml(content),
+            library,
+        );
+        this.parentHost.log(
+            "info",
+            `Saved the text of a deleted note as ${key}`,
+            "ItemNoteService",
+        );
+        this.parentHost.emit(
+            "noteChangedByNoteView",
+            libraryID,
+            key,
+            usable ? parentKey : "",
+        );
+        return key;
+    }
+
+    /** The `library` block of an item payload, for a note with no parent to copy it from. */
+    private async anyLibraryStub(
+        libraryID: number,
+    ): Promise<IDBZoteroItem<NoteData>["raw"]["library"]> {
+        const lib = await db.libraries.get(libraryID);
+        return {
+            type: lib?.type ?? "user",
+            id: libraryID,
+            name: lib?.name ?? "",
+            links: {},
+        };
+    }
+
     /**
      * Update the content of a Zotero child note item in IDB.
      * Marks the item dirty (see `applyLocalEdit`) so the next sync pushes it to Zotero.
@@ -171,32 +265,20 @@ export class ItemNoteService {
         noteKey: string,
         content: string,
         origin: "editor" | "note-view" = "note-view",
-    ): Promise<void> {
+        parentKeyHint = "",
+    ): Promise<NoteSaveResult> {
         const item = await db.items.get([libraryID, noteKey]);
 
         if (!item || item.itemType !== "note") {
             this.parentHost.log(
                 "warn",
-                `updateNoteContent: item ${noteKey} not found or not a note`,
+                `updateNoteContent: note ${noteKey} is gone; the text was not saved to it`,
                 "ItemNoteService",
             );
-            return;
+            return this.gone(libraryID, parentKeyHint);
         }
 
-        const vaultConfig = await this.parentHost.getVaultConfig();
-
-        let noteHtmlContent = await this.convertService.md2html(content, {
-            strictLineBreaks: vaultConfig.strictLineBreaks,
-        });
-
-        // Canonical storage keeps native zotero:// links so the note
-        // navigates with Zotero's reader after sync.
-        if (this.settings.convertNoteLinks) {
-            noteHtmlContent = await zotflowToZoteroLinks(
-                noteHtmlContent,
-                createDbNoteLinkResolver(),
-            );
-        }
+        const noteHtmlContent = await this.noteHtml(content);
 
         // The conversion above is async, so the row is re-read inside the
         // write transaction rather than written back from `item`.
@@ -209,7 +291,7 @@ export class ItemNoteService {
                 `updateNoteContent: note ${noteKey} disappeared during the edit`,
                 "ItemNoteService",
             );
-            return;
+            return this.gone(libraryID, item.parentItem);
         }
 
         this.parentHost.log(
@@ -256,6 +338,16 @@ export class ItemNoteService {
                     ),
                 );
         }
+        return { status: "saved" };
+    }
+
+    private async gone(
+        libraryID: number,
+        parentKey: string,
+    ): Promise<NoteSaveResult> {
+        const parentExists =
+            !!parentKey && !!(await db.items.get([libraryID, parentKey]));
+        return { status: "gone", parentKey, parentExists };
     }
 
     /** Generate a temporary 8-character alphanumeric key for locally-created items. */
@@ -278,18 +370,13 @@ export class ItemNoteService {
         const item = await db.items.get([libraryID, noteKey]);
         if (!item || item.itemType !== "note") return;
 
-        if (isNeverPushed(item)) {
-            await db.items.delete([libraryID, noteKey]);
-        } else {
-            // Moves the note to Zotero's trash; `trashed` follows `deleted`.
-            await mutateItem(libraryID, noteKey, "note", (data) => {
-                data.deleted = true;
-            });
-        }
+        // Moves the note to Zotero's trash (`trashed` follows `deleted`); a
+        // note Zotero never received is simply removed.
+        const { removed } = await deleteLocalItems(libraryID, [noteKey]);
 
         this.parentHost.log(
             "info",
-            `Deleted note ${noteKey} (${isNeverPushed(item) ? "hard" : "soft"})`,
+            `Deleted note ${noteKey} (${removed.length > 0 ? "hard" : "soft"})`,
             "ItemNoteService",
         );
     }

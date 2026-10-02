@@ -63,6 +63,49 @@ export default defineConfig(
         },
     },
     {
+        // Sync state is written in one place (docs/sync-architecture.md §6):
+        // decisions are pure functions in src/db/sync/decide.ts, written by
+        // src/db/sync/commit.ts; local edits go through src/db/mutate.ts.
+        // A sync field written anywhere else is a transition nobody reviewed
+        // against the rest. Only worker code can write the DB (AGENTS.md §9).
+        files: ["src/worker/**/*.ts", "src/db/**/*.ts"],
+        ignores: [
+            "src/db/sync/**",
+            "src/db/mutate.ts",
+            "src/db/normalize.ts",
+            "src/db/db.ts",
+        ],
+        rules: {
+            "no-restricted-syntax": [
+                "error",
+                {
+                    selector:
+                        "CallExpression[callee.property.name=/^(put|add|update|bulkPut|bulkAdd|modify)$/] ObjectExpression > Property[key.name=/^(syncStatus|synced|localRevision|localOnly)$/]",
+                    message:
+                        "Write sync state only through db/sync (decide + commit) or db/mutate.",
+                },
+                {
+                    selector:
+                        "AssignmentExpression > MemberExpression.left[property.name=/^(syncStatus|synced|localRevision|localOnly)$/]",
+                    message:
+                        "Write sync state only through db/sync (decide + commit) or db/mutate.",
+                },
+                {
+                    selector:
+                        "CallExpression[callee.object.property.name='items'][callee.property.name=/^(update|modify)$/] Property[key.name='version']",
+                    message:
+                        "An item's version is sync state: write it through db/sync (decide + commit).",
+                },
+                {
+                    selector:
+                        "CallExpression[callee.object.property.name=/^(syncCache|syncDeleteLog|syncConflicts|syncGroups|syncQueue|uploadJournal)$/][callee.property.name=/^(put|add|update|delete|bulkPut|bulkAdd|bulkDelete|clear|modify)$/]",
+                    message:
+                        "The sync tables are written only by db/sync/commit.ts.",
+                },
+            ],
+        },
+    },
+    {
         // TypeScript resolves identifiers itself, and does it with the ambient
         // declarations in `src/types` in scope. `no-undef` has neither, so on
         // `.d.ts` and `.tsx` it reports things like `Scope` and the `react-jsx`

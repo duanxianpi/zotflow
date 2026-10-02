@@ -4,6 +4,7 @@
  * item or collection along with its descendants.
  */
 import { describe, test, expect, afterEach } from "vitest";
+import { deleteLocalItems, mutateItem } from "db/mutate";
 import { db, seedItem, seedCollection } from "../fakes/db";
 import { createSyncHarness, USER_ID } from "../fakes/sync-harness";
 
@@ -11,9 +12,6 @@ import type { SyncHarness } from "../fakes/sync-harness";
 
 let h: SyncHarness;
 afterEach(() => h?.dispose());
-
-/** Dirty statuses that must block a remote overwrite. */
-const DIRTY_STATUSES = ["created", "updated", "deleted", "conflict"] as const;
 
 describe("item pull", () => {
     test("first sync stores every item and records the library version", async () => {
@@ -123,28 +121,84 @@ describe("item pull", () => {
 });
 
 describe("item pull conflicts", () => {
-    for (const status of DIRTY_STATUSES) {
-        test(`a local "${status}" item hit by a remote edit becomes a conflict`, async () => {
-            h = await createSyncHarness();
-            const lib = h.server.library(USER_ID);
-            lib.addItem({ key: "AAAAAAAA", data: { title: "Original" } });
-            await h.sync.startSync();
+    test("a local edit and a remote edit of the same field become a conflict", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "AAAAAAAA", data: { title: "Original" } });
+        await h.sync.startSync();
 
-            await db.items.update([USER_ID, "AAAAAAAA"], {
-                syncStatus: status,
-                title: "My local title",
-            });
-            lib.updateItem("AAAAAAAA", { title: "Remote title" });
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "My local title"));
+        lib.updateItem("AAAAAAAA", { title: "Remote title" });
 
-            await h.sync.startSync();
+        await h.sync.startSync();
 
-            const stored = await db.items.get([USER_ID, "AAAAAAAA"]);
-            expect(stored!.syncStatus).toBe("conflict");
-            // Local edits survive; the server copy is parked for later review.
-            expect(stored!.title).toBe("My local title");
-            expect((stored!.serverCopyRaw as any).data.title).toBe("Remote title");
-        });
-    }
+        const stored = await db.items.get([USER_ID, "AAAAAAAA"]);
+        expect(stored!.syncStatus).toBe("conflict");
+        // Local edits survive; the server copy waits on the conflict.
+        expect(stored!.title).toBe("My local title");
+        const conflict = (await db.syncConflicts.get([USER_ID, "AAAAAAAA"]))!;
+        expect(conflict).toMatchObject({ kind: "changed", fields: ["title"], remoteVersion: lib.items.get("AAAAAAAA")!.version });
+        expect(conflict.remote!.title).toBe("Remote title");
+        // Nothing was uploaded over the remote change.
+        expect(lib.items.get("AAAAAAAA")!.data.title).toBe("Remote title");
+    });
+
+    test("edits of different fields merge, and the merge is uploaded as a patch", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "AAAAAAAA", data: { title: "Original", extra: "" } });
+        await h.sync.startSync();
+
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.extra = "local extra"));
+        lib.updateItem("AAAAAAAA", { title: "Remote title" });
+        h.server.clearRequests();
+
+        await h.sync.startSync();
+
+        const stored = (await db.items.get([USER_ID, "AAAAAAAA"]))!;
+        expect(stored.syncStatus).toBe("synced");
+        expect(stored.raw.data).toMatchObject({ title: "Remote title", extra: "local extra" });
+        expect(lib.items.get("AAAAAAAA")!.data).toMatchObject({ title: "Remote title", extra: "local extra" });
+        const posts = h.server.requests.filter((r) => r.method === "POST");
+        const last = (posts.at(-1)!.body as Record<string, unknown>[])[0]!;
+        expect(last).toHaveProperty("extra", "local extra");
+        expect(last).not.toHaveProperty("title");
+    });
+
+    test("a local delete meeting a remote edit becomes a conflict", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "PARENT01" });
+        lib.addItem({ key: "ATTACH01", data: { itemType: "attachment", parentItem: "PARENT01", linkMode: "linked_url" } });
+        lib.addItem({ key: "ANNOTAT1", data: { itemType: "annotation", parentItem: "ATTACH01", annotationComment: "c" } });
+        await h.sync.startSync();
+
+        await deleteLocalItems(USER_ID, ["ANNOTAT1"]);
+        lib.updateItem("ANNOTAT1", { annotationComment: "remote" });
+        await h.sync.startSync();
+
+        expect(await db.items.get([USER_ID, "ANNOTAT1"])).toBeUndefined();
+        expect(await db.syncConflicts.get([USER_ID, "ANNOTAT1"])).toMatchObject({ kind: "local-deleted" });
+        // The DELETE waits for the user.
+        expect(lib.items.has("ANNOTAT1")).toBe(true);
+    });
+
+    test("a newer remote version refreshes a conflict, which stays a conflict", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "AAAAAAAA", data: { title: "Original" } });
+        await h.sync.startSync();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Local"));
+        lib.updateItem("AAAAAAAA", { title: "Remote 1" });
+        await h.sync.startSync();
+
+        lib.updateItem("AAAAAAAA", { title: "Remote 2" });
+        await h.sync.startSync();
+
+        const conflict = (await db.syncConflicts.get([USER_ID, "AAAAAAAA"]))!;
+        expect(conflict.remote!.title).toBe("Remote 2");
+        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.title).toBe("Local");
+    });
 
     test("a remote edit to a clean local item overwrites it in place", async () => {
         // The ordinary case, and the one the conflict rules are the exception
@@ -161,7 +215,7 @@ describe("item pull conflicts", () => {
         expect(stored.syncStatus).toBe("synced");
         expect(stored.title).toBe("Remote title");
         expect(stored.version).toBe(lib.items.get("AAAAAAAA")!.version);
-        expect(stored.serverCopyRaw).toBeUndefined();
+        expect(await db.syncConflicts.count()).toBe(0);
         expect(await db.items.count()).toBe(1);
     });
 
@@ -239,13 +293,17 @@ describe("item pull deletions", () => {
         lib.deleteItem("PARENT01");
         await h.sync.startSync();
 
-        const parent = await db.items.get([USER_ID, "PARENT01"]);
-        expect(parent!.syncStatus).toBe("conflict");
-        expect(parent!.syncError).toMatch(/unsynced local changes/i);
+        // One conflict for the deletion: the changed row and the ancestors
+        // it needs to be restored with.
+        for (const key of ["PARENT01", "ATTACH01"]) {
+            expect((await db.items.get([USER_ID, key]))!.syncStatus).toBe("conflict");
+            expect(await db.syncConflicts.get([USER_ID, key])).toMatchObject({ kind: "remote-deleted", group: "PARENT01" });
+        }
+        expect((await db.syncGroups.get([USER_ID, "PARENT01"]))!.members.sort()).toEqual(["ATTACH01", "PARENT01"]);
         // Nothing was destroyed.
         expect(await db.items.count()).toBe(2);
         expect(
-            h.host.logsAt("warn").some((l) => /Prevented deletion of PARENT01/.test(l.message)),
+            h.host.logsAt("warn").some((l) => /PARENT01 was deleted in Zotero but holds local changes/.test(l.message)),
         ).toBe(true);
     });
 

@@ -227,7 +227,7 @@ export function normalizeItem(
         dateAdded: raw.data.dateAdded,
         dateModified: raw.data.dateModified,
         version: raw.data.version,
-        syncError: "",
+        synced: 1,
         syncStatus: "synced",
         syncedAt: new Date().toISOString(),
         raw: raw,

@@ -1,5 +1,6 @@
 import { BaseTask } from "../base";
-import { newLocalItem } from "db/mutate";
+import { createLocalItems, deleteLocalItems, newLocalItem } from "db/mutate";
+import { syncTransaction } from "db/sync/commit";
 import { annotationItemFromJSON } from "db/annotation";
 import { db } from "db/db";
 import { toZoteroDate } from "db/normalize";
@@ -318,18 +319,12 @@ export class BatchExtractExternalAnnotationsTask extends BaseTask {
             );
         });
 
-        await db.transaction("rw", db.items, async () => {
-            if (deletedIDs.length > 0) {
-                await db.items.bulkDelete(
-                    deletedIDs.map((id): [number, string] => [
-                        attachment.libraryID,
-                        id,
-                    ]),
-                );
-            }
-            if (importedItems.length > 0) {
-                await db.items.bulkPut(importedItems);
-            }
+        await syncTransaction(async () => {
+            await deleteLocalItems(attachment.libraryID, deletedIDs);
+            await createLocalItems(
+                attachment.libraryID,
+                importedItems,
+            );
             await db.items.update([attachment.libraryID, attachment.key], {
                 externalAnnotationExtractionFileMD5: effectiveMD5,
             });

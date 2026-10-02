@@ -125,6 +125,8 @@ export async function createSyncHarness(
         settings,
         host,
         library,
+        // Backoff waits are real seconds; tests take them instantly.
+        { sleep: () => Promise.resolve() },
     );
 
     let disposed = false;
