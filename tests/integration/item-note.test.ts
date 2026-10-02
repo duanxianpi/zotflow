@@ -497,6 +497,32 @@ describe("updating note content", () => {
         expect(host.logsAt("warn").some((l) => /is gone/.test(l.message))).toBe(true);
     });
 
+    test("a gone note whose parent (the source note's item) still exists is saved back under it", async () => {
+        await seedItem({ libraryID: LIB, key: "PARENT01" });
+
+        const result = await service.updateNoteContent(LIB, "MISSING1", "kept text", "editor", "PARENT01");
+        expect(result).toEqual({ status: "gone", parentKey: "PARENT01", parentExists: true });
+
+        // What the prompt does with that answer.
+        const key = await service.saveAsNewNote(LIB, result.status === "gone" && result.parentExists ? result.parentKey : "", "kept text");
+        expect((await db.items.get([LIB, key]))!.parentItem).toBe("PARENT01");
+    });
+
+    test("a gone note whose parent is gone too is saved standalone", async () => {
+        const result = await service.updateNoteContent(LIB, "MISSING1", "kept text", "editor", "PARENT01");
+        expect(result).toEqual({ status: "gone", parentKey: "PARENT01", parentExists: false });
+
+        const key = await service.saveAsNewNote(LIB, result.status === "gone" && result.parentExists ? result.parentKey : "", "kept text");
+        const row = (await db.items.get([LIB, key]))!;
+        expect(row.parentItem).toBe("");
+        expect(row.syncStatus).toBe("created");
+    });
+
+    test("saveAsNewNote itself falls back to standalone if the parent vanished meanwhile", async () => {
+        const key = await service.saveAsNewNote(LIB, "GONE0001", "kept text");
+        expect((await db.items.get([LIB, key]))!.parentItem).toBe("");
+    });
+
     test("the text of a gone note can be saved as a new note under its parent", async () => {
         await seedItem({ libraryID: LIB, key: "PARENT01" });
 

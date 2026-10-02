@@ -113,6 +113,25 @@ function getLibraryId(doc: Text): number | null {
     return match?.[1] ? Number(match[1]) : null;
 }
 
+/**
+ * The source note's item (`zotero-key` in frontmatter): the parent of the
+ * child notes shown in it.
+ */
+function getZoteroKey(doc: Text): string | null {
+    if (doc.sliceString(0, 3) !== "---") return null;
+
+    const head = doc.sliceString(0, 10000);
+    const fmMatch = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(
+        head,
+    );
+    if (!fmMatch) return null;
+
+    const match = /^zotero-key:\s*["']?([A-Za-z0-9]+)["']?\s*$/m.exec(
+        fmMatch[0],
+    );
+    return match?.[1] ?? null;
+}
+
 /** Extract the local attachment path from `zotflow-local-attachment: "[[path]]"`. */
 export function getLocalAttachmentPath(doc: Text): string | null {
     if (doc.sliceString(0, 3) !== "---") return null;
@@ -173,9 +192,7 @@ const editableRegionSyncPlugin = ViewPlugin.fromClass(
             if (libraryId !== null) {
                 target = { kind: "zotero", libraryId };
             } else {
-                const attachmentPath = getLocalAttachmentPath(
-                    update.state.doc,
-                );
+                const attachmentPath = getLocalAttachmentPath(update.state.doc);
                 if (attachmentPath !== null) {
                     target = { kind: "local", attachmentPath };
                 }
@@ -227,12 +244,17 @@ const editableRegionSyncPlugin = ViewPlugin.fromClass(
                         region.to,
                     );
                     const libraryID = target.libraryId;
+                    // The note's parent, should the note turn out to be gone
+                    // before this edit reads it: the text is then offered as
+                    // a new note under it (standalone if it is gone too).
+                    const parentKey = getZoteroKey(state.doc) ?? "";
                     workerBridge.itemNote
                         .updateNoteContent(
                             libraryID,
                             region.key,
                             noteContent,
                             "editor",
+                            parentKey,
                         )
                         .then((result) => {
                             if (result.status !== "gone") return;
