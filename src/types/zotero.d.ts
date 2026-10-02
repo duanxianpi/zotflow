@@ -22,7 +22,8 @@ export interface ZoteroKey {
     userID: number;
     username: string;
     displayName: string;
-    access: ZoteroKeyAccess;
+    /** Absent when the key grants no access at all. */
+    access?: ZoteroKeyAccess;
 }
 
 /** Zotero group library metadata. */

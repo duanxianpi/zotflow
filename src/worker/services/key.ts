@@ -2,6 +2,7 @@ import Dexie from "dexie";
 
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { groupLibraryAccess, userLibraryAccess } from "utils/key-access";
 
 import type { IParentProxy } from "bridge/types";
 import type { ZoteroAPIService } from "./zotero";
@@ -60,11 +61,11 @@ export class KeyService {
         const rows: LibraryRow[] = [];
 
         // Personal library
-        if (keyInfo.access.user) {
-            const u = keyInfo.access.user;
-            const canRead = !!u.library;
-            const canWrite = !!u.write;
-            const hasNotesAccess = !!(u.library && u.notes);
+        if (keyInfo.access?.user) {
+            const u = userLibraryAccess(keyInfo);
+            const canRead = u.library;
+            const canWrite = u.write;
+            const hasNotesAccess = u.notes;
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(keyInfo.userID);
             const changedCount = await this.countChangedItems(keyInfo.userID);
@@ -91,14 +92,10 @@ export class KeyService {
             const group = await db.groups.get(groupId);
             if (!group) continue;
 
-            const gAccess = keyInfo.access.groups;
-            const specific = gAccess?.[groupId];
-            const all = gAccess?.all;
-            const canRead = specific?.library ?? all?.library ?? false;
-            const canWrite = specific?.write ?? all?.write ?? false;
-            // Group libraries don't have a separate notes flag — notes access
-            // follows library access.
-            const hasNotesAccess = canRead;
+            const access = groupLibraryAccess(keyInfo, groupId);
+            const canRead = access.library;
+            const canWrite = access.write;
+            const hasNotesAccess = access.notes;
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(group.id);
             const changedCount = await this.countChangedItems(group.id);

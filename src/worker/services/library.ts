@@ -1,5 +1,6 @@
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { groupLibraryAccess, userLibraryAccess } from "utils/key-access";
 
 import type { IParentProxy } from "bridge/types";
 import type { IDBZoteroKey } from "types/db-schema";
@@ -75,15 +76,9 @@ export class LibraryService {
         const keyInfo = await this.getKeyInfo();
         if (!keyInfo) return false;
 
-        if (libraryID === keyInfo.userID) {
-            const u = keyInfo.access.user;
-            return !!(u?.library && u?.notes);
-        }
-
-        const gAccess = keyInfo.access.groups;
-        const specific = gAccess?.[libraryID];
-        const all = gAccess?.all;
-        return !!(specific?.library ?? all?.library ?? false);
+        return libraryID === keyInfo.userID
+            ? userLibraryAccess(keyInfo).notes
+            : groupLibraryAccess(keyInfo, libraryID).notes;
     }
 
     /** Whether the configured API key grants write access for a library. */
@@ -91,14 +86,9 @@ export class LibraryService {
         const keyInfo = await this.getKeyInfo();
         if (!keyInfo) return false;
 
-        if (libraryID === keyInfo.userID) {
-            return !!keyInfo.access.user?.write;
-        }
-
-        const gAccess = keyInfo.access.groups;
-        const specific = gAccess?.[libraryID];
-        const all = gAccess?.all;
-        return !!(specific?.write ?? all?.write ?? false);
+        return libraryID === keyInfo.userID
+            ? userLibraryAccess(keyInfo).write
+            : groupLibraryAccess(keyInfo, libraryID).write;
     }
 
     /* ================================================================= */
