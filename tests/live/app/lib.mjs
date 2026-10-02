@@ -18,6 +18,20 @@ import { LIBRARY_ID } from "../sync/lib.mjs";
 export { key, LIBRARY_ID, local, reset, session } from "../sync/lib.mjs";
 
 /**
+ * Make the main window the active one. Obsidian opens modals and menus in
+ * the active window, and Settings is a window of its own since 1.13: one
+ * left open (or focused last) would take the Activity Center.
+ */
+export async function focusMainWindow(page) {
+    await page.evaluate(async () => {
+        window.app.setting?.close?.();
+        window.focus();
+        await new Promise((r) => window.setTimeout(r, 200));
+        if (window.activeDocument !== document) throw new Error("The main window is not the active one");
+    });
+}
+
+/**
  * Show a view in a fresh main-area tab, so each test starts from a newly
  * opened view (reusing a leaf is tested on its own in reader.live.mjs).
  *
@@ -31,6 +45,7 @@ export { key, LIBRARY_ID, local, reset, session } from "../sync/lib.mjs";
  *   the new one instead.
  */
 export async function openView(page, viewState) {
+    await focusMainWindow(page);
     await page.evaluate(async (state) => {
         document.querySelectorAll(".notice").forEach((n) => n.remove());
         const ws = window.app.workspace;

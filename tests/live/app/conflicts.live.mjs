@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { afterEach, before, beforeEach, describe, test } from "node:test";
 
 import { fact, remote } from "../sync/lib.mjs";
-import { key, local, reset, session as connect, until } from "./lib.mjs";
+import { focusMainWindow, key, local, reset, session as connect, until } from "./lib.mjs";
 
 const F = import.meta.filename;
 
@@ -20,6 +20,7 @@ afterEach(() => closeActivityCenter());
 async function openActivityCenter() {
     const { page } = session;
     await closeActivityCenter();
+    await focusMainWindow(page);
     await page.evaluate(() => {
         document.querySelectorAll(".notice").forEach((n) => n.remove());
         window.app.commands.executeCommandById("zotflow:open-activity-center");
