@@ -155,20 +155,28 @@ async function explore(universe: Universe) {
         if (!REPORT) throw new Error(`${universe.name}: ${message}\n  after: ${path.join(" → ") || "(start)"}`);
     };
 
-    const visit = async (snap: Awaited<ReturnType<World["capture"]>>, path: string[], depth: number) => {
-        await w.restore(snap);
-        try {
-            await w.checkSettles();
-        } catch (e) {
-            record(e, [...path, "(settle)"]);
+    // States whose settling has been checked: a state reached again with
+    // more depth left is explored again, but settles the same way.
+    const settled = new Set<string>();
+
+    const visit = async (snap: Awaited<ReturnType<World["capture"]>>, id: string, path: string[], depth: number) => {
+        if (!settled.has(id)) {
+            settled.add(id);
+            await w.restore(snap);
+            try {
+                await w.checkSettles();
+            } catch (e) {
+                record(e, [...path, "(settle)"]);
+            }
         }
         if (depth === 0) return;
         await w.restore(snap);
-        const labels = (await w.actions()).map((a) => a.label);
-        for (const label of labels) {
+        // Listed once: every action is run from this same state (restored
+        // before each), and reads the world at run time.
+        const actions = await w.actions();
+        for (const action of actions) {
+            const label = action.label;
             await w.restore(snap);
-            const action = (await w.actions()).find((a) => a.label === label);
-            if (!action) continue;
             transitions++;
             if (PROGRESS && transitions % 1000 === 0) {
                 process.stderr.write(`${universe.name}: ${transitions} transitions, ${seen.size} states, ${found.size} kinds of violation\n`);
@@ -185,14 +193,15 @@ async function explore(universe: Universe) {
             const id = createHash("sha1").update(w.hash(child)).digest("base64");
             if ((seen.get(id) ?? -1) >= depth - 1) continue;
             seen.set(id, depth - 1);
-            await visit(child, [...path, label], depth - 1);
+            await visit(child, id, [...path, label], depth - 1);
         }
     };
 
     try {
         const root = await w.capture();
-        seen.set(createHash("sha1").update(w.hash(root)).digest("base64"), DEPTH);
-        await visit(root, [], DEPTH);
+        const rootId = createHash("sha1").update(w.hash(root)).digest("base64");
+        seen.set(rootId, DEPTH);
+        await visit(root, rootId, [], DEPTH);
     } finally {
         w.dispose();
     }
