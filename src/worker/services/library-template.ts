@@ -635,6 +635,11 @@ export class LibraryTemplateService {
             finalFrontmatter["zotflow-locked"] = true;
             finalFrontmatter["zotero-key"] = item.key;
             finalFrontmatter["item-version"] = item.version;
+            // The subtree fingerprint: Zotero does not bump an item's version
+            // when a child (attachment, annotation, note) changes.
+            if (item.treeFingerprint) {
+                finalFrontmatter["item-tree"] = item.treeFingerprint;
+            }
             finalFrontmatter["library-id"] = item.libraryID;
 
             // Stringify Frontmatter

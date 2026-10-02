@@ -218,6 +218,13 @@ describe("frontmatter", () => {
         expect(out).toContain("library-id: 1");
     });
 
+    test("the subtree fingerprint is written as item-tree", async () => {
+        const item = await seedArticle();
+        const out = await service.renderLibrarySourceNote({ ...item, treeFingerprint: "0badcafe" }, "body", {});
+
+        expect(out).toContain("item-tree: 0badcafe");
+    });
+
     test("a bare template key overwrites what the note had", async () => {
         const item = await seedArticle();
         const out = await service.renderLibrarySourceNote(

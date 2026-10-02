@@ -16,6 +16,7 @@
  */
 import { db } from "db/db";
 import { normalizeItem } from "db/normalize";
+import { allTreeFingerprints } from "db/sync/model";
 import { AnnotationService } from "worker/services/annotation";
 import { ConflictService } from "worker/services/conflict";
 import { ConvertService } from "worker/services/convert";
@@ -905,6 +906,14 @@ export class World {
         const byKey = new Map(rows.map((r) => [r.key, r]));
         const infos = new Map((await this.conflictInfos()).map((c) => [c.key, c]));
         const conflictsNow = [...infos.keys()].sort();
+        // Every write path keeps the subtree fingerprints current.
+        const fingerprints = allTreeFingerprints(rows);
+        for (const r of rows) {
+            if (r.parentItem) continue;
+            if (r.treeFingerprint !== fingerprints.get(r.key)) {
+                throw new Violation(`${r.key}: tree fingerprint ${r.treeFingerprint} is stale (expected ${fingerprints.get(r.key)})`);
+            }
+        }
         for (const r of rows) {
             const n = normalizeItem(r.raw, LIB);
             const cols = (x: AnyIDBZoteroItem) => ({

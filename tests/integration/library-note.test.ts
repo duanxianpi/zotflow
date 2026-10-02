@@ -267,6 +267,34 @@ describe("updating an existing note", () => {
         expect(renderCalls).toHaveLength(0);
     });
 
+    test("a changed child (same item version, new item-tree) re-renders the note", async () => {
+        // Zotero does not bump the parent's version when an annotation or
+        // child note changes; the subtree fingerprint does change.
+        await db.items.update([LIB, "PARENT01"], { treeFingerprint: "newtree1" });
+        placeNote("Source/@PARENT01.md", "stale body", {
+            "zotero-key": "PARENT01",
+            "item-version": 7,
+            "item-tree": "oldtree1",
+        });
+
+        await service.ensureNote(LIB, "PARENT01", {});
+
+        expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
+    });
+
+    test("a note at the item's version and item-tree is left alone", async () => {
+        await db.items.update([LIB, "PARENT01"], { treeFingerprint: "sametree" });
+        placeNote("Source/@PARENT01.md", "existing body", {
+            "zotero-key": "PARENT01",
+            "item-version": 7,
+            "item-tree": "sametree",
+        });
+
+        await service.ensureNote(LIB, "PARENT01", {});
+
+        expect(host.vault.get("Source/@PARENT01.md")).toBe("existing body");
+    });
+
     test("an out-of-date note is re-rendered", async () => {
         placeNote("Source/@PARENT01.md", "stale body", {
             "zotero-key": "PARENT01",

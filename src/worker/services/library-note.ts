@@ -562,9 +562,17 @@ export class LibraryNoteService {
                 ? String(rawVersion)
                 : undefined;
         const newVersion = item.version.toString();
+        // Children changing leave the item's version alone; the subtree
+        // fingerprint catches them (a note written before it existed has
+        // none, and is refreshed once).
+        const rawTree = fileCheck.frontmatter?.["item-tree"];
+        const treeChanged =
+            !!item.treeFingerprint &&
+            (typeof rawTree === "string" ? rawTree : undefined) !==
+                item.treeFingerprint;
 
-        // Only update if versions are different, or if forced update is specified
-        if (forceUpdate || currentVersion !== newVersion) {
+        // Only update if the item or its subtree changed, or if forced
+        if (forceUpdate || currentVersion !== newVersion || treeChanged) {
             // Persist regions: pull user-owned blocks out of the current
             // file before the full-content overwrite. A parse failure here
             // refuses the update — the file stays untouched until the user
