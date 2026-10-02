@@ -75,7 +75,10 @@ after(async () => {
  * anything here.
  */
 function installPageHelpers() {
-    if (window.__zfLive) return;
+    // Versioned: a page keeps the helpers of an earlier run (possibly an
+    // older copy of this file) until they are replaced.
+    const VERSION = 2;
+    if (window.__zfLive?.version === VERSION) return;
     const DB = "zotflow-dev";
     const open = () => new Promise((ok, fail) => {
         const r = indexedDB.open(DB);
@@ -102,22 +105,35 @@ function installPageHelpers() {
         }
     }
     window.__zfLive = {
+        version: VERSION,
         row: (lib, key) => withStore("items", "readonly", (s) => done(s.get([lib, key]))),
         rows: (lib) => withStore("items", "readonly", async (s) =>
             (await done(s.getAll())).filter((r) => r.libraryID === lib)),
         put: (row) => withStore("items", "readwrite", (s) => done(s.put(row))),
         library: (lib) => withStore("libraries", "readonly", (s) => done(s.get(lib))),
+        pendingDeletes: (lib) => withStore("syncDeleteLog", "readonly", async (s) =>
+            (await done(s.getAll())).filter((r) => r.libraryID === lib).map((r) => r.key)),
         async clearLibrary(lib) {
-            for (const name of ["items", "collections"]) {
+            for (const name of [
+                "items",
+                "collections",
+                // v7 sync bookkeeping
+                "syncCache",
+                "syncDeleteLog",
+                "syncConflicts",
+                "syncGroups",
+                "syncQueue",
+                "uploadJournal",
+            ]) {
                 await withStore(name, "readwrite", async (s) => {
                     for (const r of await done(s.getAll())) {
-                        if (r.libraryID === lib) await done(s.delete([r.libraryID, r.key]));
+                        if (r.libraryID === lib) await done(s.delete([r.libraryID, r.key ?? r.id]));
                     }
                 });
             }
             await withStore("libraries", "readwrite", async (s) => {
                 const row = await done(s.get(lib));
-                if (row) await done(s.put({ ...row, itemVersion: 0, collectionVersion: 0 }));
+                if (row) await done(s.put({ ...row, itemVersion: 0, collectionVersion: 0, needsFullSync: false }));
             });
         },
         apiKey: () => window.app.plugins.plugins.zotflow.settings.zoteroapikey,
@@ -201,6 +217,11 @@ export const local = {
             await t.bridge.annotation.saveAnnotations(attachment, keyInfo, [...all, json]);
         }, LIBRARY_ID, attachmentKey, templateKey, newKey, comment),
     conflicts: () => inObsidian((t) => t.bridge.conflict.getItemConflicts()),
+    /** The conflict listed for `k` (kind, group, remoteData, …), if any. */
+    conflict: async (k) => (await local.conflicts()).find((c) => c.key === k),
+    /** Pending local deletes (the delete log) for this library. */
+    pendingDeletes: () =>
+        inObsidian((t, h, lib) => h.pendingDeletes(lib), LIBRARY_ID),
     resolve: (k, action) =>
         inObsidian((t, h, lib, k, action) => t.bridge.conflict.resolveItemConflict(lib, k, action), LIBRARY_ID, k, action),
     /** Write a row as-is: for states the services cannot produce on demand. */

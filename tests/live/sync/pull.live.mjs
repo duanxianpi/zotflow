@@ -20,8 +20,8 @@ describe("first sync", () => {
             const row = rows.get(item.key);
             assert.ok(row, `${item.id} missing locally`);
             assert.equal(row.syncStatus, "synced", item.id);
-            assert.equal(row.conflict, undefined, item.id);
         }
+        assert.deepEqual(await local.conflicts(), []);
         const server = await remote.get(key("attention"));
         assert.equal(rows.get(key("attention")).version, server.version);
         fact(F, "fixture items synced", fixtures.items.length);

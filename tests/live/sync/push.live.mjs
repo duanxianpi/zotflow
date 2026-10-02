@@ -118,8 +118,12 @@ describe("annotations", () => {
 
         const row = await local.row(badKey);
         assert.equal(row.syncStatus, "conflict");
-        assert.deepEqual(row.conflict, { kind: "push-rejected", pendingOp: "create" });
-        fact(F, "server answer for an invalid item key", row.syncError);
+        const c = await local.conflict(badKey);
+        assert.equal(c?.kind, "refused");
+        fact(F, "server answer for an invalid item key", c?.syncError);
+        // The server ignores an itemKey filter it cannot parse and lists
+        // other items; none of them may be taken as this item's copy.
+        assert.ok(!c.remoteData?.key, "no server copy for a key the server never had");
         // Accept-remote drops it: the server never had it.
         await local.resolve(badKey, "accept-remote");
         assert.equal(await local.row(badKey), undefined);
@@ -132,7 +136,7 @@ describe("annotations", () => {
         assert.equal(await remote.get(key("attention-pdf-underline")), null);
         assert.equal(await local.row(key("attention-pdf-underline")), undefined);
         assert.equal(m.writes.length, 1);
-        assert.match(m.writes[0], /^DELETE \/items\/\w+ → 204$/);
+        assert.match(m.writes[0], /^DELETE \/items → 204$/);
         fact(F, "library version bump for one DELETE", m.after - m.before);
     });
 });
@@ -149,12 +153,12 @@ describe("several changes in one sync", () => {
         const posts = m.writes.filter((w) => w.startsWith("POST")).length;
         const deletes = m.writes.filter((w) => w.startsWith("DELETE")).length;
         assert.equal(posts, 1, "both upserts in one POST");
-        assert.equal(deletes, 2);
-        // Measured: a POST moves the library by one per object sent, a
-        // DELETE by one.
-        assert.equal(m.after - m.before, 2 + deletes);
+        assert.equal(deletes, 1, "both deletes in one batch DELETE");
+        // Measured: a POST moves the library by one per object sent, a batch
+        // DELETE by one whatever its key count.
+        assert.equal(m.after - m.before, 2 + 1);
         assert.equal((await local.library()).itemVersion, m.after, "no needless re-pull");
-        fact(F, "version bumps for 1 POST (2 items) + 2 DELETEs", m.after - m.before);
+        fact(F, "version bumps for 1 POST (2 items) + 1 batch DELETE (2 keys)", m.after - m.before);
         for (const r of await local.rows()) assert.equal(r.syncStatus, "synced", r.key);
     });
 });

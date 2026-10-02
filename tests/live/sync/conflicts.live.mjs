@@ -23,47 +23,62 @@ async function syncAndWrites() {
     return writes();
 }
 
-describe("both sides edited an item", () => {
-    async function remoteUpdateConflict() {
+describe("both sides edited different fields of an item", () => {
+    test("the edits merge: no conflict, both reach the server", async () => {
         await local.setTags(key("resnet"), [{ tag: "local-tag" }]);
         await remote.patch(key("resnet"), { title: "Remote title" });
         await local.sync();
+
         const row = await local.row(key("resnet"));
-        assert.equal(row.syncStatus, "conflict");
-        assert.deepEqual(row.conflict, { kind: "remote-update", pendingOp: "update" });
-        assert.equal(row.serverCopyRaw.data.title, "Remote title");
-        return row;
+        const server = await remote.get(key("resnet"));
+        fact(F, "local tags + remote title after a sync", { status: row.syncStatus, title: server.data.title, tags: server.data.tags });
+        assert.equal(row.syncStatus, "synced");
+        assert.equal(server.data.title, "Remote title");
+        assert.deepEqual(server.data.tags.map((t) => t.tag), ["local-tag"]);
+        assert.deepEqual(await local.conflicts(), []);
+    });
+});
+
+describe("both sides edited the same field (a note's text)", () => {
+    const N = () => key("attention-note");
+
+    async function changedConflict() {
+        await local.editNote(N(), "Local text");
+        await remote.patch(N(), { note: "<p>Remote text</p>" });
+        await local.sync();
+        const c = await local.conflict(N());
+        assert.equal(c?.kind, "changed");
+        assert.ok(c.conflictFields.includes("note"));
+        assert.match(c.remoteData.note, /Remote text/);
+        assert.equal((await local.row(N())).syncStatus, "conflict");
     }
 
-    test("keep-local pushes the local version over the remote one", async () => {
-        await remoteUpdateConflict();
-        await local.resolve(key("resnet"), "keep-local");
+    test("keep-local uploads the local text as a patch", async () => {
+        await changedConflict();
+        await local.resolve(N(), "keep-local");
         const w = await syncAndWrites();
 
         assert.deepEqual(w, ["POST /items → 200"]);
-        const server = await remote.get(key("resnet"));
-        assert.deepEqual(server.data.tags.map((t) => t.tag), ["local-tag"]);
-        fact(F, "keep-local after a remote title edit: server title", server.data.title);
-        assert.equal((await local.row(key("resnet"))).syncStatus, "synced");
+        assert.match((await remote.get(N())).data.note, /Local text/);
+        assert.equal((await local.row(N())).syncStatus, "synced");
     });
 
     test("accept-remote takes the server's version and sends nothing", async () => {
-        await remoteUpdateConflict();
-        await local.resolve(key("resnet"), "accept-remote");
+        await changedConflict();
+        await local.resolve(N(), "accept-remote");
 
-        const row = await local.row(key("resnet"));
+        const row = await local.row(N());
         assert.equal(row.syncStatus, "synced");
-        assert.equal(row.title, "Remote title");
-        assert.deepEqual(row.searchTags, []);
+        assert.match(row.raw.data.note, /Remote text/);
         assert.deepEqual(await syncAndWrites(), []);
     });
 
     test("an edit made during the conflict waits for the user", async () => {
-        await remoteUpdateConflict();
-        await local.setTags(key("resnet"), [{ tag: "edited-during-conflict" }]);
+        await changedConflict();
+        await local.editNote(N(), "Edited during the conflict");
         assert.deepEqual(await syncAndWrites(), [], "nothing pushed while in conflict");
-        assert.equal((await local.row(key("resnet"))).syncStatus, "conflict");
-        assert.equal((await remote.get(key("resnet"))).data.title, "Remote title");
+        assert.equal((await local.row(N())).syncStatus, "conflict");
+        assert.match((await remote.get(N())).data.note, /Remote text/);
     });
 });
 
@@ -72,11 +87,7 @@ describe("the server deleted an item edited locally", () => {
         await local.setTags(key("legal-patent"), [{ tag: "keep-me" }]);
         await remote.delete(key("legal-patent"));
         await local.sync();
-        assert.deepEqual((await local.row(key("legal-patent"))).conflict, {
-            kind: "remote-delete",
-            pendingOp: "update",
-            root: key("legal-patent"),
-        });
+        assert.equal((await local.conflict(key("legal-patent")))?.kind, "remote-deleted");
 
         await local.resolve(key("legal-patent"), "keep-local");
         const w = await syncAndWrites();
@@ -110,8 +121,12 @@ describe("the server deleted a parent whose child note was edited locally", () =
     test("is one conflict rooted at the parent; untouched children are gone", async () => {
         await familyConflict();
         const root = key("attention");
-        assert.deepEqual((await local.row(root)).conflict, { kind: "remote-delete", pendingOp: "none", root });
-        assert.deepEqual((await local.row(key("attention-note"))).conflict, { kind: "remote-delete", pendingOp: "update", root });
+        const parent = await local.conflict(root);
+        const note = await local.conflict(key("attention-note"));
+        assert.equal(parent?.kind, "remote-deleted");
+        assert.equal(parent.group, root);
+        assert.equal(note?.kind, "remote-deleted");
+        assert.equal(note.group, root);
         assert.equal(await local.row(key("attention-pdf")), undefined);
         assert.equal(await local.row(key("attention-pdf-highlight-title")), undefined);
     });
@@ -146,13 +161,10 @@ describe("the server deleted a parent whose child note was edited locally", () =
         await familyConflict();
         const newNote = await local.createNote(key("attention"));
         await local.editNote(newNote, "Written after the remote delete");
+        // Joined at once, before any sync.
+        assert.equal((await local.conflict(newNote))?.group, key("attention"));
         await local.sync();
-
-        assert.deepEqual((await local.row(newNote)).conflict, {
-            kind: "remote-delete",
-            pendingOp: "create",
-            root: key("attention"),
-        });
+        assert.equal((await local.conflict(newNote))?.group, key("attention"));
         await local.resolve(key("attention"), "keep-local");
         await local.sync();
         const server = await remote.get(newNote);
@@ -169,20 +181,19 @@ describe("annotations deleted around a conflict (the bugs found by hand)", () =>
         await local.editAnnotationComment(A(), "local comment");
         await remote.patch(A(), { annotationComment: "remote comment" });
         await local.sync();
-        assert.equal((await local.row(A())).syncStatus, "conflict");
+        assert.equal((await local.conflict(A()))?.kind, "changed");
 
         await local.deleteAnnotations(PDF(), [A()]);
 
-        const row = await local.row(A());
-        assert.equal(row.syncStatus, "conflict");
-        assert.equal(row.conflict.pendingOp, "delete");
+        assert.equal((await local.conflict(A()))?.kind, "local-deleted");
+        assert.equal(await local.row(A()), undefined);
         assert.ok(!(await visible(PDF())).includes(A()), "hidden in the reader");
         assert.deepEqual(await syncAndWrites(), [], "no DELETE behind the user's back");
         assert.equal((await remote.get(A())).data.annotationComment, "remote comment");
 
         await local.resolve(A(), "keep-local");
         const w = await syncAndWrites();
-        assert.match(w.join(), /DELETE \/items\/\w+ → 204/);
+        assert.match(w.join(), /DELETE \/items → 204/);
         assert.equal(await remote.get(A()), null);
     });
 
@@ -190,14 +201,13 @@ describe("annotations deleted around a conflict (the bugs found by hand)", () =>
         await local.deleteAnnotations(PDF(), [A()]);
         await remote.patch(A(), { annotationComment: "remote comment" });
         await local.sync();
-        const row = await local.row(A());
-        assert.deepEqual(row.conflict, { kind: "remote-update", pendingOp: "delete" });
+        assert.equal((await local.conflict(A()))?.kind, "local-deleted");
         assert.ok(!(await visible(PDF())).includes(A()), "stays hidden");
 
         await local.resolve(A(), "keep-local");
         const w = await syncAndWrites();
 
-        assert.match(w.join(), /DELETE \/items\/\w+ → 204/);
+        assert.match(w.join(), /DELETE \/items → 204/);
         assert.ok(!w.some((x) => x.startsWith("POST")), "not an upsert");
         assert.equal(await remote.get(A()), null);
         assert.equal(await local.row(A()), undefined);
@@ -224,11 +234,12 @@ describe("a DELETE refused because the server copy changed", () => {
             await remote.patch(A, { annotationComment: "edited while our DELETE was on its way" });
         });
 
-        const row = await local.row(A);
-        fact(F, "DELETE against a changed item", { status: row.syncStatus, error: row.syncError });
-        assert.equal(row.syncStatus, "conflict");
-        assert.equal(row.conflict.pendingOp, "delete");
-        assert.ok(row.serverCopyRaw, "server copy downloaded");
+        // The DELETE carries the library version as its precondition: the
+        // edit made it 412, the download found the edit.
+        const c = await local.conflict(A);
+        fact(F, "DELETE after another client's edit", { kind: c?.kind, remote: c?.remoteData?.annotationComment });
+        assert.equal(c?.kind, "local-deleted");
+        assert.match(c.remoteData.annotationComment, /edited while our DELETE/);
 
         await local.resolve(A, "keep-local");
         await local.sync();
@@ -242,19 +253,21 @@ describe("a write the server refuses", () => {
         await local.setTags(key("resnet"), [{ tag: longTag }]);
         await local.sync();
         const row = await local.row(key("resnet"));
-        fact(F, "server answer for a 300-character tag", { status: row.syncStatus, error: row.syncError, conflict: row.conflict });
+        const c = await local.conflict(key("resnet"));
+        fact(F, "server answer for a 300-character tag", { status: row.syncStatus, conflict: c && { kind: c.kind, error: c.syncError } });
         return row;
     }
 
-    test("is a push-rejected conflict with the server copy downloaded", async () => {
+    test("is a refused conflict with the server copy downloaded", async () => {
         const row = await refused();
         if (row.syncStatus !== "conflict") {
             // The server accepted it: nothing to resolve, but record that.
             assert.equal(row.syncStatus, "synced");
             return;
         }
-        assert.equal(row.conflict.kind, "push-rejected");
-        assert.ok(row.serverCopyRaw, "server copy downloaded");
+        const c = await local.conflict(key("resnet"));
+        assert.equal(c.kind, "refused");
+        assert.ok(c.remoteData && c.remoteData.title, "server copy downloaded");
     });
 
     test("accept-remote restores the server's version", async () => {

@@ -12,9 +12,9 @@ const F = import.meta.filename;
 beforeEach(reset);
 
 describe("another client writes while we push", () => {
-    test("its edit landing between our pull and our DELETE is not skipped", async () => {
-        // A DELETE checks only its own item, so it succeeds; advancing the
-        // library version to its answer would skip the other edit forever.
+    test("its edit landing before our DELETE is not skipped", async () => {
+        // The DELETE carries the library version as its precondition: it is
+        // refused (412), the edit is downloaded, then the DELETE is retried.
         await local.deleteAnnotations(key("attention-pdf"), [key("attention-pdf-ink")]);
         await syncWithPause({ method: "DELETE" }, "pass", () =>
             remote.patch(key("morphology"), { title: "By another client" }),
@@ -23,6 +23,8 @@ describe("another client writes while we push", () => {
         await local.sync();
 
         assert.equal((await local.row(key("morphology"))).title, "By another client");
+        assert.equal(await remote.get(key("attention-pdf-ink")), null);
+        assert.deepEqual(await local.pendingDeletes(), []);
         assert.equal((await local.library()).itemVersion, await remote.libraryVersion());
     });
 
@@ -40,33 +42,41 @@ describe("another client writes while we push", () => {
         assert.equal((await local.row(key("resnet"))).syncStatus, "synced");
     });
 
-    test("its edit to the same item before our POST becomes a conflict", async () => {
+    test("its edit of another field of the same item before our POST merges", async () => {
         await local.setTags(key("resnet"), [{ tag: "ours" }]);
         await syncWithPause({ method: "POST" }, "pass", () =>
             remote.patch(key("resnet"), { title: "Theirs" }),
         );
 
-        const row = await local.row(key("resnet"));
-        fact(F, "same item edited remotely before our POST", { status: row.syncStatus, conflict: row.conflict, error: row.syncError });
-        assert.equal(row.syncStatus, "conflict");
-        assert.equal(row.serverCopyRaw.data.title, "Theirs");
-        assert.equal((await remote.get(key("resnet"))).data.title, "Theirs", "not overwritten");
+        const server = (await remote.get(key("resnet"))).data;
+        fact(F, "other field of the same item edited remotely before our POST", { title: server.title, tags: server.tags });
+        assert.equal(server.title, "Theirs", "not overwritten");
+        assert.deepEqual(server.tags, [{ tag: "ours" }]);
+        assert.equal((await local.row(key("resnet"))).syncStatus, "synced");
+    });
+
+    test("its edit of the same field before our POST becomes a conflict", async () => {
+        const N = key("attention-note");
+        await local.editNote(N, "Ours");
+        await syncWithPause({ method: "POST" }, "pass", () => remote.patch(N, { note: "<p>Theirs</p>" }));
+
+        const c = await local.conflict(N);
+        fact(F, "same field edited remotely before our POST", c && { kind: c.kind, fields: c.conflictFields });
+        assert.equal(c?.kind, "changed");
+        assert.match((await remote.get(N)).data.note, /Theirs/, "not overwritten");
     });
 });
 
-describe("another client deletes an item we are updating, during our DELETE", () => {
-    test("the item's own 404 is a conflict, and keep-local recreates it for good", async () => {
-        // Our DELETE's answer carries the other client's version, so the POST
-        // precondition passes and only the deleted item fails. The library
-        // version stays behind; the next pull must not undo keep-local.
-        await local.deleteAnnotations(key("attention-pdf"), [key("attention-pdf-ink")]);
+describe("another client deletes an item we are updating, before our POST", () => {
+    test("it becomes a remote-deleted conflict, and keep-local recreates it for good", async () => {
+        // The POST is refused as a whole (412); the download finds the
+        // deletion of an item with a pending edit.
         await local.setTags(key("legal-patent"), [{ tag: "ours" }]);
-        await syncWithPause({ method: "DELETE" }, "pass", () => remote.delete(key("legal-patent")));
+        await syncWithPause({ method: "POST" }, "pass", () => remote.delete(key("legal-patent")));
 
-        const row = await local.row(key("legal-patent"));
-        fact(F, "update of an item deleted mid-push", { status: row.syncStatus, conflict: row.conflict, error: row.syncError });
-        assert.equal(row.syncStatus, "conflict");
-        assert.equal(row.conflict.kind, "remote-delete");
+        const c = await local.conflict(key("legal-patent"));
+        fact(F, "update of an item deleted before our POST", c && { kind: c.kind, group: c.group });
+        assert.equal(c?.kind, "remote-deleted");
 
         await local.resolve(key("legal-patent"), "keep-local");
         await local.sync();
@@ -79,30 +89,21 @@ describe("another client deletes an item we are updating, during our DELETE", ()
 });
 
 describe("the user edits while their own push is in flight", () => {
-    test("the edit is kept and pushed next time", async () => {
+    test("the edit is kept and goes up in the same sync", async () => {
         await local.setTags(key("resnet"), [{ tag: "first" }]);
         await syncWithPause({ method: "POST" }, "pass", () =>
             local.setTags(key("resnet"), [{ tag: "second" }]),
         );
-        const mid = await local.row(key("resnet"));
-        assert.equal(mid.syncStatus, "updated");
-        assert.deepEqual(mid.searchTags, ["second"]);
-        assert.deepEqual((await remote.get(key("resnet"))).data.tags, [{ tag: "first" }]);
-
-        await local.sync();
 
         assert.deepEqual((await remote.get(key("resnet"))).data.tags, [{ tag: "second" }]);
         assert.equal((await local.row(key("resnet"))).syncStatus, "synced");
         assert.deepEqual(await local.conflicts(), []);
     });
 
-    test("a note created and edited mid-push is created next time", async () => {
+    test("a note created and edited mid-push ends with the edit", async () => {
         const noteKey = await local.createNote(key("resnet"));
         await local.editNote(noteKey, "v1");
         await syncWithPause({ method: "POST" }, "pass", () => local.editNote(noteKey, "v2"));
-        assert.equal((await local.row(noteKey)).syncStatus, "updated", "created by the push, edit pending");
-
-        await local.sync();
 
         assert.match((await remote.get(noteKey)).data.note, /v2/);
         assert.equal((await local.row(noteKey)).syncStatus, "synced");
@@ -115,9 +116,8 @@ describe("the user edits while their own push is in flight", () => {
             local.deleteAnnotations(key("attention-pdf"), [newKey]),
         );
 
-        await local.sync();
-
         assert.equal(await remote.get(newKey), null);
         assert.equal(await local.row(newKey), undefined);
+        assert.deepEqual(await local.pendingDeletes(), []);
     });
 });
