@@ -730,7 +730,14 @@ export default class ZotFlow extends Plugin {
             }
 
             if (type === "open-note") {
-                await workerBridge.libraryNote.openNote(libID, key);
+                // A select link can name a note (a standalone one has no
+                // source note of its own): open it as a note.
+                const target = await workerBridge.dbHelper.getItem(libID, key);
+                if (target?.itemType === "note") {
+                    await openItemNote(libID, key, this.app);
+                } else {
+                    await workerBridge.libraryNote.openNote(libID, key);
+                }
             } else if (type === "open-item-note") {
                 // Child note links (e.g. converted Better Notes
                 // zotero://note links) — openItemNote honors the
@@ -1209,7 +1216,7 @@ export default class ZotFlow extends Plugin {
                 (leaf) =>
                     (leaf.view as LocalReaderView).getState()?.file ===
                     dest.path,
-        );
+            );
         if (existing) {
             await focusReaderLeaf(this.app.workspace, existing);
             return;

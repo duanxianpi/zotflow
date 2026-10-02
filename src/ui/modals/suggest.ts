@@ -2,7 +2,7 @@ import { App, renderResults, SuggestModal } from "obsidian";
 import { workerBridge } from "bridge";
 import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
 import type { AttachmentData } from "types/zotero-item";
-import { openAttachment } from "utils/viewer";
+import { openAttachment, openItemNote } from "utils/viewer";
 import type { ZotFlowSettings } from "settings/types";
 import { services } from "services/services";
 import { AttachmentSelectModal } from "./attachment-suggest";
@@ -142,6 +142,16 @@ export class ZoteroSearchModal extends BaseItemSearchModal {
             ff(
                 openAttachment(item.libraryID, item.key, this.app),
                 "Failed to open the attachment",
+            );
+            this.close();
+            return;
+        }
+
+        // A note has no attachments to open: open the note itself.
+        if (item.itemType === "note") {
+            ff(
+                openItemNote(item.libraryID, item.key, this.app),
+                "Failed to open the note",
             );
             this.close();
             return;

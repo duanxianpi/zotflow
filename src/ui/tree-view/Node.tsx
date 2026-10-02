@@ -386,35 +386,37 @@ export const NodeItem = ({ node, style }: NodeRendererProps<ViewNode>) => {
                 });
             }
         } else if (nodeType === "item" && node.data.itemType === "note") {
-            menu.addItem((item) => {
-                item.setTitle("Locate in Source Note")
-                    .setIcon("file-badge")
-                    .onClick(async () => {
-                        try {
-                            const located = await openItemNoteInSourceNote(
-                                node.data.libraryID,
-                                node.data.key,
-                                services.app,
-                            );
-                            if (!located) {
+            // A standalone note has no parent, so no source note to locate.
+            if (!isTopLevelItem)
+                menu.addItem((item) => {
+                    item.setTitle("Locate in Source Note")
+                        .setIcon("file-badge")
+                        .onClick(async () => {
+                            try {
+                                const located = await openItemNoteInSourceNote(
+                                    node.data.libraryID,
+                                    node.data.key,
+                                    services.app,
+                                );
+                                if (!located) {
+                                    services.notificationService.notify(
+                                        "warning",
+                                        "No source note found for this note.",
+                                    );
+                                }
+                            } catch (err) {
+                                services.logService.error(
+                                    "Failed to locate note in source note",
+                                    "TreeView",
+                                    err,
+                                );
                                 services.notificationService.notify(
-                                    "warning",
-                                    "No source note found for this note.",
+                                    "error",
+                                    "Failed to locate note in source note.",
                                 );
                             }
-                        } catch (err) {
-                            services.logService.error(
-                                "Failed to locate note in source note",
-                                "TreeView",
-                                err,
-                            );
-                            services.notificationService.notify(
-                                "error",
-                                "Failed to locate note in source note.",
-                            );
-                        }
-                    });
-            });
+                        });
+                });
             menu.addItem((item) => {
                 item.setTitle("Open in Note Editor (Experimental)")
                     .setIcon("pencil")
