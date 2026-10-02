@@ -210,29 +210,48 @@ const ConflictPanel: React.FC<{
         <div className="zotflow-conflict-container">
             {/* Conflict list sidebar */}
             <div className="zotflow-conflict-list">
-                {conflicts.map((c) => {
+                {conflicts.map((c, i) => {
                     const id = `${c.libraryID}:${c.key}`;
+                    const prev = conflicts[i - 1];
+                    // Members of one remote deletion are listed (and
+                    // resolved) together, under their group's heading.
+                    const groupStart =
+                        c.group &&
+                        !(
+                            prev?.group === c.group &&
+                            prev.libraryID === c.libraryID
+                        );
 
                     return (
-                        <div
-                            key={id}
-                            className={`zotflow-conflict-item ${selectedKey === id ? "is-selected" : ""}`}
-                            onClick={() => onSelect(id)}
-                        >
-                            <div className="zotflow-conflict-item-header">
-                                <span className="zotflow-conflict-key">
-                                    {c.key}
-                                </span>
-                                <span
-                                    className={`zotflow-conflict-type-badge zotflow-conflict-type-badge--${c.conflictType}`}
-                                >
-                                    {c.conflictType}
+                        <React.Fragment key={id}>
+                            {groupStart && (
+                                <div className="zotflow-conflict-group-heading">
+                                    <ObsidianIcon icon="folder-x" />
+                                    <span>
+                                        Deleted in Zotero together (
+                                        {c.groupSize ?? 1})
+                                    </span>
+                                </div>
+                            )}
+                            <div
+                                className={`zotflow-conflict-item ${c.group ? "zotflow-conflict-item--member" : ""} ${selectedKey === id ? "is-selected" : ""}`}
+                                onClick={() => onSelect(id)}
+                            >
+                                <div className="zotflow-conflict-item-header">
+                                    <span className="zotflow-conflict-key">
+                                        {c.key}
+                                    </span>
+                                    <span
+                                        className={`zotflow-conflict-type-badge zotflow-conflict-type-badge--${c.conflictType}`}
+                                    >
+                                        {c.conflictType}
+                                    </span>
+                                </div>
+                                <span className="zotflow-conflict-title">
+                                    {c.title}
                                 </span>
                             </div>
-                            <span className="zotflow-conflict-title">
-                                {c.title}
-                            </span>
-                        </div>
+                        </React.Fragment>
                     );
                 })}
             </div>
@@ -323,15 +342,39 @@ const ConflictDiffPane: React.FC<{
                 </div>
             )}
 
+            {entry.group && (entry.groupSize ?? 1) > 1 && (
+                <div className="zotflow-conflict-note">
+                    <ObsidianIcon icon="info" />
+                    <span>
+                        This resolves all {entry.groupSize} items deleted in
+                        Zotero together: Keep Local re-creates them, Accept
+                        Remote removes them here.
+                    </span>
+                </div>
+            )}
+
+            {(entry.keepLocalBlocked || entry.acceptRemoteBlocked) && (
+                <div className="zotflow-conflict-note">
+                    <ObsidianIcon icon="ban" />
+                    <span>
+                        {entry.keepLocalBlocked ?? entry.acceptRemoteBlocked}
+                    </span>
+                </div>
+            )}
+
             <div className="zotflow-conflict-actions">
                 <button
                     className="zotflow-conflict-btn zotflow-conflict-btn--local"
+                    disabled={!!entry.keepLocalBlocked}
+                    title={entry.keepLocalBlocked}
                     onClick={() => onResolve(entry, "keep-local")}
                 >
                     Keep Local
                 </button>
                 <button
                     className="zotflow-conflict-btn zotflow-conflict-btn--remote"
+                    disabled={!!entry.acceptRemoteBlocked}
+                    title={entry.acceptRemoteBlocked}
                     onClick={() => onResolve(entry, "accept-remote")}
                 >
                     Accept Remote
@@ -452,17 +495,13 @@ export const SyncView: React.FC = () => {
 
                 setHasResolvedConflicts(true);
 
-                // Remove from local state
-                setConflicts((prev) =>
-                    prev.filter(
-                        (c) => !(c.libraryID === libraryID && c.key === key),
-                    ),
-                );
-
-                // Clear selection if resolved
-                const resolvedId = `${libraryID}:${key}`;
+                // Reload: resolving a group member resolves the whole group.
+                const remaining = await loadConflicts();
+                setConflicts(remaining);
                 setSelectedConflict((prev) =>
-                    prev === resolvedId ? null : prev,
+                    remaining.some((c) => `${c.libraryID}:${c.key}` === prev)
+                        ? prev
+                        : null,
                 );
             } catch (e) {
                 services.logService.error(
@@ -520,7 +559,9 @@ export const SyncView: React.FC = () => {
                     conflicts={conflicts}
                     selectedKey={selectedConflict}
                     onSelect={setSelectedConflict}
-                    onResolve={(entry, action) => void handleResolve(entry, action)}
+                    onResolve={(entry, action) =>
+                        void handleResolve(entry, action)
+                    }
                 />
                 {hasResolvedConflicts && conflicts.length === 0 && (
                     <div className="zotflow-sync-reminder">

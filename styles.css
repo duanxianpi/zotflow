@@ -1179,6 +1179,33 @@
     transition: all 0.15s ease;
 }
 
+.zotflow-conflict-group-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-1) var(--size-4-2);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-conflict-item--member {
+    margin-left: var(--size-4-3);
+}
+
+.zotflow-conflict-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--size-4-2);
+    margin: var(--size-4-2) 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-conflict-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .zotflow-conflict-item:hover {
     background-color: var(--background-modifier-hover);
     border-color: var(--background-modifier-border-hover);
