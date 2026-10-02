@@ -18,21 +18,24 @@ import { LIBRARY_ID } from "../sync/lib.mjs";
 export { key, LIBRARY_ID, local, reset, session } from "../sync/lib.mjs";
 
 /**
- * Show a view in a fresh main-area leaf, so each test starts from a newly
+ * Show a view in a fresh main-area tab, so each test starts from a newly
  * opened view (reusing a leaf is tested on its own in reader.live.mjs).
- * After the last main tab is detached `getLeaf(true)` fails with "No tab
- * group found", so fall back to creating a leaf in the root split.
+ *
+ * Order matters:
+ * - an empty tab is opened first, so the main area always keeps its tab
+ *   group (closing every tab first left none, and the old fallback,
+ *   `createLeafInParent(rootSplit)`, put leaves straight into the root split:
+ *   no tab bar, saved into the vault's layout);
+ * - leaves already showing this view type are closed before the view is
+ *   loaded, since the reader allows one leaf per attachment and would close
+ *   the new one instead.
  */
 export async function openView(page, viewState) {
     await page.evaluate(async (state) => {
         document.querySelectorAll(".notice").forEach((n) => n.remove());
         const ws = window.app.workspace;
-        for (const l of ws.getLeavesOfType(state.type)) l.detach();
-        const recent = ws.getMostRecentLeaf(ws.rootSplit);
-        const leaf =
-            recent && recent.view.getViewType() !== state.type
-                ? recent
-                : ws.createLeafInParent(ws.rootSplit, 0);
+        const leaf = ws.getLeaf("tab");
+        for (const l of ws.getLeavesOfType(state.type)) if (l !== leaf) l.detach();
         await leaf.setViewState({ ...state, active: true });
         ws.setActiveLeaf(leaf, { focus: true });
     }, viewState);
