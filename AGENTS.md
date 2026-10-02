@@ -490,7 +490,12 @@ Sync is tested in layers (docs/sync-architecture.md §8):
   `ZF_EXHAUSTIVE_DEPTH` (2 in CI; 3 before merging, one
   `ZF_EXHAUSTIVE_UNIVERSE` at a time), observing only services, row
   statuses and the conflict list. `ZF_EXHAUSTIVE_REPORT=1` lists every kind
-  of violation with its shortest path.
+  of violation with its shortest path; `ZF_EXHAUSTIVE_PROGRESS=1` prints
+  progress. Depth 3 takes one to a few minutes per universe — if it crawls,
+  check that the process is not niced (zsh's `BG_NICE` lowers background
+  jobs, and macOS then runs them on efficiency cores), and keep
+  `pruneFinishedTransactions()` in the world: fake-indexeddb otherwise
+  rescans every transaction it ever ran.
 
 Run a wide search (model seeds, checker depth 3) after touching sync, and
 keep the fake server (`tests/fakes/zotero-server.ts`) as strict as the real

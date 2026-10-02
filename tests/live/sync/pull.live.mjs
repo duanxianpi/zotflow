@@ -126,7 +126,7 @@ describe("a child changed by another client", () => {
             for (let i = 0; i < 100; i++) {
                 const text = await window.app.vault.adapter.read(path).catch(() => "");
                 if (/item-tree:/.test(text)) return text;
-                await new Promise((r) => setTimeout(r, 200));
+                await new Promise((r) => window.setTimeout(r, 200));
             }
             return window.app.vault.adapter.read(path);
         }, LIBRARY_ID, k);
