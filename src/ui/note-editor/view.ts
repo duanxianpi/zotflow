@@ -11,6 +11,7 @@ import type { ViewStateResult } from "obsidian";
 import type { NoteData } from "types/zotero-item";
 import type { IDBZoteroItem } from "types/db-schema";
 import { fireAndForgetIn } from "utils/fire-and-forget";
+import { NoteGoneModal } from "ui/modals/note-gone-modal";
 
 const ff = fireAndForgetIn("NoteEditorView");
 
@@ -33,13 +34,6 @@ export class NoteEditorView extends ItemView {
     private saveTimer?: number;
     private unsubscribeSyncFinished?: () => void;
     private unsubscribeNoteChanged?: () => void;
-    /**
-     * Set once a save finds the note gone (deleted in Zotero): saves stop,
-     * the text stays in the editor, and a banner offers to save it as a new
-     * note.
-     */
-    private gone?: { parentKey: string; parentExists: boolean };
-    private goneBanner?: HTMLElement;
 
     constructor(leaf: WorkspaceLeaf) {
         super(leaf);
@@ -173,7 +167,7 @@ export class NoteEditorView extends ItemView {
     }
 
     private async saveContent() {
-        if (!this.noteItem || !this.editor || this.gone) return;
+        if (!this.noteItem || !this.editor) return;
 
         const content = this.metaLine + this.editor.value;
 
@@ -186,7 +180,7 @@ export class NoteEditorView extends ItemView {
                 this.noteItem.parentItem,
             );
             if (result.status === "gone") {
-                this.showGone(result.parentKey, result.parentExists);
+                this.promptGone(result.parentKey, result.parentExists);
                 return;
             }
 
@@ -227,8 +221,7 @@ export class NoteEditorView extends ItemView {
 
                 // Only refresh if the sync covers this note's library
                 const taskLibId = task.input?.["libraryId"] as
-                    | number
-                    | undefined;
+                    number | undefined;
                 if (
                     taskLibId !== undefined &&
                     taskLibId !== this.noteItem?.libraryID
@@ -253,10 +246,7 @@ export class NoteEditorView extends ItemView {
             services.eventHub.noteChangedByEditor.subscribe(
                 (_libraryID, noteKey, _parentItemKey) => {
                     if (noteKey !== this.noteItem?.key) return;
-                    ff(
-                        this.refreshAfterSync(),
-                        "Failed to refresh after sync",
-                    );
+                    ff(this.refreshAfterSync(), "Failed to refresh after sync");
                 },
             );
     }
@@ -285,7 +275,7 @@ export class NoteEditorView extends ItemView {
                       parentKey,
                   )
                 : undefined;
-            this.showGone(parentKey, !!parent);
+            this.promptGone(parentKey, !!parent);
             return;
         }
 
@@ -295,48 +285,33 @@ export class NoteEditorView extends ItemView {
         await this.renderContent();
     }
 
-    /** The note is gone: keep the text, stop saving, offer to save it as a new note. */
-    private showGone(parentKey: string, parentExists: boolean) {
-        if (this.gone) return;
-        this.gone = { parentKey, parentExists };
-        services.notificationService.notify(
-            "warning",
-            "This note was deleted in Zotero.",
-        );
-        const banner = createDiv({ cls: "zotflow-note-gone-banner" });
-        banner.createSpan({
-            text: parentExists
-                ? "This note was deleted in Zotero. Your text is kept here until you save it as a new note under the same item."
-                : "This note and its parent were deleted in Zotero. Your text is kept here until you save it as a standalone note.",
+    /**
+     * The note is gone (deleted in Zotero): the text stays in the editor and
+     * the user is asked to save it as a new note — the same prompt as the
+     * source-note editor. Once saved, editing continues on the new note.
+     */
+    private promptGone(parentKey: string, parentExists: boolean) {
+        const note = this.noteItem;
+        if (!note) return;
+        NoteGoneModal.show(this.app, {
+            libraryID: note.libraryID,
+            noteKey: note.key,
+            parentKey,
+            parentExists,
+            content: () => this.metaLine + (this.editor?.value ?? ""),
+            onSaved: (key) =>
+                ff(
+                    this.switchToNote(note.libraryID, key),
+                    "Failed to open the new note",
+                ),
         });
-        const button = banner.createEl("button", {
-            text: "Save as new note",
-            cls: "mod-cta",
-        });
-        button.addEventListener("click", () => {
-            ff(this.saveAsNewNote(), "Failed to save the note");
-        });
-        this.contentEl.prepend(banner);
-        this.goneBanner = banner;
     }
 
-    private async saveAsNewNote() {
-        if (!this.noteItem || !this.editor || !this.gone) return;
-        const libraryID = this.noteItem.libraryID;
-        const key = await workerBridge.itemNote.saveAsNewNote(
-            libraryID,
-            this.gone.parentExists ? this.gone.parentKey : "",
-            this.metaLine + this.editor.value,
-        );
+    private async switchToNote(libraryID: number, key: string) {
         const item = await workerBridge.dbHelper.getItem(libraryID, key);
         if (!item || item.itemType !== "note") return;
-        // Keep editing in place, now against the new note.
         this.noteItem = item;
-        this.gone = undefined;
-        this.goneBanner?.remove();
-        this.goneBanner = undefined;
         this.updateTitle();
-        services.notificationService.notify("success", "Saved as a new note.");
     }
 
     private updateTitle() {
