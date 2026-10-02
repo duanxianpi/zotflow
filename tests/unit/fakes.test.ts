@@ -258,6 +258,109 @@ describe("fake zotero server", () => {
         expect(gone.status).toBe(404);
     });
 
+    /*
+     * Behaviour below is measured on api.zotero.org by
+     * tests/live/sync/server.live.mjs; keep the two in step.
+     */
+    const post = (objects: unknown[], headers: Record<string, string> = {}) =>
+        fetch("https://api.zotero.org/users/1/items", {
+            method: "POST",
+            headers: { "Zotero-API-Key": "KEY", ...headers },
+            body: JSON.stringify(objects),
+        }).then(async (r) => ({
+            status: r.status,
+            version: Number(r.headers.get("Last-Modified-Version")),
+            body: (await r.json()) as {
+                successful: Record<string, { version: number }>;
+                unchanged: Record<string, string>;
+                failed: Record<string, { code: number; message: string }>;
+            },
+        }));
+    const batchDelete = (keys: string[], since?: number) =>
+        fetch(`https://api.zotero.org/users/1/items?itemKey=${keys.join(",")}`, {
+            method: "DELETE",
+            headers: {
+                "Zotero-API-Key": "KEY",
+                ...(since === undefined ? {} : { "If-Unmodified-Since-Version": String(since) }),
+            },
+        });
+
+    test("a key-based write needs a version or the library precondition (428)", async () => {
+        const res = await post([{ key: "AAAAAAAA", itemType: "book" }]);
+        expect(res.body.failed["0"]!.code).toBe(428);
+        expect(server.library(1).items.has("AAAAAAAA")).toBe(false);
+    });
+
+    test("a create with version 0 on an existing key is a per-item 412", async () => {
+        server.library(1).addItem({ key: "AAAAAAAA" });
+        const res = await post([{ key: "AAAAAAAA", version: 0, itemType: "book" }]);
+        expect(res.body.failed["0"]!.code).toBe(412);
+    });
+
+    test("a create without a version on an existing key merges into it", async () => {
+        const lib = server.library(1);
+        lib.addItem({ key: "AAAAAAAA", data: { title: "old", tags: [{ tag: "kept" }] } });
+        const res = await post([{ key: "AAAAAAAA", itemType: "journalArticle", title: "new" }], {
+            "If-Unmodified-Since-Version": String(lib.version),
+        });
+        expect(res.body.failed).toEqual({});
+        expect(lib.items.get("AAAAAAAA")!.data).toMatchObject({ title: "new", tags: [{ tag: "kept" }] });
+    });
+
+    test("an update is a patch: fields not sent are kept", async () => {
+        const lib = server.library(1);
+        lib.addItem({ key: "AAAAAAAA", data: { title: "kept", extra: "kept too", tags: [] } });
+        const item = lib.items.get("AAAAAAAA")!;
+        await post([{ key: "AAAAAAAA", version: item.version, tags: [{ tag: "patched" }] }]);
+        expect(lib.items.get("AAAAAAAA")!.data).toMatchObject({
+            title: "kept",
+            extra: "kept too",
+            tags: [{ tag: "patched" }],
+        });
+    });
+
+    test("a stale item version is a per-item 412; a missing item a 404", async () => {
+        const lib = server.library(1);
+        lib.addItem({ key: "AAAAAAAA" }); // v1
+        lib.updateItem("AAAAAAAA", { title: "moved on" }); // v2
+        const res = await post(
+            [
+                { key: "AAAAAAAA", version: 1, title: "late" },
+                { key: "BBBBBBBB", version: 5, title: "gone" },
+            ],
+            { "If-Unmodified-Since-Version": String(lib.version) },
+        );
+        expect(res.body.failed["0"]!.code).toBe(412);
+        expect(res.body.failed["1"]!.code).toBe(404);
+        expect(lib.items.get("AAAAAAAA")!.data.title).toBe("moved on");
+    });
+
+    test("batch DELETE removes the keys and their children, one version per request", async () => {
+        const lib = server.library(1);
+        lib.addItem({ key: "PARENT01" });
+        lib.addItem({ key: "CHILD001", data: { itemType: "note", parentItem: "PARENT01" } });
+        lib.addItem({ key: "OTHER001" });
+        const v0 = lib.version;
+
+        const res = await batchDelete(["PARENT01", "OTHER001", "MISSING1"], v0);
+
+        expect(res.status).toBe(204);
+        expect(Number(res.headers.get("Last-Modified-Version"))).toBe(v0 + 1);
+        expect([...lib.items.keys()]).toEqual([]);
+        const log = (await (await get(`https://api.zotero.org/users/1/deleted?since=${v0}`)).json()) as {
+            items: string[];
+        };
+        expect(log.items.sort()).toEqual(["CHILD001", "OTHER001", "PARENT01"]);
+    });
+
+    test("batch DELETE needs the library precondition and 412s as a whole when stale", async () => {
+        const lib = server.library(1);
+        lib.addItem({ key: "AAAAAAAA" });
+        expect((await batchDelete(["AAAAAAAA"])).status).toBe(428);
+        expect((await batchDelete(["AAAAAAAA"], lib.version - 1)).status).toBe(412);
+        expect(lib.items.has("AAAAAAAA")).toBe(true);
+    });
+
     test("rejects a wrong API key", async () => {
         const res = await fetch("https://api.zotero.org/users/1/items", {
             headers: { "Zotero-API-Key": "WRONG" },

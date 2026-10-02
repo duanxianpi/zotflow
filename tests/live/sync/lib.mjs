@@ -324,7 +324,8 @@ export async function syncWithPause(match, action, during = async () => {}) {
 
 const API = `https://api.zotero.org/${LIBRARY}`;
 
-async function api(method, path, { headers = {}, body } = {}) {
+/** A raw API request against the test group (the key never leaves this process). */
+export async function api(method, path, { headers = {}, body } = {}) {
     for (let attempt = 0; ; attempt++) {
         const res = await fetch(`${API}${path}`, {
             method,
@@ -395,14 +396,19 @@ export const remote = {
 /*  Reset                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Server back to the fixture set; local library cleared and fully synced. */
-export async function reset() {
-    await ensureHooks();
-    await stopIntercepting();
+/** Server back to the fixture set (no Obsidian involved). */
+export async function resetServer() {
     const p = plan(desired, await client.snapshot());
     if (!planIsEmpty(p)) await applyPlan(client, p);
     const after = plan(desired, await client.snapshot());
     if (!planIsEmpty(after)) throw new Error("Fixture library did not reset cleanly");
+}
+
+/** Server back to the fixture set; local library cleared and fully synced. */
+export async function reset() {
+    await ensureHooks();
+    await stopIntercepting();
+    await resetServer();
     await inObsidian((t, h, lib) => h.clearLibrary(lib), LIBRARY_ID);
     await local.sync();
     const conflicts = await local.conflicts();

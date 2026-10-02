@@ -167,6 +167,16 @@ interface LibraryState {
     keyRemaps: Map<string, string>;
 }
 
+/** Delete an item and, as the real API does, its descendants; log them all. */
+function deleteWithChildren(lib: LibraryState, key: string, version: number): void {
+    if (!lib.items.has(key)) return;
+    for (const [k, item] of [...lib.items]) {
+        if (item.data.parentItem === key) deleteWithChildren(lib, k, version);
+    }
+    lib.items.delete(key);
+    lib.deletedItems.set(key, version);
+}
+
 function json(body: unknown, version: number, status = 200): Response {
     return new Response(JSON.stringify(body), {
         status,
@@ -404,6 +414,27 @@ export function createFakeZoteroServer(
                 return json(payload, lib.version);
             }
 
+            if (method === "DELETE" && isItems) {
+                // Batch delete, measured on api.zotero.org: library-level
+                // precondition (412 as a whole when stale), keys the server
+                // lacks are ignored, children go with their parent and are
+                // logged, and the library moves by one version per request.
+                const unmodifiedSince = headers.get("If-Unmodified-Since-Version");
+                if (unmodifiedSince === null) {
+                    return json({ message: "If-Unmodified-Since-Version not provided" }, lib.version, 428);
+                }
+                if (Number(unmodifiedSince) < lib.version) {
+                    return json({ message: "Precondition failed" }, lib.version, 412);
+                }
+                const keys = (query.get("itemKey") ?? "").split(",").filter(Boolean);
+                const newVersion = ++lib.version;
+                for (const k of keys) deleteWithChildren(lib, k, newVersion);
+                return new Response(null, {
+                    status: 204,
+                    headers: { "Last-Modified-Version": String(lib.version) },
+                });
+            }
+
             if (method === "POST" && isItems) {
                 const unmodified = headers.get("If-Unmodified-Since-Version");
                 if (unmodified !== null && Number(unmodified) < lib.version) {
@@ -420,7 +451,12 @@ export function createFakeZoteroServer(
                 > = {};
 
                 payload.forEach((raw, index) => {
-                    const submitted = String(raw.key ?? raw.data?.key ?? "");
+                    // Objects come as the envelope ZotFlow sends
+                    // (`{ key, version, data }`) or as flat item fields.
+                    const fields: Record<string, any> = raw.data ?? raw;
+                    const submitted = String(raw.key ?? fields.key ?? "");
+                    const sentVersion: number | undefined =
+                        raw.version ?? fields.version;
                     const slot = String(index);
 
                     const reject = lib.rejects.get(submitted);
@@ -439,20 +475,48 @@ export function createFakeZoteroServer(
                         return;
                     }
 
-                    // An update (it carries a version) to an item the server
-                    // does not have is a 404, as on the real API; only a
-                    // create (no version) may bring a deleted key back.
-                    const isUpdate =
-                        raw.version !== undefined ||
-                        raw.data?.version !== undefined;
-                    if (isUpdate && !lib.items.has(submitted)) {
-                        failed[slot] = { code: 404, message: "Item not found" };
+                    // Measured on api.zotero.org (tests/live/sync/server.live.mjs):
+                    // - a key-based write needs a version or the library
+                    //   precondition (428);
+                    // - version 0 means "create": 412 if the key exists;
+                    // - a positive version older than the item's is a 412,
+                    //   one for a missing item a 404 (a newer one is accepted);
+                    // - no version (precondition only) creates, or merges into
+                    //   an existing item as an update.
+                    const existing = lib.items.get(submitted);
+                    if (sentVersion === undefined && unmodified === null) {
+                        failed[slot] = {
+                            code: 428,
+                            message: "Either If-Unmodified-Since-Version or 'version' property must be provided for 'key'-based writes",
+                        };
                         return;
+                    }
+                    if (sentVersion === 0 && existing) {
+                        failed[slot] = {
+                            code: 412,
+                            message: `Item has been modified since specified version (expected 0, found ${existing.version})`,
+                        };
+                        return;
+                    }
+                    if (sentVersion !== undefined && sentVersion > 0) {
+                        if (!existing) {
+                            failed[slot] = { code: 404, message: "Item doesn't exist" };
+                            return;
+                        }
+                        if (sentVersion < existing.version) {
+                            failed[slot] = {
+                                code: 412,
+                                message: `Item has been modified since specified version (expected ${sentVersion}, found ${existing.version})`,
+                            };
+                            return;
+                        }
                     }
 
                     // A child needs its parent on the server, including one
                     // created earlier in this same request.
-                    const parent = String(raw.data?.parentItem ?? "");
+                    const parent = String(
+                        fields.parentItem ?? existing?.data.parentItem ?? "",
+                    );
                     if (parent && !lib.items.has(parent)) {
                         failed[slot] = {
                             code: 400,
@@ -467,11 +531,20 @@ export function createFakeZoteroServer(
                     lib.keyRemaps.delete(submitted);
 
                     const newVersion = ++lib.version;
+                    // An update merges the fields sent (the real API applies a
+                    // partial object as a patch); a create starts fresh.
+                    const { key: _k, version: _v, library: _l, links: _ln, meta: _m, ...sent } =
+                        fields;
                     const stored: FakeZoteroItem = {
                         key,
                         version: newVersion,
                         library: libraryStub(lib),
-                        data: { ...(raw.data ?? {}), key, version: newVersion },
+                        data: {
+                            ...(existing && key === submitted ? existing.data : {}),
+                            ...sent,
+                            key,
+                            version: newVersion,
+                        },
                     };
                     lib.items.set(key, stored);
                     lib.deletedItems.delete(key);
@@ -497,8 +570,7 @@ export function createFakeZoteroServer(
             if (unmodified !== null && Number(unmodified) < existing.version) {
                 return json({ message: "Precondition failed" }, lib.version, 412);
             }
-            lib.items.delete(key);
-            lib.deletedItems.set(key, ++lib.version);
+            deleteWithChildren(lib, key, ++lib.version);
             return new Response(null, {
                 status: 204,
                 headers: { "Last-Modified-Version": String(lib.version) },
