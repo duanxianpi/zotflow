@@ -208,6 +208,18 @@ export function onRemoteObject(state: KeyState, remote: AnyZoteroItem, ctx: Remo
     }
     const r = base ? reconcile3(base, local, data) : reconcile2(local, data);
 
+    // A write of unknown outcome that the server copy does not match: had it
+    // landed, the base would be what was sent, and a field changed since on
+    // both sides would be a conflict the pre-send base cannot show. Fields
+    // that conflict under either base are conflicts.
+    if (journal && !ownWrite) {
+        const fromSent = reconcile3(journal.sent, local, data);
+        const listed = new Set(r.conflicts.map(([c]) => c.field));
+        for (const pair of fromSent.conflicts) {
+            if (!listed.has(pair[0].field)) r.conflicts.push(pair);
+        }
+    }
+
     if (r.conflicts.length > 0) {
         next.conflict = {
             libraryID: ctx.libraryID,

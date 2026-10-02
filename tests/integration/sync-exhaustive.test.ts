@@ -128,7 +128,7 @@ interface Found {
 const kindOf = (message: string) =>
     message
         .replace(/\b[A-Z0-9]{8}\b/g, "K")
-        .replace(/\b[LR][ab]\b/g, "V")
+        .replace(/\b[LRO]\d{3}\b/g, "V")
         .replace(/\d+/g, "n")
         .slice(0, 140);
 

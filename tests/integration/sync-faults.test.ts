@@ -225,6 +225,34 @@ describe("a lost answer followed by more local work", () => {
         expect(lib.items.get("NEWITEM1")!.data.tags).toEqual([{ tag: "after the lost create" }]);
     });
 
+    test("after a second lost answer, a remote edit of the same field is a conflict, not a silent win", async () => {
+        // Found by the depth-3 checker. The second send (B) landed but its
+        // answer was lost, so the merge base on record is the copy before
+        // it (A). The user then set A again and another client changed the
+        // field: against A alone the user made no change and the remote edit
+        // would win; against what was sent (B) both changed it.
+        const lib = await syncedItem();
+        const setNote = (text: string) =>
+            mutateItem(USER_ID, "NOTEKEY1", "note", (d) => {
+                d.note = `<p>${text}</p>`;
+            });
+        await setNote("A");
+        failFirst("lost-response", "POST");
+        await h.sync.startSync();
+        await setNote("B");
+        restore?.();
+        failFirst("lost-response", "POST");
+        await h.sync.startSync();
+        expect(lib.items.get("NOTEKEY1")!.data.note).toBe("<p>B</p>");
+        await setNote("A");
+        lib.updateItem("NOTEKEY1", { note: "<p>theirs</p>" });
+
+        await syncCleanly();
+
+        expect(await conflictKind("NOTEKEY1")).toBe("changed");
+        expect(lib.items.get("NOTEKEY1")!.data.note).toBe("<p>theirs</p>");
+    });
+
     test("a further edit is pushed as an update, not a conflict", async () => {
         const lib = await syncedItem();
         await mutateItem(USER_ID, "AAAAAAAA", (d) => {

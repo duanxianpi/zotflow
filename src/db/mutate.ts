@@ -270,7 +270,11 @@ export async function deleteLocalItems(libraryID: number, keys: string[]): Promi
             const row = state.row;
             if (!row) continue;
 
-            const neverPushed = row.version === 0 && !state.journal && !state.conflict;
+            // Zotero has never had it: not sent, never there (no merge base),
+            // and no conflict showing a server object under this key. (A
+            // remote-deletion group does not: it says the parent is gone.)
+            const neverPushed =
+                row.version === 0 && !state.journal && !state.cache && state.conflict?.kind !== "changed";
             if (row.itemType === "note" && !neverPushed && !row.localOnly) {
                 const edited = asAny(
                     applyLocalEdit(row as IDBZoteroItem<ZoteroItemData>, (d) => {

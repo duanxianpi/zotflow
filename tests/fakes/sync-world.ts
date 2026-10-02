@@ -83,8 +83,13 @@ export function userContent(data: unknown): string {
 
 const sameUserContent = (a: unknown, b: unknown) => userContent(a) === userContent(b);
 
-/** Two values per side, alternating, so consecutive edits always differ. */
-const flip = (prev: string | undefined, a: string, b: string) => (prev === a ? b : a);
+/**
+ * The next value after `prev` for a side ("L", "R" or "O"): never repeating,
+ * so no field goes A → B → A. A three-way merge cannot see such a round trip
+ * (nor can Zotero's): the field looks unchanged against its base.
+ */
+const nextValue = (prev: string | undefined, side: string) =>
+    `${side}${String(Number(prev?.slice(1) ?? 0) + 1).padStart(3, "0")}`;
 
 /* ------------------------------------------------------------------ */
 /*  State                                                             */
@@ -370,13 +375,13 @@ export class World {
     /* ---------------------------- actions --------------------------- */
 
     private localValue(key: string): string {
-        const v = flip(this.intent.lastLocal[key], "La", "Lb");
+        const v = nextValue(this.intent.lastLocal[key], "L");
         this.intent.lastLocal[key] = v;
         return v;
     }
 
     private remoteValue(key: string): string {
-        const v = flip(this.intent.lastRemote[key], "Ra", "Rb");
+        const v = nextValue(this.intent.lastRemote[key], "R");
         this.intent.lastRemote[key] = v;
         return v;
     }
@@ -629,7 +634,7 @@ export class World {
     async remoteEditOther(key: string): Promise<void> {
         const item = this.lib.items.get(key);
         if (!item) return;
-        const v = flip(this.intent.lastRemote[`${key}#other`], "Oa", "Ob");
+        const v = nextValue(this.intent.lastRemote[`${key}#other`], "O");
         this.intent.lastRemote[`${key}#other`] = v;
         const t = item.data.itemType;
         await this.noteRemoteChange(key);

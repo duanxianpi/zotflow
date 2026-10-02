@@ -211,6 +211,34 @@ describe("a remote deletion of a parent whose child has local changes", () => {
     });
 });
 
+describe("a draft note under a parent deleted remotely", () => {
+    test("deleted by the user, it never reaches the server, even after Keep Local", async () => {
+        // Found by the depth-3 checker: the draft joined the deletion group,
+        // and its delete trashed it instead of dropping it, so Keep Local
+        // created a trashed note on a server that never had it.
+        const lib = await harness();
+        lib.addItem({ key: "PARENT01", data: { title: "p" } });
+        await h.sync.startSync();
+        const { ItemNoteService } = await import("worker/services/item-note");
+        const { ConvertService } = await import("worker/services/convert");
+        const notes = new ItemNoteService(h.settings, h.host, new ConvertService(), {
+            triggerUpdate: () => Promise.resolve(),
+        } as never);
+        const draft = await notes.createChildNote(USER_ID, "PARENT01");
+        lib.deleteItem("PARENT01");
+        await h.sync.startSync();
+        expect(await conflict(draft)).toMatchObject({ kind: "remote-deleted", group: "PARENT01" });
+
+        await notes.deleteNote(USER_ID, draft);
+        expect(await row(draft)).toBeUndefined();
+        await new ConflictService(h.host).resolveAllItemConflicts("keep-local");
+        await h.sync.startSync();
+
+        expect(lib.items.has(draft)).toBe(false);
+        expect(lib.items.has("PARENT01")).toBe(true);
+    });
+});
+
 describe("a remote deletion resolved after the server moved on", () => {
     /** Parent and an edited child note, both deleted remotely. */
     async function deletedFamily() {
