@@ -28,6 +28,7 @@ import { errorMessage as describeError } from "utils/error";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
 import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-region-extension";
 import { handleEditorDrop } from "ui/editor/citation-helper";
+import { startSync } from "ui/start-sync";
 
 import { openAttachment, openItemNote } from "utils/viewer";
 import { getLocalSidecarPath } from "utils/utils";
@@ -309,7 +310,7 @@ export default class ZotFlow extends Plugin {
             name: "Sync all libraries",
             callback: async () => {
                 await this.runTaskCommand(
-                    () => workerBridge.createSyncTask(),
+                    () => startSync(),
                     "Sync started",
                     "Failed to start sync",
                 );

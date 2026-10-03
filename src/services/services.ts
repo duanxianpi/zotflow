@@ -10,6 +10,7 @@ import { EventHub } from "./event-hub";
 import { CitationService } from "./citation-service";
 import { LibraryCache } from "./library-cache";
 import { ReaderDocumentCache } from "./reader-document-cache";
+import { PendingEdits } from "./pending-edits";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 
 import type { App } from "obsidian";
@@ -31,6 +32,7 @@ class ServiceLocator {
     private _citationService: CitationService;
     private _libraryCache: LibraryCache;
     private _readerDocumentCache: ReaderDocumentCache;
+    private _pendingEdits: PendingEdits;
     private _enhancementPack: EnhancementPackService;
 
     initialize(plugin: ZotFlow, settings: ZotFlowSettings) {
@@ -56,6 +58,7 @@ class ServiceLocator {
             this._logService,
         );
         this._readerDocumentCache = new ReaderDocumentCache();
+        this._pendingEdits = new PendingEdits(this._logService);
         this._enhancementPack = new EnhancementPackService(
             this._app.vault.adapter,
             this._app.vault.configDir,
@@ -166,6 +169,11 @@ class ServiceLocator {
     get readerDocumentCache() {
         this.assertInitialized();
         return this._readerDocumentCache;
+    }
+
+    get pendingEdits() {
+        this.assertInitialized();
+        return this._pendingEdits;
     }
 }
 

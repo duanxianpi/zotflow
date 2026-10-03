@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { ObsidianIcon } from "../ObsidianIcon";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
+import { startSync } from "ui/start-sync";
 
 import type {
     ConflictItemInfo,
@@ -440,7 +441,7 @@ export const SyncView: React.FC = () => {
     const handleSyncAll = useCallback(async () => {
         setSyncingAll(true);
         try {
-            await workerBridge.createSyncTask();
+            await startSync();
             services.notificationService.notify("success", "Sync started.");
         } catch (e) {
             services.logService.error("Sync all failed", "SyncView", e);
@@ -457,7 +458,7 @@ export const SyncView: React.FC = () => {
         async (libId: number) => {
             setSyncingLibId(libId);
             try {
-                await workerBridge.createSyncTask(libId);
+                await startSync(libId);
                 services.notificationService.notify("success", "Sync started.");
             } catch (e) {
                 services.logService.error(
