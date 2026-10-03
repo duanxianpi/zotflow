@@ -1,7 +1,7 @@
 import Dexie from "dexie";
 
 import { itemTitle } from "db/normalize";
-import { planV7Migration } from "db/sync/migrate-v7";
+import { migrateRowV7, needsWholeRow, planV7Migration } from "db/sync/migrate-v7";
 import { BASE_FIELD_MAP } from "types/zotero-base-fields";
 
 import type { IndexableTypePart, Table } from "dexie";
@@ -20,7 +20,7 @@ import type {
     IDBSyncQueueEntry,
     IDBUploadJournal,
 } from "types/db-schema";
-import type { V6Row } from "db/sync/migrate-v7";
+import type { V6Index, V6Row } from "db/sync/migrate-v7";
 
 /** Dexie subclass defining the IndexedDB schema for ZotFlow. */
 export class ZotFlowDB extends Dexie {
@@ -148,12 +148,30 @@ export class ZotFlowDB extends Dexie {
             })
             .upgrade(async (tx) => {
                 const items = tx.table<V6Row, [number, string]>("items");
-                const plan = planV7Migration(
-                    await items.toArray(),
-                    new Date().toISOString(),
-                );
+                // Pass 1: a light index of every row, whole copies of the
+                // few the plan needs.
+                const index: V6Index[] = [];
+                const whole: V6Row[] = [];
+                await items.each((r) => {
+                    index.push({
+                        libraryID: r.libraryID,
+                        key: r.key,
+                        parentItem: r.parentItem,
+                        syncStatus: r.syncStatus,
+                        syncError: r.syncError,
+                    });
+                    if (needsWholeRow(r)) whole.push(r);
+                });
+                const plan = planV7Migration(index, whole, new Date().toISOString());
+
+                // Pass 2: each row rewritten in place.
                 await items.bulkDelete(plan.removed);
-                await items.bulkPut(plan.rows);
+                const conflictOf = new Map(
+                    plan.conflicts.map((c) => [`${c.libraryID}/${c.key}`, c]),
+                );
+                await items.toCollection().modify((r) => {
+                    migrateRowV7(r, conflictOf.get(`${r.libraryID}/${r.key}`));
+                });
                 await tx.table("syncDeleteLog").bulkPut(plan.deleteLog);
                 await tx.table("syncConflicts").bulkPut(plan.conflicts);
                 await tx.table("syncGroups").bulkPut(plan.groups);

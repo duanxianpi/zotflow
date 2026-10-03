@@ -217,6 +217,19 @@ describe("v7: the sync model", () => {
         expect((await db.items.get([LIB, "OTHER001"]))!.syncStatus).toBe("synced");
     });
 
+    test("a descendant pending deletion leaves with its delete log, not as a group member", async () => {
+        await migrate([
+            v6Row("PARENT01", "conflict", { syncError: "Remote deletion blocked: Contains unsynced local changes." }),
+            v6Row("NOTEAAAA", "updated", {}, { itemType: "note", parentItem: "PARENT01" }),
+            v6Row("ANNOTAT1", "deleted", {}, { itemType: "annotation", parentItem: "PARENT01" }),
+        ]);
+
+        expect((await db.syncGroups.get([LIB, "PARENT01"]))!.members.sort()).toEqual(["NOTEAAAA", "PARENT01"]);
+        expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toBeUndefined();
+        expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+        expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ itemType: "annotation" });
+    });
+
     test("a refused write becomes a refused conflict", async () => {
         await migrate([v6Row("ARTICLE1", "conflict", { syncError: "413: Tag too long" })]);
 
