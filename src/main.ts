@@ -1,3 +1,4 @@
+import { normalizeAnnotationSettings } from "utils/annotation-profiles";
 import {
     addIcon,
     Component,
@@ -656,6 +657,8 @@ export default class ZotFlow extends Plugin {
             this.customThemes = [];
         }
 
+        Object.assign(this.settings, normalizeAnnotationSettings(this.settings));
+
         // Load sensitive credentials from SecretStorage (cross-platform safe)
         loadCredentials(this.settings, this.app.secretStorage);
     }
@@ -675,6 +678,7 @@ export default class ZotFlow extends Plugin {
     }
 
     async saveSettings() {
+        Object.assign(this.settings, normalizeAnnotationSettings(this.settings));
         // Store sensitive credentials in SecretStorage (cross-platform safe)
         saveCredentials(this.settings, this.app.secretStorage);
         // Persist nested data.json (without sensitive fields)

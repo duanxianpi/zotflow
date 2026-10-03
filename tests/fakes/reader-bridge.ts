@@ -1,3 +1,4 @@
+import type { AnnotationProfileConfig } from "utils/annotation-profiles";
 /**
  * Fakes for driving `IframeReaderBridge` without a browser.
  *
@@ -222,6 +223,7 @@ export function createFakeChild() {
         initReader: vi.fn((_opts: CreateReaderOptions) =>
             Promise.resolve(true),
         ),
+        setAnnotationProfileConfig: vi.fn((_config: AnnotationProfileConfig) => Promise.resolve(true)),
         setColorScheme: vi.fn(() => Promise.resolve(true)),
         addAnnotation: vi.fn((_a: AnnotationJSON) => Promise.resolve(true)),
         refreshAnnotations: vi.fn((_a: AnnotationJSON[]) =>

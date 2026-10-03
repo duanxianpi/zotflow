@@ -2867,3 +2867,12 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
         max-height: 140px;
     }
 }
+
+/* Annotation profile editor: native controls remain usable in narrow windows. */
+.zotflow-profiles-modal { width: min(760px, 95vw); }
+.zotflow-palette-entry .setting-item-control { flex-wrap: wrap; gap: var(--size-4-2); }
+.zotflow-palette-entry input[type="text"] { width: 9em; }
+@media (max-width: 600px) {
+    .zotflow-profiles-modal .setting-item { flex-direction: column; align-items: stretch; }
+    .zotflow-profiles-modal .setting-item-control { flex-wrap: wrap; justify-content: flex-start; }
+}

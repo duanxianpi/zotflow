@@ -1,3 +1,5 @@
+import { EventBus } from "services/event-bus";
+import { normalizeAnnotationSettings } from "utils/annotation-profiles";
 /**
  * `IframeReaderBridge` driven by a fake reader child.
  *
@@ -100,6 +102,7 @@ vi.mock("ui/editor/markdown-editor", () => ({
 
 vi.mock("services/services", () => ({
     services: {
+        eventHub: { get settingsChanged() { return settingsChanged; } },
         get app() {
             return { metadataCache: { resolvedLinks: {} } };
         },
@@ -129,10 +132,13 @@ vi.mock("services/services", () => ({
 
 /* ------------------------------------------------------------------ */
 
+let settingsChanged = new EventBus<[]>();
+
 const harness = (options?: ReaderBridgeHarnessOptions) =>
     createReaderBridgeHarness(IframeReaderBridge, state, options);
 
 beforeEach(() => {
+    settingsChanged = new EventBus<[]>();
     resetReaderBridgeState(state, { ...DEFAULT_SETTINGS });
     MarkdownRenderer.reset();
 
@@ -990,5 +996,49 @@ describe("lifecycle", () => {
         await h.bridge.dispose();
         parentAfter.handleEvent({ type: "sidebarToggled", open: false });
         expect(seen).toHaveLength(1);
+    });
+});
+
+describe("annotation profiles", () => {
+    const research = { id: "research", name: "Research", palette: [{ id: "a", color: "#ffd400", label: "Methodology" }] };
+
+    it("keeps simultaneous reader selections independent and restores selection on reconnect", async () => {
+        Object.assign(state.settings!, normalizeAnnotationSettings({ annotationProfiles: [research] }));
+        const a = harness();
+        const parentA = await a.completeHandshake();
+        const b = harness({ isLocal: true, localAttachment: { path: "a.pdf", name: "a.pdf" }, localDataManager: { getAllAnnotations: () => [] } });
+        await b.completeHandshake();
+        await a.bridge.initReader(makeReaderOptions());
+        await b.bridge.initReader(makeReaderOptions());
+        parentA.handleEvent({ type: "annotationProfileChanged", profileId: "research" });
+        expect(b.child.initReader.mock.lastCall![0].annotationProfileConfig!.activeProfileId).toBe("zotero-default");
+        expect(state.settings!.defaultAnnotationProfileId).toBe("zotero-default");
+        const reconnect = a.bridge.reconnect();
+        await vi.waitFor(() => expect(a.iframes).toHaveLength(2));
+        await a.register();
+        await reconnect;
+        expect(a.child.initReader.mock.lastCall![0].annotationProfileConfig!.activeProfileId).toBe("research");
+        await a.bridge.dispose();
+        await b.bridge.dispose();
+    });
+
+    it("updates palettes, falls back after deletion, and unsubscribes on dispose", async () => {
+        Object.assign(state.settings!, normalizeAnnotationSettings({ annotationProfiles: [research], defaultAnnotationProfileId: "research" }));
+        const h = harness();
+        await h.completeHandshake();
+        await h.bridge.initReader(makeReaderOptions());
+        state.settings!.annotationProfiles[1]!.palette[0]!.label = "Evidence";
+        settingsChanged.emit();
+        await Promise.resolve();
+        expect(h.child.setAnnotationProfileConfig.mock.lastCall![0].profiles[1]!.palette[0]!.label).toBe("Evidence");
+        Object.assign(state.settings!, normalizeAnnotationSettings({ ...state.settings, annotationProfiles: [] }));
+        settingsChanged.emit();
+        await Promise.resolve();
+        expect(h.child.setAnnotationProfileConfig.mock.lastCall![0].activeProfileId).toBe("zotero-default");
+        expect(h.child.refreshAnnotations).not.toHaveBeenCalled();
+        await h.bridge.dispose();
+        const count = h.child.setAnnotationProfileConfig.mock.calls.length;
+        settingsChanged.emit();
+        expect(h.child.setAnnotationProfileConfig).toHaveBeenCalledTimes(count);
     });
 });

@@ -166,7 +166,45 @@ npm run dev:reader     # webpack watch mode (reader, separate terminal)
 npm run lint
 ```
 
+### Annotation profiles
+
+Open **Settings → ZotFlow → Annotation Profiles** to create or duplicate a profile,
+rename it, and edit/reorder its colors and optional labels. The protected **Zotero
+default** keeps the original eight colors; duplicate it to customize it. Ink and
+text retain the extra black option. A profile needs at least one color, and colors
+within a profile must be distinct six-digit hex values.
+
+The default profile applies to newly opened readers. The profile chooser inside a
+reader changes only that open reader; reconnecting retains its choice, while
+reopening the document starts with the settings default. Profile edits update
+open readers. Removing their active profile falls back to the default. Existing
+annotations keep their colors and tags, including colors removed from a palette.
+
+Labels are display text. **Automatically tag new annotations** is a separate,
+default-off option that adds a labeled entry's text as an ordinary Zotero annotation
+tag at creation. It preserves other tags and avoids duplicates. It never retags
+annotations when recoloring, editing, importing, or switching profiles.
+
+Source-note labels resolve in this order:
+
+1. An ordinary annotation tag matching a current or remembered category label.
+   Matching is exact and case-sensitive; manually added matching tags count too.
+   If several match, the earliest registered category wins.
+2. The annotation color's label in the **settings default profile**. Temporary
+   reader selections do not change source-note fallback labels.
+3. **Other** if neither resolves.
+
+ZotFlow remembers committed label names in its settings even after a label or
+profile is deleted. This keeps tagged annotations' meaning stable across profile
+changes. Share ZotFlow's settings between devices to retain that registry; Zotero
+stores only ordinary colors and tags. Untagged older annotations use the current
+color fallback, so their inferred display labels may change.
+
 ### Live testing in Obsidian
+
+The local-only annotation profile regression needs no Zotero key. After building
+and launching the isolated app, run `node tests/live/annotation-profiles.live.mjs`.
+It creates named fixtures in the test vault and restores profile settings afterward.
 
 `npm run live:obsidian` drives a separate Obsidian instance over the Chrome
 DevTools Protocol. It runs with its own profile (`--user-data-dir`), so its

@@ -1,3 +1,5 @@
+import { normalizeAnnotationSettings } from "utils/annotation-profiles";
+import type { AnnotationProfileSettings } from "utils/annotation-profiles";
 import type { CustomReaderTheme } from "types/zotero-reader";
 import type { OutputFormat as CslOutputFormat } from "worker/csl";
 
@@ -32,7 +34,7 @@ export interface LibraryConfig {
 }
 
 /** Full plugin settings shape persisted to `data.json`. */
-export interface ZotFlowSettings {
+export interface ZotFlowSettings extends AnnotationProfileSettings {
     zoteroapikey: string;
     librariesConfig: Record<string, LibraryConfig>;
     syncInterval: number; // in minutes
@@ -115,6 +117,7 @@ export interface ZotFlowPluginData {
 
 /** Default values for all `ZotFlowSettings` fields. */
 export const DEFAULT_SETTINGS: ZotFlowSettings = {
+    ...normalizeAnnotationSettings({}),
     zoteroapikey: "",
     librariesConfig: {},
     syncInterval: 30,

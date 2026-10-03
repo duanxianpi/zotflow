@@ -1,3 +1,4 @@
+import { AnnotationProfilesSection } from "settings/sections/annotation-profiles-section";
 import { App, PluginSettingTab } from "obsidian";
 
 import { CacheSection } from "settings/sections/cache-section";
@@ -33,6 +34,7 @@ export class ZotFlowSettingTab extends PluginSettingTab {
 
     getSettingDefinitions(): SettingDefinitionItem<SettingKey>[] {
         return [
+            { type: "page", name: "Annotation Profiles", items: new AnnotationProfilesSection(this.plugin, () => this.update()).getDefinitions() },
             {
                 type: "page",
                 name: "General",
