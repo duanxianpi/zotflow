@@ -10,12 +10,19 @@ import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { WorkerTimeout } from "worker/timers";
 
-/**
- * Types that keep their own names (a note's first line, an annotation's
- * text). Attachments are titled by the template too; it can tell them apart
- * by `item.itemType` and use their `filename` / `contentType` / `linkMode`.
- */
+/** Types that keep their own names (a note's first line, an annotation's text). */
 const UNTEMPLATED_TYPES = new Set(["note", "annotation"]);
+
+/**
+ * Whether a template titles attachments too: only one written for them,
+ * i.e. one that looks at `item.itemType` or `contentType` and names
+ * "attachment" (`{% if item.itemType == "attachment" %}`). A template
+ * written for regular items would otherwise turn every attachment into
+ * " - " or "(n.d.)"; those keep their file names.
+ */
+export function templatesAttachments(source: string): boolean {
+    return /item\.itemType|contentType/.test(source) && source.includes("attachment");
+}
 
 /**
  * Pause after the last template edit before it takes effect. The settings
@@ -40,9 +47,15 @@ export class DisplayTitleService {
     private pendingSource: string | null = null;
     private applyTimer: WorkerTimeout | null = null;
     private templates: Template[] | null = null;
+    /** Whether the template in effect titles attachments (`templatesAttachments`). */
+    private forAttachments = false;
+    /**
+     * Rendered titles, for this session. A row's title changes with a
+     * download (`version`) or a local edit (`localRevision`, e.g. its tags).
+     */
     private readonly cache = new Map<
         string,
-        { version: number; title: string }
+        { version: number; localRevision: number; title: string }
     >();
     private readonly listeners = new Set<() => void>();
     /** Render failures are logged once per template, not once per item. */
@@ -85,13 +98,15 @@ export class DisplayTitleService {
     get(item: AnyIDBZoteroItem): string {
         const fallback = item.title || "";
         if (!this.templates || UNTEMPLATED_TYPES.has(item.itemType)) return fallback;
+        if (item.itemType === "attachment" && !this.forAttachments) return fallback;
 
         const id = `${item.libraryID}:${item.key}`;
+        const localRevision = item.localRevision ?? 0;
         const cached = this.cache.get(id);
-        if (cached && cached.version === item.version) return cached.title;
+        if (cached && cached.version === item.version && cached.localRevision === localRevision) return cached.title;
 
         const title = this.render(this.templates, item) || fallback;
-        this.cache.set(id, { version: item.version, title });
+        this.cache.set(id, { version: item.version, localRevision, title });
         return title;
     }
 
@@ -138,6 +153,7 @@ export class DisplayTitleService {
 
     private apply(source: string): void {
         this.source = source;
+        this.forAttachments = templatesAttachments(source);
         this.cache.clear();
         this.reportedRenderError = false;
         this.templates = null;

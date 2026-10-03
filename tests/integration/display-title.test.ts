@@ -177,6 +177,25 @@ describe("DisplayTitleService", () => {
         );
     });
 
+    test("a template written for regular items leaves attachments their own names", async () => {
+        // It would otherwise title every attachment "Vaswani (2017) Full Text PDF" or " - ".
+        const attachment = await article("ATTACH01", { itemType: "attachment", title: "Full Text PDF" }, { itemType: "attachment" });
+        expect(service(TEMPLATE).get(attachment)).toBe("Full Text PDF");
+        // Mentioning the type without naming attachments is not enough either.
+        expect(service('{% if item.itemType == "book" %}B{% endif %}{{ item.title }}x').get(attachment)).toBe("Full Text PDF");
+    });
+
+    test("a local edit (same version) is re-rendered", async () => {
+        const titles = service("{{ item.title }} {{ item.tags | size }}");
+        const item = await article();
+        expect(titles.get(item)).toBe("Attention Is All You Need 0");
+
+        const tagged = structuredClone(item);
+        (tagged.raw.data as { tags: unknown[] }).tags = [{ tag: "x" }];
+        tagged.localRevision = (item.localRevision ?? 0) + 1;
+        expect(titles.get(tagged)).toBe("Attention Is All You Need 1");
+    });
+
     test("a regular item has no attachment file properties", async () => {
         const item = await article();
         expect(service("{{ item.filename }}|{{ item.title }}").get(item)).toBe(

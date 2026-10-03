@@ -29,7 +29,7 @@ export class GeneralSection {
                 items: [
                     {
                         name: "Display Title Template",
-                        desc: "LiquidJS template for how Zotero items and attachments are titled in the library tree and in item search, using the same item variables as citation templates; attachments also have item.filename, item.contentType and item.linkMode (check item.itemType == \"attachment\"). Notes and annotations keep their own names. Sorting by title follows it. Leave empty to show the Zotero title.",
+                        desc: "LiquidJS template for how Zotero items are titled in the library tree and in item search, using the same item variables as citation templates. Attachments keep their file names unless the template handles them (it checks item.itemType == \"attachment\"); they also have item.filename, item.contentType and item.linkMode. Notes and annotations keep their own names. Sorting by title follows it. Leave empty to show the Zotero title.",
                         control: {
                             type: "text",
                             key: "itemDisplayTitleTemplate",
