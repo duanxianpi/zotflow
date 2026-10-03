@@ -14,7 +14,7 @@
  * | `synced`        | `synced = 1`                                         |
  * | `created`       | `synced = 0`, `version = 0`                          |
  * | `updated`       | `synced = 0`, no merge base (the merge falls back to `reconcile2`) |
- * | `deleted`       | row removed, delete log written (snapshot = the row); also an annotation still flagged `deleted` under another status (`isLocalDelete`), with a `local-deleted` conflict if v6 held a server copy |
+ * | `deleted`       | row removed, delete log written (snapshot = the row); also an annotation whose data still holds the boolean `deleted: true` 1.6.6 wrote, under any status (`isLocalDelete`), with a `local-deleted` conflict if v6 held a server copy |
  * | `conflict`      | by its evidence: a server copy → `changed`; "Remote deletion blocked" → `remote-deleted`; `NNN:` → `refused`; anything else → plain unsynced |
  * | `ignore`        | `localOnly`                                          |
  *
@@ -49,33 +49,30 @@ export type V6Index = Pick<V6Row, "libraryID" | "key" | "parentItem" | "syncStat
     localDelete: boolean;
 };
 
-/** v6's message for a DELETE refused with 412. */
-const DELETE_REFUSED = "Remote item has been modified since you deleted it.";
 const REMOTE_DELETION_BLOCKED = "Remote deletion blocked";
 
 const isBlockedV6 = (row: Pick<V6Row, "syncStatus" | "syncError">): boolean =>
     row.syncStatus === "conflict" && !!row.syncError?.startsWith(REMOTE_DELETION_BLOCKED);
 
 /**
- * Whether v6 held this row as a delete still to be sent. v6 deleted an
- * annotation by marking it (`syncStatus: "deleted"`, `data.deleted`), and
- * a conflict or a 412 on the DELETE then replaced the status, leaving only
- * the data flag. The flag alone proves nothing: an annotation can sit in
- * Zotero's trash (the API accepts `deleted: 1` on one), and v6 then held
- * it with the flag as a plain synced or edited row. So a conflict counts
- * only with v6's own evidence: the refused DELETE's message, a remote
- * deletion (gone on the server either way), or a server copy that is not
- * in the trash itself.
+ * Whether v6 held this row as a delete still to be sent.
+ *
+ * v6 deleted an annotation by marking it: `syncStatus: "deleted"` and the
+ * boolean `deleted: true` in its data (`deleteAnnotations`, the only place
+ * 1.3.0–1.6.6 write `true` on an annotation; notes write it to go to the
+ * trash). A conflict, a 412 on the DELETE, or Keep Local (which uploaded
+ * the row as an edit) then replaced the status, leaving only that value.
+ *
+ * The value tells the two kinds of flagged annotation apart: the server
+ * always answers the number `1` (an annotation in Zotero's trash, which
+ * the API accepts), v6 stored server JSON as it came and replaced a row
+ * with the server's echo after an upload, and IndexedDB keeps booleans and
+ * numbers distinct. So `true` is a delete made here, whatever the status;
+ * `1` is the server's trash, kept as it is.
  */
-export function isLocalDelete(
-    row: Pick<V6Row, "syncStatus" | "syncError" | "itemType" | "raw" | "serverCopyRaw">,
-): boolean {
+export function isLocalDelete(row: Pick<V6Row, "syncStatus" | "itemType" | "raw">): boolean {
     if (row.syncStatus === "deleted") return true;
-    if (row.syncStatus !== "conflict" || row.itemType !== "annotation") return false;
-    if (!(row.raw?.data as { deleted?: unknown } | undefined)?.deleted) return false;
-    if (row.syncError === DELETE_REFUSED || isBlockedV6(row)) return true;
-    const remote = row.serverCopyRaw?.data as { deleted?: unknown } | undefined;
-    return !!remote && !remote.deleted;
+    return row.itemType === "annotation" && (row.raw?.data as { deleted?: unknown } | undefined)?.deleted === true;
 }
 
 /** The index entry of a v6 row. */

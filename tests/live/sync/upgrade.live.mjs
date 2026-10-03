@@ -167,6 +167,9 @@ const K = {
     itemBoth: key("resnet"),
     // deleted here (pending), changed in Zotero
     deletedChanged: key("attention-pdf-highlight-transformer"),
+    // the same, then kept locally in 1.6.6 and not yet uploaded: an edit
+    // carrying the boolean `deleted: true` (it would have trashed it)
+    keptDelete: key("attention-pdf-highlight-title"),
     attentionPdf: key("attention-pdf"),
     // remote deletion of a book whose grandchild annotation was edited here
     book: key("morphology"),
@@ -275,6 +278,12 @@ async function buildV6State() {
     }, LIBRARY_ID, K.attentionPdf, K.deletedChanged);
     await remote.patch(K.deletedChanged, { annotationColor: "#ff6666" });
 
+    await inV6(async (call, h, lib, pdf, k) => {
+        const attachment = await call(["dbHelper", "getAttachmentItem"], lib, pdf);
+        await call(["annotation", "deleteAnnotations"], attachment, [k]);
+    }, LIBRARY_ID, K.attentionPdf, K.keptDelete);
+    await remote.patch(K.keptDelete, { annotationColor: "#66ff66" });
+
     await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, K.bookAnnotation, TEXT.bookComment);
     await remote.delete(K.book);
 
@@ -292,6 +301,10 @@ async function buildV6State() {
 
     await v6Sync();
     await setMode("bidirectional");
+
+    // Keep Local on a delete that conflicted: 1.6.6 made it an edit with
+    // `deleted: true`, which its next push would have sent as a trash.
+    await v6(["conflict", "resolveItemConflict"], LIBRARY_ID, K.keptDelete, "keep-local");
 
     // Pending, never synced.
     made.createdNote = await v6(["itemNote", "createChildNote"], LIBRARY_ID, K.parent);
@@ -389,6 +402,8 @@ describe("upgrade from 1.6.6", () => {
             assert.equal(v6Row(K.tagsEdited)?.syncStatus, "updated");
             assert.equal(v6Row(K.trashedNote)?.syncStatus, "updated");
             assert.equal(v6Row(K.trashedNote).data.deleted, true);
+            assert.equal(v6Row(K.keptDelete)?.syncStatus, "updated");
+            assert.equal(v6Row(K.keptDelete).data.deleted, true, "the boolean 1.6.6 wrote");
             assert.equal(v6Row(K.deletedAnnotation)?.syncStatus, "deleted");
             assert.equal(v6Row(K.delete412)?.syncStatus, "conflict");
             assert.equal(v6Row(K.legalCase)?.syncStatus, "synced");
@@ -422,7 +437,7 @@ describe("upgrade from 1.6.6", () => {
         });
 
         test("loses no row but the pending deletes, and keeps the download cursor", async () => {
-            const deletes = [K.deletedAnnotation, K.deletedChanged, K.delete412, K.deletedPdf, K.deletedPdfHighlight];
+            const deletes = [K.deletedAnnotation, K.deletedChanged, K.keptDelete, K.delete412, K.deletedPdf, K.deletedPdfHighlight];
             const missing = Object.keys(made.v6Rows).filter((k) => !row(k) && !deletes.includes(k));
             assert.deepEqual(missing, []);
             for (const k of deletes) assert.equal(row(k), undefined, k);
@@ -472,11 +487,13 @@ describe("upgrade from 1.6.6", () => {
             assert.equal(entry.parentItem, K.attentionPdf);
             assert.equal(entry.snapshot.key, K.deletedAnnotation);
             // So are the annotations whose "deleted" status 1.6.6 replaced
-            // (by a conflict, by a 412): only their data still said so.
+            // (by a conflict, by a 412, by Keep Local): only the boolean in
+            // their data still said so.
             assert.deepEqual(
                 made.deleteLog.map((d) => d.key).sort(),
-                [K.deletedAnnotation, K.deletedChanged, K.delete412].sort(),
+                [K.deletedAnnotation, K.deletedChanged, K.keptDelete, K.delete412].sort(),
             );
+            assert.equal(conflict(K.keptDelete), undefined, "kept locally: no conflict left to ask about");
         });
 
         test("an annotation in Zotero's trash is no delete made here", () => {
@@ -592,6 +609,8 @@ describe("upgrade from 1.6.6", () => {
             // The API answers 1 for a trashed item.
             assert.equal(Number((await remote.get(K.trashedNote)).data.deleted), 1);
             assert.equal(await remote.get(K.deletedAnnotation), null);
+            // Deleted, not trashed (a trashed item is still returned).
+            assert.equal(await remote.get(K.keptDelete), null);
             // What is still to delete waits on a local-deleted conflict.
             assert.deepEqual((await local.pendingDeletes()).sort(), [K.deletedChanged, K.delete412].sort());
             for (const k of [K.deletedChanged, K.delete412]) {

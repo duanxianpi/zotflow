@@ -289,8 +289,9 @@ describe("v7: the sync model", () => {
     });
 
     describe("an annotation 1.6.6 deleted here", () => {
-        // 1.6.6 deleted an annotation by flagging it; a conflict or a 412
-        // on the DELETE then replaced the "deleted" status.
+        // 1.6.6 deleted an annotation by flagging it with the boolean
+        // `true`; a conflict, a 412 on the DELETE or Keep Local then
+        // replaced the "deleted" status. The server only ever answers 1.
         const flagged = { itemType: "annotation", parentItem: "ATTACH01", deleted: true };
 
         test("still in conflict with a server copy is deleted here, changed there", async () => {
@@ -326,7 +327,8 @@ describe("v7: the sync model", () => {
             });
         }
 
-        test("in conflict with a server copy that is in the trash too is no delete", async () => {
+        test("in conflict with a server copy in the trash is still deleted here: the user confirms", async () => {
+            // Deleted here; the server only moved it to the trash.
             await migrate([
                 v6Row("ANNOTAT1", "conflict", {
                     syncError: "Remote update conflict",
@@ -334,9 +336,57 @@ describe("v7: the sync model", () => {
                 }, flagged),
             ]);
 
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ version: 5 });
+            expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "local-deleted", remoteVersion: 9 });
+        });
+
+        test("kept locally in 1.6.6 but not yet uploaded is a delete to send, not an upload putting it in the trash", async () => {
+            // 1.6.6's Keep Local made the delete an edit carrying `deleted: true`.
+            await migrate([v6Row("ANNOTAT1", "updated", {}, flagged)]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ version: 5 });
+            expect(await db.syncConflicts.count()).toBe(0);
+        });
+
+        test("synced with the boolean (the server answered that upload 'unchanged') is a delete to send", async () => {
+            await migrate([v6Row("ANNOTAT1", "synced", {}, flagged)]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ version: 5 });
+        });
+
+        test("in the server's trash (1), edited here and changed there, is a plain change conflict", async () => {
+            await migrate([
+                v6Row("ANNOTAT1", "conflict", {
+                    syncError: "Remote update conflict",
+                    serverCopyRaw: { key: "ANNOTAT1", version: 9, data: { key: "ANNOTAT1", version: 9, itemType: "annotation", annotationComment: "remote" } },
+                }, { ...flagged, deleted: 1, annotationComment: "local" }),
+            ]);
+
             expect(await db.items.get([LIB, "ANNOTAT1"])).toBeDefined();
             expect(await db.syncDeleteLog.count()).toBe(0);
             expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "changed" });
+        });
+
+        test("in the server's trash (1), edited here, under a remote deletion, stays in the group with its edit", async () => {
+            const blocked = { syncError: "Remote deletion blocked: Contains unsynced local changes." };
+            await migrate([
+                v6Row("ATTACH01", "conflict", blocked, { itemType: "attachment" }),
+                v6Row("ANNOTAT1", "updated", {}, { ...flagged, deleted: 1, annotationComment: "local" }),
+            ]);
+
+            expect((await db.items.get([LIB, "ANNOTAT1"]))?.raw.data).toMatchObject({ annotationComment: "local" });
+            expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "remote-deleted", group: "ATTACH01" });
+            expect(await db.syncDeleteLog.count()).toBe(0);
+        });
+
+        test("a note with the boolean is in the trash, not deleted: notes have one", async () => {
+            await migrate([v6Row("NOTEAAAA", "updated", {}, { itemType: "note", parentItem: "PARENT01", deleted: true })]);
+
+            expect(await db.items.get([LIB, "NOTEAAAA"])).toMatchObject({ synced: 0 });
+            expect(await db.syncDeleteLog.count()).toBe(0);
         });
 
         test("deleted on the server too is simply gone", async () => {
