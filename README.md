@@ -253,6 +253,9 @@ so use a group you only use for testing. Run a subset with
 straight against the API and without Obsidian, the server behaviour the sync
 engine relies on (batch DELETE, `version: 0` creates, patch uploads, version
 checks).
+`npm run live:sync -- upgrade` lets the released 1.6.6 build make a database
+full of pending edits and conflicts, then opens it with the current build
+(the v7 migration) and syncs; it downloads that release's `main.js` once.
 
 ### Memory leak checks
 

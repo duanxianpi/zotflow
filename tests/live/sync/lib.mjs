@@ -77,7 +77,7 @@ after(async () => {
 function installPageHelpers() {
     // Versioned: a page keeps the helpers of an earlier run (possibly an
     // older copy of this file) until they are replaced.
-    const VERSION = 2;
+    const VERSION = 3;
     if (window.__zfLive?.version === VERSION) return;
     const DB = "zotflow-dev";
     const open = () => new Promise((ok, fail) => {
@@ -137,19 +137,47 @@ function installPageHelpers() {
             });
         },
         apiKey: () => window.app.plugins.plugins.zotflow.settings.zoteroapikey,
+        all: (name) => withStore(name, "readonly", (s) => done(s.getAll())),
+        /** The database's IndexedDB version (Dexie's version × 10), or null. */
+        async dbVersion() {
+            const info = (await indexedDB.databases()).find((d) => d.name === DB);
+            return info?.version ?? null;
+        },
+        /** Delete the whole database; only while no plugin holds it open. */
+        deleteDb: () => new Promise((ok, fail) => {
+            const r = indexedDB.deleteDatabase(DB);
+            r.onsuccess = () => ok(true);
+            r.onerror = () => fail(r.error);
+            r.onblocked = () => fail(new Error(`${DB} is still open`));
+        }),
     };
 }
 
 /** Run `fn(t, h, ...args)` in Obsidian's main window and return its result. */
-export async function inObsidian(fn, ...args) {
+export function inObsidian(fn, ...args) {
+    return evaluateWith(
+        `window.__zotflowTest ?? (() => { throw new Error("Test hooks are off: run tests via npm run live:sync"); })()`,
+        fn,
+        args,
+    );
+}
+
+/**
+ * Run `fn(h, ...args)` in the main window without the test hooks: for a
+ * plugin build that has none (the upgrade test runs a released build).
+ */
+export function inPage(fn, ...args) {
+    return evaluateWith("null", `(_, h, ...rest) => (${fn.toString()})(h, ...rest)`, args);
+}
+
+async function evaluateWith(firstExpression, fn, args) {
     const { page } = await session();
     await page.evaluate(installPageHelpers);
     // A string expression rather than a function: `fn` arrives as source and
     // is spliced in, which needs no eval in the page.
     return page.evaluate(`(async () => {
-        const t = window.__zotflowTest;
-        if (!t) throw new Error("Test hooks are off: run tests via npm run live:sync");
-        return await (${fn.toString()})(t, window.__zfLive, ...${JSON.stringify(args)});
+        const first = ${firstExpression};
+        return await (${fn.toString()})(first, window.__zfLive, ...${JSON.stringify(args)});
     })()`);
 }
 

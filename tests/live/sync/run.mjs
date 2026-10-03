@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { LOCAL_DIR } from "../../../scripts/obsidian-harness.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const ORDER = ["server", "pull", "push", "conflicts", "faults", "concurrency"];
+const ORDER = ["server", "pull", "push", "conflicts", "faults", "concurrency", "upgrade"];
 const available = readdirSync(here)
     .filter((f) => f.endsWith(".live.mjs"))
     .map((f) => f.slice(0, -".live.mjs".length))

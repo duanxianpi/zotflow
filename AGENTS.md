@@ -893,7 +893,7 @@ id, not by searching. Attachment files are generated (`makePdf`, `makeEpub`,
 on it. New spec objects need permanent ids: changing an id recreates the
 object under a new key.
 
-`npm run live:sync [-- pull push conflicts faults concurrency]` runs the live
+`npm run live:sync [-- pull push conflicts faults concurrency upgrade]` runs the live
 sync tests in `tests/live/sync/`, one file per kind of sync: real plugin
 services in the test Obsidian, the real test group, another client simulated
 through the API, and faults injected by holding a worker request (pass, drop
@@ -908,6 +908,14 @@ never by the plugin. Rebuild and reload the plugin before running. Results:
 `.obsidian-test/live-sync/` (JUnit XML, and `facts.jsonl` with the server
 behaviour each test observed). Put a new live sync test in the file for its
 kind; record server behaviour it depends on with `fact()`.
+
+`upgrade` is the v6 → v7 upgrade end to end: it deletes the local database,
+runs the released 1.6.6 `main.js` (downloaded once to
+`.obsidian-test/releases/`) and has it build every old sync state with its
+own services, then opens that database with the current build and syncs.
+The release has no test hooks, so its worker is driven with raw Comlink
+`APPLY` messages (`v6()` in that file). It puts the current build, hot-reload
+and a clean library back when it ends.
 
 `npm run live:app` runs the live UI tests in `tests/live/app/` with
 Playwright (`playwright-core`, no bundled browser) attached to the running
