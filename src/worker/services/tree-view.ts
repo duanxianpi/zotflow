@@ -87,6 +87,42 @@ export class TreeViewService {
     }
 
     /**
+     * Refreshes the entity fields of `keys` (name, tags, sync status) in the
+     * built tree and its search index, for an edit that leaves the tree's
+     * shape alone (a note's text, say).
+     *
+     * @returns the updated entities, to merge into the payload the view
+     *   holds; null when only a full rebuild will do (no tree built yet, or
+     *   an item is missing from it or from the database).
+     */
+    public async patchEntities(libraryID: number, keys: string[]): Promise<EntityMap | null> {
+        const payload = this.treeTransferPayload;
+        if (!payload) return null;
+        const rows = await db.items.bulkGet(keys.map((k): [number, string] => [libraryID, k]));
+        const patch: EntityMap = {};
+        for (const row of rows) {
+            const entity = row && payload.entities[row.key];
+            if (!row || !entity || entity.libraryID !== libraryID) return null;
+            const names = this.displayTitle.searchNames(row);
+            // Children are named "Untitled" when empty, as the build does.
+            const name = row.parentItem ? names.name || "Untitled" : names.name;
+            patch[row.key] = {
+                ...entity,
+                name,
+                syncStatus: row.syncStatus,
+                tags: row.searchTags,
+                ...(entity.dateModified !== undefined ? { dateModified: row.dateModified } : {}),
+            };
+            const record = this.searchIndex?.get(row.key);
+            if (record) {
+                this.searchIndex!.set(row.key, { ...record, ...names, name, tags: row.searchTags });
+            }
+        }
+        Object.assign(payload.entities, patch);
+        return patch;
+    }
+
+    /**
      * Optional custom filter hook for tree items.
      * Useful when callers want additional filtering rules in addition to
      * the built-in permission checks.

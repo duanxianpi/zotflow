@@ -28,8 +28,12 @@ export class EventHub {
         [libraryID: number, noteKey: string, parentItemKey: string]
     >();
 
-    /** Fires when the tree data should be refreshed (e.g. item deleted). */
-    public readonly treeChanged = new EventBus<[]>();
+    /**
+     * Fires when the tree data should be refreshed. With a change, only those
+     * items' fields changed (names, tags, sync status) and the tree is
+     * patched; without one (e.g. an item deleted) it is rebuilt.
+     */
+    public readonly treeChanged = new EventBus<[change?: TreeChange]>();
 
     /**
      * Fires once when a sync task reaches a terminal state (completed,
@@ -37,6 +41,12 @@ export class EventHub {
      * only library the sync covered.
      */
     public readonly syncFinished = new EventBus<[task: ITaskInfo]>();
+}
+
+/** Items whose fields changed without changing the tree's shape. */
+export interface TreeChange {
+    libraryID: number;
+    keys: string[];
 }
 
 /** The argument tuple of an EventHub event. */

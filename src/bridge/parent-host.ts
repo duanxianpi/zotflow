@@ -241,7 +241,7 @@ export class ParentHost implements IParentProxy {
     ): void {
         // Indexing by a generic key loses the per-event tuple; the
         // signature above is what keeps callers type-checked.
-        const bus = services.eventHub[event] as EventBus<EventArgs<K>>;
+        const bus = services.eventHub[event] as unknown as EventBus<EventArgs<K>>;
         bus.emit(...args);
     }
 }

@@ -581,6 +581,11 @@ describe("update notifications and source-note refresh", () => {
             name: "noteChangedByEditor",
             args: [LIB, "NOTEKEY1", "PARENT01"],
         });
+        // The tree patches the one node instead of rebuilding.
+        expect(host.events).toContainEqual({
+            name: "treeChanged",
+            args: [{ libraryID: LIB, keys: ["NOTEKEY1"] }],
+        });
         expect(triggerCalls).toEqual([]);
     });
 

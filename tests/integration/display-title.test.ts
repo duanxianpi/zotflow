@@ -398,6 +398,30 @@ describe("tree view", () => {
         expect(entities.CHILDNOT?.name).toBe("Reading notes");
     });
 
+    test("an edit that keeps the tree's shape patches one entity and its search record", async () => {
+        const view = tree();
+        await view.getOptimizedTree();
+        const { mutateItem } = await import("db/mutate");
+        await mutateItem(USER_ID, "ARTICLE1", (d) => {
+            (d as { title: string }).title = "Retitled";
+            d.tags = [{ tag: "new-tag" }];
+        });
+
+        const patch = await view.patchEntities(USER_ID, ["ARTICLE1"]);
+
+        expect(patch?.ARTICLE1).toMatchObject({ name: "Vaswani (2017) Retitled", tags: ["new-tag"], syncStatus: "updated" });
+        // The cached tree and the search index follow without a rebuild.
+        expect((await view.getOptimizedTree()).entities.ARTICLE1?.name).toBe("Vaswani (2017) Retitled");
+        expect((await view.searchTree("retitled")).matchedKeys).toEqual(["ARTICLE1"]);
+    });
+
+    test("a patch for an item the tree does not hold asks for a rebuild", async () => {
+        const view = tree();
+        expect(await view.patchEntities(USER_ID, ["ARTICLE1"])).toBeNull();
+        await view.getOptimizedTree();
+        expect(await view.patchEntities(USER_ID, ["NOSUCH01"])).toBeNull();
+    });
+
     test("a new template rebuilds the cached tree", async () => {
         const view = tree();
         await view.getOptimizedTree();

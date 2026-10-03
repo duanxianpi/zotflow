@@ -15,7 +15,8 @@ import { NodeItem, INDENT_SIZE } from "./Node";
 import { TreeSearchSuggest } from "./search-suggest";
 import { services } from "services/services";
 
-import type { TreeTransferPayload } from "worker/services/tree-view";
+import type { EntityMap, TreeTransferPayload } from "worker/services/tree-view";
+import type { TreeChange } from "services/event-hub";
 import type { CollectionSortOrder, ItemSortOrder } from "settings/types";
 import { fireAndForgetIn } from "utils/fire-and-forget";
 
@@ -340,38 +341,59 @@ export const ZotFlowTree = () => {
         };
     }, [term]);
 
-    // Refresh tree data when a child note is created or updated
+    // Refresh tree data when the worker reports a change: patch the items
+    // named, or rebuild. At most one refresh runs; changes arriving
+    // meanwhile are folded into the next one.
     useEffect(() => {
-        const refreshHandler = async () => {
-            try {
-                await workerBridge.treeView.refreshTree();
-                const flat = await workerBridge.treeView.getOptimizedTree();
-                setRawData(flat);
-            } catch (err) {
-                services.logService.error(
-                    "Failed to refresh tree after note change",
-                    "TreeView",
-                    err,
+        let running = false;
+        let pending: TreeChange[] | "full" | null = null;
+
+        const refresh = async (change: TreeChange[] | "full") => {
+            if (change !== "full") {
+                const patches = await Promise.all(
+                    change.map((c) =>
+                        workerBridge.treeView.patchEntities(c.libraryID, c.keys),
+                    ),
                 );
+                if (patches.every((p) => p !== null)) {
+                    const merged = Object.assign({}, ...patches) as EntityMap;
+                    setRawData((prev) =>
+                        prev
+                            ? { ...prev, entities: { ...prev.entities, ...merged } }
+                            : prev,
+                    );
+                    return;
+                }
             }
+            await workerBridge.treeView.refreshTree();
+            const flat = await workerBridge.treeView.getOptimizedTree();
+            setRawData(flat);
         };
-        const unsub1 =
-            services.eventHub.noteChangedByEditor.subscribe(
-                () => void refreshHandler(),
-            );
-        const unsub2 =
-            services.eventHub.noteChangedByNoteView.subscribe(
-                () => void refreshHandler(),
-            );
-        const unsub3 =
-            services.eventHub.treeChanged.subscribe(
-                () => void refreshHandler(),
-            );
-        return () => {
-            unsub1();
-            unsub2();
-            unsub3();
+
+        const onChange = (change?: TreeChange) => {
+            if (!change || pending === "full") pending = "full";
+            else pending = [...(pending ?? []), change];
+            if (running) return;
+            running = true;
+            void (async () => {
+                while (pending) {
+                    const next = pending;
+                    pending = null;
+                    try {
+                        await refresh(next);
+                    } catch (err) {
+                        services.logService.error(
+                            "Failed to refresh tree",
+                            "TreeView",
+                            err,
+                        );
+                    }
+                }
+                running = false;
+            })();
         };
+
+        return services.eventHub.treeChanged.subscribe(onChange);
     }, []);
 
     // Prevent react-dnd from interfering with global events

@@ -135,7 +135,8 @@ export class ItemNoteService {
             "ItemNoteService",
         );
 
-        // Notify main thread so the tree can refresh
+        // A new node: the tree is rebuilt.
+        this.parentHost.emit("treeChanged");
         this.parentHost.emit(
             "noteChangedByNoteView",
             libraryID,
@@ -229,6 +230,7 @@ export class ItemNoteService {
             `Saved the text of a deleted note as ${key}`,
             "ItemNoteService",
         );
+        this.parentHost.emit("treeChanged");
         this.parentHost.emit(
             "noteChangedByNoteView",
             libraryID,
@@ -300,7 +302,9 @@ export class ItemNoteService {
             "ItemNoteService",
         );
 
-        // Notify main thread so the note-view and tree can react
+        // The tree shows the note's first line: patch that one node.
+        this.parentHost.emit("treeChanged", { libraryID, keys: [noteKey] });
+        // Notify main thread so the note views can react
         if (origin === "editor") {
             this.parentHost.emit(
                 "noteChangedByEditor",
