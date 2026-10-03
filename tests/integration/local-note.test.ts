@@ -828,3 +828,68 @@ describe("local annotation images", () => {
         ).resolves.toBeUndefined();
     });
 });
+
+describe("annotation profile presentation", () => {
+    const profile = { id: "research", name: "Research", palette: [
+        { id: "a", color: "#ffd400", label: "Methodology" },
+        { id: "b", color: "#2ea8e5", label: "Evidence" },
+    ] };
+    const preferences = {
+        annotationProfiles: [profile], defaultAnnotationProfileId: "research",
+        annotationCategoryTags: ["Methodology", "Evidence", "Historical"],
+    };
+
+    test("labeled titles preserve navigation, images, multiline comments and block IDs", async () => {
+        await setup({ ...preferences, labeledAnnotationCallouts: true });
+        const out = await templates.renderLocalNote(pdf(), [annotation({
+            comment: "first\nsecond", tags: [{ name: "Evidence" }, { name: "todo" }],
+        }), annotation({ id: "IMAGE001", type: "image" })], null);
+        expect(out).toContain("> [!zotflow-highlight-#ffd400] Evidence");
+        expect(out).toContain("#annotation=");
+        expect(out).toContain("Some Paper.pdf, p.5");
+        expect(out).toContain("ZF_ANNO_BEG_ANNOTAT1");
+        expect(out).toContain("ZF_ANNO_END_ANNOTAT1");
+        expect(out).toContain("^ANNOTAT1");
+        expect(out).toContain("#todo");
+        expect(out).toContain("![[ZotFlow/images/IMAGE001.png]]");
+        expect(out).toContain("> second");
+    });
+
+    test("grouping takes precedence over titles and puts old categories before Other", async () => {
+        await setup({ ...preferences, groupSourceNoteAnnotations: true, labeledAnnotationCallouts: true });
+        const out = await templates.renderLocalNote(pdf(), [
+            annotation({ id: "UNKNOWN1", color: "#abcdef", tags: [{ name: "todo" }] }),
+            annotation({ id: "OLD00001", tags: [{ name: "Historical" }] }),
+            annotation(),
+        ], null);
+        expect(out).toMatch(/## Methodology[\s\S]*## Historical[\s\S]*## Other/);
+        expect(out).toContain("> [!zotflow-highlight-#ffd400] [[");
+        expect(out.match(/\^ANNOTAT1/g)).toHaveLength(1);
+    });
+
+    test("custom templates opt in through additive fields and grouping arrays", async () => {
+        await setup({ ...preferences, groupSourceNoteAnnotations: true });
+        const out = await templates.renderLocalNote(pdf(), [annotation({ tags: [{ name: "Evidence" }] })],
+            "custom: {{ item.annotations[0].paletteLabel }} / {{ item.annotations[0].category }} / {{ item.annotations[0].labelSource }} / {{ item.annotationGroups[0].label }}");
+        expect(out).toContain("custom: Methodology / Evidence / tag / Evidence");
+        expect(out).not.toContain("[!zotflow-");
+    });
+
+    test("layout changes preserve user-owned regions and read-only annotations stay locked", async () => {
+        await setup({ ...preferences, groupSourceNoteAnnotations: true });
+        const file = pdf();
+        const old = "---\n---\n<!-- ZF_PERSIST_BEG_notes -->\nmy research\n<!-- ZF_PERSIST_END_notes -->\n";
+        linkNote(file, "Local/Existing.md", old);
+        await service.triggerUpdate(file, [annotation({ readOnly: true })], false);
+        const out = host.vault.get("Local/Existing.md")!;
+        expect(out).toContain("my research");
+        expect(out).toContain("## Methodology");
+        expect(out).not.toContain("ZF_ANNO_BEG_ANNOTAT1");
+    });
+
+    test("labels cannot introduce Markdown syntax into a heading or callout title", async () => {
+        await setup({ ...preferences, groupSourceNoteAnnotations: true, annotationCategoryTags: ["<b>[x]"] });
+        const out = await templates.renderLocalNote(pdf(), [annotation({ tags: [{ name: "<b>[x]" }] })], null);
+        expect(out).toContain("## \\<b\\>\\[x\\]");
+    });
+});

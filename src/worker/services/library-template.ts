@@ -1,4 +1,8 @@
+import { annotationPresentationTemplate } from "worker/services/annotation-presentation";
 import { Liquid } from "liquidjs";
+import {
+    resolveAnnotationMeaning, groupAnnotations, escapeAnnotationLabel,
+} from "utils/annotation-profiles";
 import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
 import { db, getCombinations } from "db/db";
 import type {
@@ -197,6 +201,8 @@ export class LibraryTemplateService {
                 newline: "\n",
             },
         });
+        this.engine.registerFilter("annotation_label", escapeAnnotationLabel);
+
         this.engine.registerFilter("process_nav_info", (input: string) => {
             const navInfo = {
                 annotationID: input,
@@ -593,7 +599,7 @@ export class LibraryTemplateService {
         try {
             const marks = snapshot ?? (await takeSourceNoteSnapshot(item.libraryID, item.key));
             const context = await this.prepareItemContext(item);
-            const template = templateContent || DEFAULT_ITEM_TEMPLATE;
+            const template = templateContent || annotationPresentationTemplate(DEFAULT_ITEM_TEMPLATE, false, this.settings);
 
             // Separate Frontmatter and Body
             const frontmatterRegex = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -709,7 +715,7 @@ export class LibraryTemplateService {
                 // Fall through to default
             }
         }
-        return DEFAULT_ITEM_TEMPLATE;
+        return annotationPresentationTemplate(DEFAULT_ITEM_TEMPLATE, false, this.settings);
     }
 
     /** Render a citation template for an item, with notePath in the context. */
@@ -891,7 +897,10 @@ export class LibraryTemplateService {
 
         const annotations = (
             await getAnnotationJson(item, this.settings.zoteroapikey)
-        ).map((a) => this.mapToAnnotationContext(a, item.key));
+        ).map((a) => this.mapToAnnotationContext(
+            a, item.key,
+            item.itemType === "attachment" ? item.raw.data.filename || item.title : item.title,
+        ));
 
         const attachmentAnnotations = attachments.flatMap(
             (att) => att.annotations,
@@ -919,6 +928,7 @@ export class LibraryTemplateService {
             notes,
             annotations,
             attachmentAnnotations,
+            annotationGroups: groupAnnotations([...annotations, ...attachmentAnnotations], this.settings),
             attachments,
             relatedItems,
             itemType: item.itemType,
@@ -948,8 +958,11 @@ export class LibraryTemplateService {
     private mapToAnnotationContext(
         annotation: AnnotationJSON,
         parentItem?: string,
+        attachmentTitle?: string,
     ): AnnotationTemplateContext {
         return {
+            ...resolveAnnotationMeaning(annotation, this.settings),
+            attachmentTitle,
             key: annotation.id,
             libraryID: annotation.libraryID!,
             // Citation-template inputs carry the attachment key on the
@@ -1034,7 +1047,10 @@ export class LibraryTemplateService {
     ): Promise<AttachmentTemplateContext> {
         const annotations = (
             await getAnnotationJson(item, this.settings.zoteroapikey)
-        ).map((a) => this.mapToAnnotationContext(a, item.key));
+        ).map((a) => this.mapToAnnotationContext(
+            a, item.key,
+            item.itemType === "attachment" ? item.raw.data.filename || item.title : item.title,
+        ));
 
         const data = item.raw.data || {};
         return {
@@ -1048,6 +1064,7 @@ export class LibraryTemplateService {
             dateModified: item.dateModified,
 
             annotations,
+            annotationGroups: groupAnnotations(annotations, this.settings),
         };
     }
 }

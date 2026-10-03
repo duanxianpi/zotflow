@@ -1,4 +1,9 @@
+import type { AnnotationGroup } from "utils/annotation-profiles";
+import { annotationPresentationTemplate } from "worker/services/annotation-presentation";
 import { Liquid } from "liquidjs";
+import {
+    resolveAnnotationMeaning, groupAnnotations, escapeAnnotationLabel,
+} from "utils/annotation-profiles";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnnotationJSON } from "types/zotero-reader";
@@ -56,6 +61,7 @@ interface LocalRenderContext {
         extension: string;
         basename: string;
         annotations: AnnotationTemplateContext[];
+        annotationGroups: AnnotationGroup<AnnotationTemplateContext>[];
     };
     settings: ZotFlowSettings;
     __zfReadOnlyKeys: Set<string>;
@@ -79,6 +85,8 @@ export class LocalTemplateService {
                 newline: "\n",
             },
         });
+
+        this.engine.registerFilter("annotation_label", escapeAnnotationLabel);
 
         this.engine.registerFilter("process_nav_info", (input: string) => {
             const navInfo = {
@@ -136,7 +144,7 @@ export class LocalTemplateService {
                 annotations,
             );
 
-            const template = templateContent || DEFAULT_LOCAL_NOTE_TEMPLATE;
+            const template = templateContent || annotationPresentationTemplate(DEFAULT_LOCAL_NOTE_TEMPLATE, true, this.settings);
 
             // Separate Frontmatter and Body
             const frontmatterRegex = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
@@ -217,12 +225,14 @@ export class LocalTemplateService {
         localAttachment: TFileWithoutParentAndVault,
         annotations: AnnotationJSON[],
     ): Promise<LocalRenderContext> {
-        const processedAnnotations: AnnotationTemplateContext[] = annotations
+        const processedAnnotations: AnnotationTemplateContext[] = [...annotations]
             .sort((a, b) =>
                 (a.sortIndex ?? "").localeCompare(b.sortIndex ?? ""),
             )
             .map((annotation) => {
                 return {
+                    ...resolveAnnotationMeaning(annotation, this.settings),
+                    attachmentTitle: localAttachment.name,
                     key: annotation.id,
                     libraryID: 0, // Local files imply simplified library context
                     type: annotation.type,
@@ -256,6 +266,7 @@ export class LocalTemplateService {
             extension: localAttachment.extension,
             basename: localAttachment.basename,
             annotations: processedAnnotations,
+            annotationGroups: groupAnnotations(processedAnnotations, this.settings),
         };
 
         // Read-only annotations must not become editable regions —
@@ -321,6 +332,6 @@ export class LocalTemplateService {
                 // Fall through to default
             }
         }
-        return DEFAULT_LOCAL_NOTE_TEMPLATE;
+        return annotationPresentationTemplate(DEFAULT_LOCAL_NOTE_TEMPLATE, true, this.settings);
     }
 }

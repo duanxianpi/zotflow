@@ -1,3 +1,4 @@
+import type { AnnotationMeaning, AnnotationGroup } from "utils/annotation-profiles";
 import type { AnnotationJSON } from "./zotero-reader";
 import type { ZoteroFieldName } from "./zotero-base-fields";
 
@@ -62,6 +63,7 @@ export interface ItemTemplateContext extends ItemMetadataContext {
     // Children
     attachments: AttachmentTemplateContext[];
     annotations: AnnotationTemplateContext[];
+    annotationGroups: AnnotationGroup<AnnotationTemplateContext>[];
     attachmentAnnotations: AnnotationTemplateContext[];
     notes: NoteTemplateContext[];
 
@@ -104,6 +106,7 @@ export interface AttachmentTemplateContext {
     dateModified: string;
 
     annotations: AnnotationTemplateContext[];
+    annotationGroups: AnnotationGroup<AnnotationTemplateContext>[];
 }
 
 /** Template rendering context for a Zotero note child item. */
@@ -120,7 +123,9 @@ export interface NoteTemplateContext {
 }
 
 /** Template rendering context for a single Zotero annotation. */
-export interface AnnotationTemplateContext {
+export interface AnnotationTemplateContext extends AnnotationMeaning {
+    /** Display name for grouped output spanning attachments. */
+    attachmentTitle?: string;
     key: string;
     libraryID: number;
     /** Key of the attachment item this annotation belongs to. */

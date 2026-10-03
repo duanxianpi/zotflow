@@ -200,6 +200,53 @@ changes. Share ZotFlow's settings between devices to retain that registry; Zoter
 stores only ordinary colors and tags. Untagged older annotations use the current
 color fallback, so their inferred display labels may change.
 
+Under **General → Source Notes**, two default-off settings control built-in output:
+
+- **Group annotations by category** creates category sections across attachments.
+  Groups follow default-profile palette order, then historical registry order,
+  with Other last. Within a group, annotations follow attachment key, document
+  position, then annotation key. A category literally named Other shares the final
+  group with uncategorized annotations.
+- **Labeled annotation callout titles** applies when grouping is off. The original
+  type/color callout remains, with its label as title and its attachment/page link
+  in the body. Its preference is retained while grouping is on.
+
+Both layouts preserve annotation links, images, block references, editable comments,
+and user-owned persist regions. Settings apply on the next render; use **Force
+update source note** (or **Force update all library source notes**) to refresh
+unchanged library notes, and the local source-note update action for local files.
+
+Custom templates remain authoritative. The options do not rewrite them. Every
+annotation context adds `paletteLabel`, `categoryTags`, `category`, `resolvedLabel`,
+and `labelSource` (`tag`, `color`, or `none`). `item.annotationGroups` and
+`attachment.annotationGroups` expose `{ label, annotations }` groups; existing
+annotation arrays retain their original order. `annotation.attachmentTitle` is
+available for grouped attachment links. These are template fields only, not
+annotation storage fields.
+
+For example, a custom library template can opt into grouped output with:
+
+```liquid
+{% capture quote_prefix %}{{ newline }}> {% endcapture %}
+{% for group in item.annotationGroups %}
+## {{ group.label | annotation_label }}
+{% for annotation in group.annotations %}
+> [!quote] {{ annotation.resolvedLabel | default: "Other" | annotation_label }}
+> [p.{{ annotation.pageLabel }}]({{ annotation | annotation_link }})
+> {{ annotation.text | replace: newline, " " }}
+>
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_prefix }}
+^{{ annotation.key }}
+{% endfor %}
+{% endfor %}
+```
+
+Use the `annotation_label` filter when inserting labels into Markdown headings or
+callout titles: labels are plain text. The snippet illustrates text annotations;
+retain your template's image and persist-region handling, or use the built-in
+layouts for all annotation types. The template preview's built-in template includes
+the selected presentation options and is a complete starting point for customization.
+
 ### Live testing in Obsidian
 
 The local-only annotation profile regression needs no Zotero key. After building
