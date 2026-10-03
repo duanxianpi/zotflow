@@ -334,6 +334,68 @@ describe("upload/download rounds", () => {
         expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(lib.version);
     });
 
+    test("a restarted download keeps what it stored and fetches only the rest", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        const keys = Array.from({ length: 150 }, (_, i) => `K${String(i).padStart(7, "0")}`);
+        for (const key of keys) lib.addItem({ key });
+        const asked: string[][] = [];
+        let raced = false;
+        const real = globalThis.fetch;
+        globalThis.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            const itemKey = new URL(url).searchParams.get("itemKey");
+            if (itemKey) {
+                asked.push(itemKey.split(","));
+                // Another client writes while the second request is on the wire.
+                if (asked.length === 2 && !raced) {
+                    raced = true;
+                    lib.addItem({ key: "LATE0001" });
+                }
+            }
+            return real(input, init);
+        };
+        try {
+            expect((await h.sync.startSync()).failCount).toBe(0);
+        } finally {
+            globalThis.fetch = real;
+        }
+        // First pass: 100 stored, then the second request saw a newer library.
+        expect(asked[0]).toHaveLength(100);
+        // The restart lists everything again but fetches only what is not stored.
+        const afterRestart = asked.slice(2).flat();
+        expect(afterRestart).not.toContain(asked[0]![0]);
+        expect(afterRestart.sort()).toEqual([...keys.slice(100), "LATE0001"].sort());
+        expect(await db.items.count()).toBe(151);
+        expect((await db.libraries.get(USER_ID))!.itemVersion).toBe(lib.version);
+    });
+
+    test("a child fetched before its parent waits for it in the same download", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        // Listed (and fetched) first; its parent comes in the second request.
+        lib.addItem({ key: "CHILD001", data: { itemType: "note", note: "<p>n</p>", parentItem: "PARENT01" } });
+        for (let i = 0; i < 100; i++) lib.addItem({ key: `F${String(i).padStart(7, "0")}` });
+        lib.addItem({ key: "PARENT01" });
+
+        expect((await h.sync.startSync()).failCount).toBe(0);
+
+        expect((await db.items.get([USER_ID, "CHILD001"]))?.parentItem).toBe("PARENT01");
+        expect(await db.syncQueue.count()).toBe(0);
+        expect(h.host.logsAt("warn").some((l) => /arrived before its parent/.test(l.message))).toBe(false);
+    });
+
+    test("a child whose parent never comes is queued", async () => {
+        h = await createSyncHarness();
+        const lib = h.server.library(USER_ID);
+        lib.addItem({ key: "CHILD001", data: { itemType: "note", note: "<p>n</p>", parentItem: "MISSING1" } });
+
+        await h.sync.startSync();
+
+        expect(await db.items.get([USER_ID, "CHILD001"])).toBeUndefined();
+        expect(await db.syncQueue.get([USER_ID, "CHILD001"])).toMatchObject({ reason: "missing-parent", tries: 1 });
+    });
+
     test("readonly libraries never push", async () => {
         h = await createSyncHarness({ mode: "readonly" });
         await seedItem({

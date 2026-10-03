@@ -271,3 +271,29 @@ describe("local-only fields", () => {
         expect(await row()).toMatchObject({ title: "theirs", ...local });
     });
 });
+
+describe("overlapping syncs", () => {
+    test("a library is synced by one sync at a time", async () => {
+        h = await createSyncHarness();
+        h.server.library(USER_ID).addItem({ key: KEY });
+        const spans: string[] = [];
+        const real = h.sync.syncLibrary.bind(h.sync);
+        h.sync.syncLibrary = async (...args: Parameters<typeof real>) => {
+            spans.push("start");
+            // Long enough for the other sync to reach the library.
+            await new Promise((r) => setTimeout(r, 20));
+            try {
+                return await real(...args);
+            } finally {
+                spans.push("end");
+            }
+        };
+
+        // "Sync all" and "sync this library" started together.
+        const results = await Promise.all([h.sync.startSync(), h.sync.startSync(undefined, undefined, USER_ID)]);
+
+        expect(results.map((r) => r.failCount)).toEqual([0, 0]);
+        expect(spans).toEqual(["start", "end", "start", "end"]);
+        expect(h.host.logsAt("info").some((l) => /already syncing; waiting/.test(l.message))).toBe(true);
+    });
+});

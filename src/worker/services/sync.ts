@@ -25,6 +25,7 @@ import {
     settleJournal,
 } from "db/sync/decide";
 import { workerClearTimeout, workerSetTimeout } from "worker/timers";
+import { deleteRemovedItemFiles } from "worker/services/removed-items";
 import {
     errorMessage,
     errorStatus,
@@ -108,6 +109,26 @@ function chunk<T>(array: T[], size: number): T[][] {
     return out;
 }
 
+/** Parents before children, so a child never waits for a parent in the same batch. */
+function sortParentsFirst(objects: AnyZoteroItem[]): AnyZoteroItem[] {
+    const byKey = new Map(objects.map((o) => [o.key, o]));
+    const depthOf = new Map<string, number>();
+    const depth = (o: AnyZoteroItem, seen = new Set<string>()): number => {
+        const known = depthOf.get(o.key);
+        if (known !== undefined) return known;
+        const parent = o.data.parentItem;
+        let d = 0;
+        if (parent && !seen.has(o.key)) {
+            seen.add(o.key);
+            const p = byKey.get(parent);
+            d = p ? 1 + depth(p, seen) : 1;
+        }
+        depthOf.set(o.key, d);
+        return d;
+    };
+    return [...objects].sort((a, b) => depth(a) - depth(b));
+}
+
 function libraryRange(libraryID: number): [[number, unknown], [number, unknown]] {
     return [
         [libraryID, Dexie.minKey],
@@ -125,6 +146,14 @@ function libraryRange(libraryID: number): [[number, unknown], [number, unknown]]
 export class SyncService {
     private sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
     private now: () => number;
+    /**
+     * The sync running on each library. Two sync tasks may overlap (one for
+     * all libraries, one for a single library); a library is synced by one
+     * at a time, or one could settle the other's in-flight writes as lost.
+     */
+    private libraryLocks = new Map<number, Promise<void>>();
+    /** Progress of the running download (objects fetched of those listed), while `startSync` runs. */
+    private reportDownload?: (done: number, total: number) => void;
 
     constructor(
         private zotero: ZoteroAPIService,
@@ -222,9 +251,13 @@ export class SyncService {
                 if (!lib || !libConfig || libConfig.mode === "ignored") continue;
 
                 onProgress?.(i, totalLibs, `Syncing library: ${lib.name}`);
+                this.reportDownload = (done, total) =>
+                    onProgress?.(i, totalLibs, `Syncing library: ${lib.name} (${done}/${total} items)`);
 
                 try {
-                    await this.syncLibrary(lib.type, libKey, libConfig.mode, changedItems, signal);
+                    await this.withLibraryLock(libKey, signal, () =>
+                        this.syncLibrary(lib.type, libKey, libConfig.mode, changedItems, signal),
+                    );
                     await db.libraries.update(libKey, {
                         syncedAt: new Date().toISOString().split(".")[0] + "Z",
                     });
@@ -252,7 +285,28 @@ export class SyncService {
             this.parentHost.notify("error", `Critical Sync Failure: ${errorMessage(error)}`);
             throw error;
         } finally {
+            this.reportDownload = undefined;
             this.parentHost.log("info", "Sync finished.", "SyncService");
+        }
+    }
+
+    /** Runs `fn` once no other sync holds `libraryID`. */
+    private async withLibraryLock<T>(libraryID: number, signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> {
+        const prev = this.libraryLocks.get(libraryID);
+        let release!: () => void;
+        const mine = new Promise<void>((resolve) => (release = resolve));
+        const tail = (prev ?? Promise.resolve()).then(() => mine);
+        this.libraryLocks.set(libraryID, tail);
+        try {
+            if (prev) {
+                this.parentHost.log("info", `Library ${libraryID} is already syncing; waiting for it to finish`, "SyncService");
+                await prev;
+            }
+            if (signal?.aborted) throw new Error("Aborted");
+            return await fn();
+        } finally {
+            release();
+            if (this.libraryLocks.get(libraryID) === tail) this.libraryLocks.delete(libraryID);
         }
     }
 
@@ -272,7 +326,7 @@ export class SyncService {
         changedItems: ItemIdentifier[] = [],
         signal?: AbortSignal,
     ): Promise<void> {
-        await this.pullCollections(libraryType, libraryID);
+        await this.pullCollections(libraryType, libraryID, signal);
 
         const lib = await db.libraries.get(libraryID);
         const hasLocalData = (await db.items.where("[libraryID+key]").between(...libraryRange(libraryID)).count()) > 0;
@@ -351,7 +405,7 @@ export class SyncService {
     /*  Collections (pull-only)                                         */
     /* ================================================================ */
 
-    private async pullCollections(libraryType: "user" | "group", libraryID: number) {
+    private async pullCollections(libraryType: "user" | "group", libraryID: number, signal?: AbortSignal) {
         try {
             const libHandle = this.lib(libraryType, libraryID);
             const libState = await db.libraries.get(libraryID);
@@ -359,8 +413,9 @@ export class SyncService {
 
             this.parentHost.log("debug", `Pulling collections from v${localVersion}...`, "SyncService");
 
-            const response = await this.request(() =>
-                libHandle.collections().get({ format: "versions", since: localVersion, includeTrashed: true }),
+            const response = await this.request(
+                () => libHandle.collections().get({ format: "versions", since: localVersion, includeTrashed: true }),
+                signal,
             );
             const versionsMap = (await (response.raw as Response).json()) as Record<string, number>;
             const serverHeaderVersion = response.getVersion() || 0;
@@ -372,8 +427,9 @@ export class SyncService {
 
             const keysToFetch = Object.keys(versionsMap);
             for (const slice of chunk(keysToFetch, FETCH_BULK_SIZE)) {
-                const batchRes = await this.request(() =>
-                    libHandle.collections().get({ collectionKey: slice.join(","), includeTrashed: true }),
+                const batchRes = await this.request(
+                    () => libHandle.collections().get({ collectionKey: slice.join(","), includeTrashed: true }),
+                    signal,
                 );
                 const newCollections = batchRes.raw as ZoteroCollection[];
                 if (newCollections.length > 0) {
@@ -386,7 +442,7 @@ export class SyncService {
             }
 
             if (localVersion > 0) {
-                const delResponse = await this.request(() => libHandle.deleted(localVersion).get());
+                const delResponse = await this.request(() => libHandle.deleted(localVersion).get(), signal);
                 const deletedKeys = (delResponse.getData() as { collections: string[] }).collections;
                 if (deletedKeys.length > 0) await this.deleteCollections(libraryID, deletedKeys);
             }
@@ -530,8 +586,15 @@ export class SyncService {
     }
 
     /**
-     * Fetches `keys` (in requests of 100, each required to answer at
-     * library version `v0`) and processes them parents first.
+     * Fetches `keys` in requests of 100, each required to answer at library
+     * version `v0`, and commits each answer before the next request: memory
+     * stays bounded by one request, and a restarted download fetches only
+     * what is not stored yet (`keysToFetch` compares stored versions; the
+     * cursor still moves only once the whole download is done).
+     *
+     * A child whose parent is not here yet is held until the parent arrives
+     * in a later request of this download; one still without its parent at
+     * the end goes to the retry queue.
      *
      * @returns the keys put on the retry queue.
      */
@@ -544,7 +607,11 @@ export class SyncService {
         signal?: AbortSignal,
     ): Promise<Set<string>> {
         const libHandle = this.lib(libraryType, libraryID);
-        const objects: AnyZoteroItem[] = [];
+        const queued = new Set<string>();
+        const now = this.nowISO();
+        /** Children waiting for a parent, by the parent's key. */
+        const waiting = new Map<string, AnyZoteroItem[]>();
+        let done = 0;
         for (const slice of chunk(keys, FETCH_BULK_SIZE)) {
             if (signal?.aborted) throw new Error("Aborted");
             const res = await this.request(
@@ -561,68 +628,97 @@ export class SyncService {
             if ((res.getVersion() ?? v0) !== v0) throw new DownloadRestart();
             // Only what was asked for (see fetchServerCopy).
             const asked = new Set(slice);
-            objects.push(...(res.raw as AnyZoteroItem[]).filter((o) => asked.has(o.key)));
+            let batch = (res.raw as AnyZoteroItem[]).filter((o) => asked.has(o.key));
+
+            // Each round commits what it can; the children of what it
+            // stored, waiting from earlier requests, go in the next round.
+            while (batch.length > 0) {
+                const stored = await this.processBatch(libraryID, sortParentsFirst(batch), now, changedItems, waiting);
+                batch = stored.flatMap((key) => {
+                    const children = waiting.get(key) ?? [];
+                    waiting.delete(key);
+                    return children;
+                });
+            }
+            done += slice.length;
+            this.reportDownload?.(done, keys.length);
         }
 
-        // Parents before children, so a child never waits for a parent
-        // that is in the same download.
-        const byKey = new Map(objects.map((o) => [o.key, o]));
-        const depth = (o: AnyZoteroItem, seen = new Set<string>()): number => {
-            const parent = o.data.parentItem;
-            if (!parent || seen.has(o.key)) return 0;
-            seen.add(o.key);
-            const p = byKey.get(parent);
-            return p ? 1 + depth(p, seen) : 1;
-        };
-        objects.sort((a, b) => depth(a) - depth(b));
-
-        const queued = new Set<string>();
-        const now = this.nowISO();
-        // One transaction per slice: a subtree's fingerprint is recomputed
-        // once per slice, not once per object (a PDF with k annotations
-        // would otherwise cost k² row reads on its first download).
-        for (const slice of chunk(objects, FETCH_BULK_SIZE)) {
-            const outcomes = await syncTransaction(async () => {
-                const writer = new SyncWriter(libraryID);
-                const out: string[] = [];
-                for (const remote of slice) {
-                    const state = await readKey(libraryID, remote.key);
-                    const parent = remote.data.parentItem;
-                    const parentExists = !parent || !!(await db.items.get([libraryID, parent]));
-                    const result = onRemoteObject(state, remote, { libraryID, parentExists, now });
-                    out.push(result.outcome);
-                    const entry = await db.syncQueue.get([libraryID, remote.key]);
-                    if (result.outcome === "queue") {
-                        await putQueueEntry({
-                            libraryID,
-                            key: remote.key,
-                            reason: "missing-parent",
-                            tries: (entry?.tries ?? 0) + 1,
-                            lastCheck: this.now(),
-                        });
-                        continue;
-                    }
-                    await writer.commit(remote.key, state, result.next);
-                    if (result.leftGroup) await this.leaveGroup(libraryID, result.leftGroup, remote.key);
-                    if (entry) await deleteQueueEntry(libraryID, remote.key);
-                }
-                return out;
-            });
-            slice.forEach((remote, i) => {
-                const outcome = outcomes[i];
-                if (outcome === "queue") {
-                    queued.add(remote.key);
-                    this.parentHost.log(
-                        "warn",
-                        `Item ${remote.key} arrived before its parent; it will be retried later.`,
-                        "SyncService",
-                    );
-                } else if (outcome !== "ignored") {
-                    changedItems.push({ libraryID, itemKey: remote.key });
-                }
-            });
+        // Parents that never came: retry later.
+        const orphans = [...waiting.values()].flat();
+        if (orphans.length > 0) {
+            const stored = new Set(await this.processBatch(libraryID, sortParentsFirst(orphans), now, changedItems, null));
+            for (const remote of orphans) {
+                if (stored.has(remote.key)) continue;
+                queued.add(remote.key);
+                this.parentHost.log(
+                    "warn",
+                    `Item ${remote.key} arrived before its parent; it will be retried later.`,
+                    "SyncService",
+                );
+            }
         }
         return queued;
+    }
+
+    /**
+     * Applies downloaded objects in one transaction. An object whose parent
+     * is missing is held in `waiting` (keyed by the parent) or, when
+     * `waiting` is null, put on the retry queue.
+     *
+     * @returns the keys of the objects stored, whose waiting children can
+     *   now be applied.
+     */
+    private async processBatch(
+        libraryID: number,
+        objects: AnyZoteroItem[],
+        now: string,
+        changedItems: ItemIdentifier[],
+        waiting: Map<string, AnyZoteroItem[]> | null,
+    ): Promise<string[]> {
+        const outcomes = await syncTransaction(async () => {
+            const writer = new SyncWriter(libraryID);
+            const out: string[] = [];
+            for (const remote of objects) {
+                const state = await readKey(libraryID, remote.key);
+                const parent = remote.data.parentItem;
+                const parentExists = !parent || !!(await db.items.get([libraryID, parent]));
+                const result = onRemoteObject(state, remote, { libraryID, parentExists, now });
+                out.push(result.outcome);
+                const entry = await db.syncQueue.get([libraryID, remote.key]);
+                if (result.outcome === "queue") {
+                    if (waiting) continue;
+                    await putQueueEntry({
+                        libraryID,
+                        key: remote.key,
+                        reason: "missing-parent",
+                        tries: (entry?.tries ?? 0) + 1,
+                        lastCheck: this.now(),
+                    });
+                    continue;
+                }
+                await writer.commit(remote.key, state, result.next);
+                if (result.leftGroup) await this.leaveGroup(libraryID, result.leftGroup, remote.key);
+                if (entry) await deleteQueueEntry(libraryID, remote.key);
+            }
+            return out;
+        });
+
+        const stored: string[] = [];
+        objects.forEach((remote, i) => {
+            const outcome = outcomes[i];
+            if (outcome === "queue") {
+                if (!waiting) return;
+                const parent = remote.data.parentItem as string;
+                const list = waiting.get(parent) ?? [];
+                list.push(remote);
+                waiting.set(parent, list);
+                return;
+            }
+            stored.push(remote.key);
+            if (outcome !== "ignored") changedItems.push({ libraryID, itemKey: remote.key });
+        });
+        return stored;
     }
 
     private async leaveGroup(libraryID: number, group: string, key: string) {
@@ -652,7 +748,7 @@ export class SyncService {
     private async processDeletions(libraryID: number, keys: string[], changedItems: ItemIdentifier[]) {
         if (keys.length === 0) return;
         const deleted = new Set(keys);
-        const imageKeys: string[] = [];
+        const removedRows: AnyIDBZoteroItem[] = [];
 
         // Keys with no row: only bookkeeping is left.
         await syncTransaction(async () => {
@@ -732,11 +828,7 @@ export class SyncService {
                 return gone;
             });
 
-            for (const r of removed) {
-                if (r.itemType === "annotation" && ["image", "ink"].includes(String(r.raw?.data?.annotationType))) {
-                    imageKeys.push(r.key);
-                }
-            }
+            removedRows.push(...removed);
             if (removed.length > 0) {
                 this.parentHost.log("debug", `Deleted ${root.key} and ${removed.length - 1} descendants.`, "SyncService");
                 if (survivor) changedItems.push({ libraryID, itemKey: survivor });
@@ -744,7 +836,7 @@ export class SyncService {
         }
 
         // File I/O never runs inside a Dexie transaction.
-        for (const key of imageKeys) await this.deleteAnnotationImageFile(key);
+        await deleteRemovedItemFiles(this.parentHost, this.settings.annotationImageFolder, removedRows, "SyncService");
     }
 
     private async topLevelAncestor(libraryID: number, key: string): Promise<string | undefined> {
@@ -776,24 +868,6 @@ export class SyncService {
                 if (group && !next.conflict) await this.leaveGroup(libraryID, group, j.key);
             }
         });
-    }
-
-    /**
-     * Delete a rendered annotation image (`{folder}/{key}.png`) from the vault,
-     * if it exists. Best-effort — failures are logged, never thrown.
-     */
-    private async deleteAnnotationImageFile(annotationKey: string) {
-        const folder = this.settings.annotationImageFolder.replace(/\/$/, "");
-        const path = `${folder}/${annotationKey}.png`;
-        try {
-            const exists = await this.parentHost.checkFile(path);
-            if (exists.exists) {
-                await this.parentHost.deleteFile(path);
-                this.parentHost.log("debug", `Deleted orphaned annotation image: ${path}`, "SyncService");
-            }
-        } catch (e) {
-            this.parentHost.log("warn", `Failed to delete annotation image ${annotationKey}`, "SyncService", e);
-        }
     }
 
     /* ================================================================ */
@@ -851,8 +925,16 @@ export class SyncService {
         // Rows the server does not have: deleted remotely (the deletion log
         // may have expired), or — with unsynced changes and nothing deleted
         // above them — to be created again.
-        const rows = await db.items.where("[libraryID+key]").between(...libraryRange(libraryID)).toArray();
-        const missing = rows.filter((r) => !r.localOnly && r.version > 0 && !(r.key in versions));
+        // Streamed: only the few fields needed are kept, not every row.
+        const missing: Pick<AnyIDBZoteroItem, "key" | "parentItem" | "synced">[] = [];
+        await db.items
+            .where("[libraryID+key]")
+            .between(...libraryRange(libraryID))
+            .each((r) => {
+                if (!r.localOnly && r.version > 0 && !(r.key in versions)) {
+                    missing.push({ key: r.key, parentItem: r.parentItem, synced: r.synced });
+                }
+            });
         const missingKeys = new Set(missing.map((r) => r.key));
         const recreate: string[] = [];
         const removed: string[] = [];
@@ -1046,6 +1128,7 @@ export class SyncService {
 
                     if (result.type === "success" && result.echo.key !== key) {
                         await this.adoptServerKey(writer, libraryID, key, result.echo);
+                        await deleteQueueEntry(libraryID, key);
                         continue;
                     }
                     const state = await readKey(libraryID, key);
@@ -1053,6 +1136,9 @@ export class SyncService {
                     await writer.commit(key, state, next);
                     if (result.type === "failed") {
                         this.parentHost.log("warn", `Item failed ${key}:`, "SyncService", result);
+                    } else {
+                        // Written: an earlier failure's retry entry is done.
+                        await deleteQueueEntry(libraryID, key);
                     }
                     if (followUp !== "none") followUps.push({ key, followUp });
                 }

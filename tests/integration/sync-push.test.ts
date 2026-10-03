@@ -570,3 +570,22 @@ describe("deletions", () => {
         expect(lib.items.has("NEWITEM1")).toBe(true);
     });
 });
+
+describe("retry queue", () => {
+    test("a write that succeeds on retry clears its retry entry", async () => {
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "Edited"));
+        lib.rejectWrite("AAAAAAAA", { code: 500, message: "Server error" });
+
+        await h.sync.startSync();
+        expect(await db.syncQueue.get([USER_ID, "AAAAAAAA"])).toMatchObject({ reason: "server-error", tries: 1 });
+
+        // The retry is due.
+        await db.syncQueue.update([USER_ID, "AAAAAAAA"], { lastCheck: 0 });
+        await h.sync.startSync();
+
+        expect((await db.items.get([USER_ID, "AAAAAAAA"]))!.syncStatus).toBe("synced");
+        // Otherwise its `tries` would carry over into the next, unrelated failure.
+        expect(await db.syncQueue.get([USER_ID, "AAAAAAAA"])).toBeUndefined();
+    });
+});
