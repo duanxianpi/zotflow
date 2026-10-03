@@ -847,9 +847,7 @@ export class World {
         const infos = await this.conflictService.getItemConflicts();
         for (const c of infos) {
             for (const action of ["keep-local", "accept-remote"] as const) {
-                // Keep Local is never blocked (ConflictItemInfo.keepLocalBlocked
-                // is commented out); restore its check with the field.
-                const blocked = action === "keep-local" ? undefined : c.acceptRemoteBlocked;
+                const blocked = action === "keep-local" ? c.keepLocalBlocked : c.acceptRemoteBlocked;
                 if (blocked) continue;
                 out.push({
                     kind: "resolve",
@@ -1024,8 +1022,7 @@ export class World {
                 if (c.key in this.intent.kept && this.touched(c.key) === this.intent.kept[c.key]) {
                     throw new Violation(`${c.key}: a conflict resolved as keep-local came back without a new remote change`);
                 }
-                // Never blocked while ConflictItemInfo.keepLocalBlocked is commented out.
-                const blocked = false as boolean;
+                const blocked = !!c.keepLocalBlocked;
                 await this.conflictService.resolveItemConflict(LIB, c.key, blocked ? "accept-remote" : "keep-local");
                 if (!blocked) {
                     this.intent.kept[c.key] = this.intent.seen[c.key] ?? 0;

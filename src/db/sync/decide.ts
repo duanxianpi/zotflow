@@ -513,9 +513,19 @@ export function afterLocalDelete(state: KeyState, now: string): { next: KeyState
 /*  Resolution (§5.2)                                                 */
 /* ------------------------------------------------------------------ */
 
+/** Why Keep Local is not available for a conflict, or nothing. */
+export function keepLocalBlocked(state: KeyState): string | undefined {
+    if (state.conflict?.orphan && state.row?.itemType !== "note") {
+        return "Its parent item no longer exists; only a note can be kept on its own.";
+    }
+    return undefined;
+}
+
 /** Why a resolution is not available for a conflict, or nothing. */
 export function acceptRemoteBlocked(state: KeyState): string | undefined {
     const c = state.conflict;
+    // An orphan's server copy went with its parent: accepting is discarding.
+    if (c?.orphan) return undefined;
     if (c?.kind === "refused" && !c.remote && (state.row?.version ?? 0) > 0) {
         return "The server's copy could not be fetched; retry the sync first.";
     }
@@ -573,11 +583,34 @@ export function keepLocal(state: KeyState, merged?: ItemDataJSON): KeyState {
             if (next.deleteLog) next.deleteLog = { ...next.deleteLog, version: conflict.remoteVersion };
             return next;
         case "refused":
+            if (conflict.orphan) return keepOrphan(state);
             if (row && merged) next.row = withData(row, merged, row.version, 0);
             return next;
         case "remote-deleted":
             return groupKeepLocal(state);
     }
+}
+
+/**
+ * Keep Local for an orphan (`keepLocalBlocked` allows notes only): the note
+ * becomes a standalone note, created on the server like a kept remote
+ * deletion. Its parent is not recreated: there is nothing to recreate it from.
+ */
+function keepOrphan(state: KeyState): KeyState {
+    const blocked = keepLocalBlocked(state);
+    if (blocked) throw new Error(blocked);
+    const kept = groupKeepLocal(state);
+    const row = kept.row!;
+    const data = { ...dataOf(row) };
+    delete data.parentItem;
+    return {
+        ...kept,
+        row: {
+            ...withData(row, data, 0, 0),
+            parentItem: "",
+            localRevision: (row.localRevision ?? 0) + 1,
+        },
+    };
 }
 
 /** Keep the remote side. Throws for a conflict whose remote side is unavailable (`acceptRemoteBlocked`). */
@@ -590,6 +623,8 @@ export function acceptRemote(state: KeyState): KeyState {
         case "changed":
         case "refused": {
             if (!row) return next;
+            // An orphan's server copy went with its parent: discard it.
+            if (conflict.orphan) return {};
             if (conflict.remote) {
                 next.row = withData(row, conflict.remote, conflict.remoteVersion || row.version, 1);
                 next.cache = undefined;

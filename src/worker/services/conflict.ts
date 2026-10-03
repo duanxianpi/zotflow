@@ -9,6 +9,7 @@ import {
 import {
     acceptRemote,
     acceptRemoteBlocked,
+    keepLocalBlocked,
     groupKeepLocal,
     keepLocal,
 } from "db/sync/decide";
@@ -67,10 +68,8 @@ export interface ConflictItemInfo {
     /** The remote-deletion group (its root key); resolving one member resolves them all. */
     group?: string;
     groupSize?: number;
-    // Why Keep Local is unavailable, if it is. Never set: every v7
-    // conflict kind can be kept locally. Kept, commented out with its UI and
-    // checker branches, for a kind that someday cannot.
-    // keepLocalBlocked?: string;
+    /** Why Keep Local is unavailable, if it is: an orphan that is not a note. */
+    keepLocalBlocked?: string;
     /** Why Accept Remote is unavailable, if it is. */
     acceptRemoteBlocked?: string;
 }
@@ -167,11 +166,11 @@ export class ConflictService {
                 await syncTransaction(async () => {
                     const writer = new SyncWriter(libraryID);
                     await writer.update(key, (state) => {
-                        if (action === "keep-local") return keepLocal(state, merged);
-                        const blocked = acceptRemoteBlocked(state);
+                        const blocked = action === "keep-local" ? keepLocalBlocked(state) : acceptRemoteBlocked(state);
                         if (blocked) {
                             throw new ZotFlowError(ZotFlowErrorCode.UNKNOWN, "ConflictService", blocked);
                         }
+                        if (action === "keep-local") return keepLocal(state, merged);
                         return acceptRemote(state);
                     });
                 });
@@ -266,6 +265,7 @@ export class ConflictService {
             }
             if (!(await db.syncConflicts.get([c.libraryID, c.key]))) continue;
             if (action === "accept-remote" && c.acceptRemoteBlocked) continue;
+            if (action === "keep-local" && c.keepLocalBlocked) continue;
             await this.resolveItemConflict(c.libraryID, c.key, action);
             resolved++;
         }
@@ -319,6 +319,7 @@ export class ConflictService {
             remoteData: remoteData ?? { deleted: true },
             remoteVersion: c.remoteVersion,
             ...(c.group ? { group: c.group, groupSize } : {}),
+            ...(keepLocalBlocked(state) ? { keepLocalBlocked: keepLocalBlocked(state) } : {}),
             ...(acceptRemoteBlocked(state) ? { acceptRemoteBlocked: acceptRemoteBlocked(state) } : {}),
         };
     }

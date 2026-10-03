@@ -1243,6 +1243,29 @@ export class SyncService {
             const row = await db.items.get([libraryID, key]);
             if (!row?.parentItem) return false;
             const state = await readKey(libraryID, row.parentItem);
+            if (!state.row && !state.deleteLog) {
+                // The parent exists nowhere (1.6.6 dropped only its row when
+                // it accepted a remote deletion): nothing to recreate it
+                // from. Without a conflict the write would be refused again
+                // on every upload round.
+                const child = await readKey(libraryID, key);
+                if (child.conflict) return false;
+                await new SyncWriter(libraryID).commit(key, child, {
+                    ...child,
+                    conflict: {
+                        libraryID,
+                        key,
+                        kind: "refused",
+                        remoteVersion: 0,
+                        fields: [],
+                        error: "Its parent item no longer exists in Zotero.",
+                        orphan: true,
+                        createdAt: this.nowISO(),
+                    },
+                });
+                this.parentHost.log("warn", `Parent ${row.parentItem} of ${key} exists nowhere; listed as a conflict.`, "SyncService");
+                return false;
+            }
             if (!state.row || state.row.synced === 0 || state.conflict) return false;
             const writer = new SyncWriter(libraryID);
             await writer.commit(row.parentItem, state, markForRecreation(state));
@@ -1308,7 +1331,7 @@ export class SyncService {
      */
     private async fetchMissingServerCopies(libraryType: "user" | "group", libraryID: number, signal?: AbortSignal) {
         const conflicts = await db.syncConflicts.where("[libraryID+key]").between(...libraryRange(libraryID)).toArray();
-        const refused = conflicts.filter((c) => c.kind === "refused" && !c.remote);
+        const refused = conflicts.filter((c) => c.kind === "refused" && !c.remote && !c.orphan);
         if (refused.length === 0) return;
         const rows = await db.items.bulkGet(refused.map((c): [number, string] => [libraryID, c.key]));
         // A create the server never had has no copy to fetch.

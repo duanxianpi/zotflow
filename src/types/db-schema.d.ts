@@ -195,6 +195,13 @@ export interface IDBSyncConflict {
     group?: string;
     /** The server's refusal (`refused`): "code: message". */
     error?: string;
+    /**
+     * `refused` because its parent item exists nowhere: not on the server,
+     * no row here (1.6.6 dropped only the parent's row when it accepted a
+     * remote deletion). Keep Local makes a note standalone; anything else
+     * can only be discarded.
+     */
+    orphan?: true;
     createdAt: string;
 }
 

@@ -270,9 +270,7 @@ class Run {
         const target = this.r.pick(conflicts);
         if (!target) return;
         const chosen = action ?? (this.r.next() < 0.5 ? "keep-local" : "accept-remote");
-        // Keep Local is never blocked (ConflictItemInfo.keepLocalBlocked is
-        // commented out); restore `target.keepLocalBlocked` with it.
-        const blocked = chosen === "keep-local" ? undefined : target.acceptRemoteBlocked;
+        const blocked = chosen === "keep-local" ? target.keepLocalBlocked : target.acceptRemoteBlocked;
         if (blocked) return;
 
         this.trace.push(`resolve ${target.key} ${chosen}`);
