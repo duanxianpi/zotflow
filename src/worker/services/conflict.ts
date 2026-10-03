@@ -1,6 +1,6 @@
 import { db } from "db/db";
 import {
-    getDescendants,
+    deleteQueueEntry,
     putGroup,
     readKey,
     syncTransaction,
@@ -13,8 +13,10 @@ import {
     keepLocal,
 } from "db/sync/decide";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { deleteRemovedItemFiles } from "worker/services/removed-items";
 
 import type { IParentProxy } from "bridge/types";
+import type { ZotFlowSettings } from "settings/types";
 import type { KeyState } from "db/sync/model";
 import type {
     AnyIDBZoteroItem,
@@ -65,8 +67,10 @@ export interface ConflictItemInfo {
     /** The remote-deletion group (its root key); resolving one member resolves them all. */
     group?: string;
     groupSize?: number;
-    /** Why Keep Local is unavailable, if it is. */
-    keepLocalBlocked?: string;
+    // Why Keep Local is unavailable, if it is. Never set: every v7
+    // conflict kind can be kept locally. Kept, commented out with its UI and
+    // checker branches, for a kind that someday cannot.
+    // keepLocalBlocked?: string;
     /** Why Accept Remote is unavailable, if it is. */
     acceptRemoteBlocked?: string;
 }
@@ -84,7 +88,15 @@ const CONFLICT_TYPE: Record<SyncConflictKind, ItemConflictType> = {
 
 /** Worker-side service for listing and resolving sync conflicts. */
 export class ConflictService {
-    constructor(private parentHost: IParentProxy) {}
+    /** `settings` locates the files that go with removed items; without it they are left. */
+    constructor(
+        private parentHost: IParentProxy,
+        private settings?: ZotFlowSettings,
+    ) {}
+
+    public updateSettings(settings: ZotFlowSettings) {
+        this.settings = settings;
+    }
 
     /* ================================================================ */
     /*  Queries                                                        */
@@ -175,10 +187,12 @@ export class ConflictService {
     /**
      * Resolves a remote-deletion group: Keep Local recreates every member
      * (uploaded parents first); Accept Remote removes every member and what
-     * is under it. Only the recorded members are touched.
+     * is under it — except a row in a conflict of its own (one that left the
+     * group when the server had a newer copy of it), which stays, with its
+     * subtree, for the user to resolve.
      */
     private async resolveGroup(libraryID: number, id: string, action: ConflictAction): Promise<void> {
-        await syncTransaction(async () => {
+        const removed = await syncTransaction(async () => {
             const writer = new SyncWriter(libraryID);
             const record = await db.syncGroups.get([libraryID, id]);
             const members = new Set(record?.members ?? []);
@@ -186,6 +200,7 @@ export class ConflictService {
                 members.add(c.key);
             }
 
+            const out: AnyIDBZoteroItem[] = [];
             for (const key of members) {
                 const state = await readKey(libraryID, key);
                 if (state.conflict?.group !== id) continue;
@@ -193,16 +208,49 @@ export class ConflictService {
                     await writer.commit(key, state, groupKeepLocal(state));
                     continue;
                 }
-                const under: AnyIDBZoteroItem[] = state.row ? await getDescendants(libraryID, key) : [];
-                await writer.commit(key, state, {});
-                for (const d of under) {
-                    const dState: KeyState = await readKey(libraryID, d.key);
-                    if (dState.conflict?.group && dState.conflict.group !== id) continue;
-                    await writer.commit(d.key, dState, {});
-                }
+                await this.removeRow(writer, libraryID, key, state, out);
+                if (state.row) await this.removeUnder(writer, libraryID, key, out);
             }
             if (record) await putGroup({ ...record, members: [] });
+            return out;
         });
+        // File I/O never runs inside a Dexie transaction.
+        if (this.settings) {
+            await deleteRemovedItemFiles(this.parentHost, this.settings.annotationImageFolder, removed, "ConflictService");
+        }
+    }
+
+    /** Removes one row and its sync records; the row is added to `out`. */
+    private async removeRow(writer: SyncWriter, libraryID: number, key: string, state: KeyState, out: AnyIDBZoteroItem[]) {
+        await writer.commit(key, state, {});
+        await deleteQueueEntry(libraryID, key);
+        if (state.row) out.push(state.row);
+    }
+
+    /**
+     * Removes what is under `key`, level by level. A row in conflict is not
+     * removed here: a member of the group gets its own turn, and a row in a
+     * conflict of its own is kept with everything under it.
+     */
+    private async removeUnder(writer: SyncWriter, libraryID: number, key: string, out: AnyIDBZoteroItem[]) {
+        let frontier = [key];
+        const seen = new Set(frontier);
+        while (frontier.length > 0) {
+            const children = await db.items
+                .where("[libraryID+parentItem]")
+                .anyOf(frontier.map((k): [number, string] => [libraryID, k]))
+                .toArray();
+            const next: string[] = [];
+            for (const child of children) {
+                if (seen.has(child.key)) continue;
+                seen.add(child.key);
+                const state = await readKey(libraryID, child.key);
+                if (state.conflict) continue;
+                await this.removeRow(writer, libraryID, child.key, state, out);
+                next.push(child.key);
+            }
+            frontier = next;
+        }
     }
 
     async resolveAllItemConflicts(action: ConflictAction): Promise<number> {

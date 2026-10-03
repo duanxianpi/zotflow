@@ -353,20 +353,21 @@ const ConflictDiffPane: React.FC<{
                 </div>
             )}
 
-            {(entry.keepLocalBlocked || entry.acceptRemoteBlocked) && (
+            {/* With `keepLocalBlocked` (commented out in ConflictItemInfo):
+                {(entry.keepLocalBlocked || entry.acceptRemoteBlocked) && …}
+                showing `entry.keepLocalBlocked ?? entry.acceptRemoteBlocked`. */}
+            {entry.acceptRemoteBlocked && (
                 <div className="zotflow-conflict-note">
                     <ObsidianIcon icon="ban" />
-                    <span>
-                        {entry.keepLocalBlocked ?? entry.acceptRemoteBlocked}
-                    </span>
+                    <span>{entry.acceptRemoteBlocked}</span>
                 </div>
             )}
 
             <div className="zotflow-conflict-actions">
                 <button
                     className="zotflow-conflict-btn zotflow-conflict-btn--local"
-                    disabled={!!entry.keepLocalBlocked}
-                    title={entry.keepLocalBlocked}
+                    // disabled={!!entry.keepLocalBlocked}
+                    // title={entry.keepLocalBlocked}
                     onClick={() => onResolve(entry, "keep-local")}
                 >
                     Keep Local

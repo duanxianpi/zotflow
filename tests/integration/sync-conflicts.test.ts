@@ -291,6 +291,57 @@ describe("a remote deletion resolved after the server moved on", () => {
     });
 });
 
+describe("accepting a remote deletion", () => {
+    test("leaves a row that has a conflict of its own, with its local change", async () => {
+        // The edited note left the group when the server had it again (here
+        // re-created standalone under the same key); locally it is still
+        // under the deleted parent, until the user resolves its conflict.
+        const lib = await harness();
+        lib.addItem({ key: "PARENT01", data: { title: "p" } });
+        lib.addItem({ key: "EDITED01", data: { itemType: "note", parentItem: "PARENT01", note: "<p>a</p>" } });
+        await h.sync.startSync();
+        await mutateItem(USER_ID, "EDITED01", "note", (d) => {
+            d.note = "<p>local edit</p>";
+        });
+        lib.deleteItem("PARENT01");
+        lib.deleteItem("EDITED01");
+        await h.sync.startSync();
+        lib.addItem({ key: "EDITED01", data: { itemType: "note", note: "<p>restored</p>" } });
+        await h.sync.startSync();
+        expect(await conflict("EDITED01")).toMatchObject({ kind: "changed" });
+        expect((await conflict("EDITED01"))!.group).toBeUndefined();
+
+        await resolve("PARENT01", "accept-remote");
+
+        expect(await row("PARENT01")).toBeUndefined();
+        expect(((await row("EDITED01"))!.raw.data as { note: string }).note).toBe("<p>local edit</p>");
+        expect(await conflict("EDITED01")).toMatchObject({ kind: "changed" });
+    });
+
+    test("deletes the rendered image of an image annotation it removes", async () => {
+        const lib = await harness();
+        lib.addItem({ key: "PARENT01", data: { title: "p" } });
+        lib.addItem({ key: "ATTACH01", data: { itemType: "attachment", parentItem: "PARENT01", linkMode: "imported_file", contentType: "application/pdf" } });
+        lib.addItem({
+            key: "IMAGE001",
+            data: { itemType: "annotation", parentItem: "ATTACH01", annotationType: "image", annotationComment: "" },
+        });
+        await h.sync.startSync();
+        await mutateItem(USER_ID, "IMAGE001", "annotation", (d) => {
+            d.annotationComment = "mine";
+        });
+        for (const key of ["PARENT01", "ATTACH01", "IMAGE001"]) lib.deleteItem(key);
+        await h.sync.startSync();
+        const png = `${h.settings.annotationImageFolder.replace(/\/$/, "")}/IMAGE001.png`;
+        h.host.binaryVault.set(png, new ArrayBuffer(1));
+
+        await new ConflictService(h.host, h.settings).resolveItemConflict(USER_ID, "IMAGE001", "accept-remote");
+
+        expect(await row("IMAGE001")).toBeUndefined();
+        expect(h.host.binaryVault.has(png)).toBe(false);
+    });
+});
+
 describe("local and remote agree", () => {
     test("a local delete meeting a remote delete is just removed", async () => {
         const lib = await harness();

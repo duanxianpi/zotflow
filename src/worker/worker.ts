@@ -307,7 +307,7 @@ const exposedApi: WorkerAPI = {
             );
             finishStage("Create template and note services");
 
-            _conflict = new ConflictService(parentHost);
+            _conflict = new ConflictService(parentHost, settings);
 
             _annotation = new AnnotationService(
                 _libraryNote,
@@ -664,6 +664,7 @@ const exposedApi: WorkerAPI = {
         _webdav!.updateSettings(settings);
         _attachment!.updateSettings(settings);
         _sync!.updateSettings(settings);
+        _conflict!.updateSettings(settings);
         _displayTitle!.updateSettings(settings);
         _treeView!.updateSettings(settings);
         _library!.updateSettings(settings);
