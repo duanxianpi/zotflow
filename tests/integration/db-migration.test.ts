@@ -230,6 +230,125 @@ describe("v7: the sync model", () => {
         expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ itemType: "annotation" });
     });
 
+    test("one remote deletion that marked a parent and its children becomes one group", async () => {
+        // 1.6.6 marked every deleted key whose subtree held local changes:
+        // here the book, its attachment and the edited annotation.
+        const blocked = { syncError: "Remote deletion blocked: Contains unsynced local changes." };
+        await migrate([
+            v6Row("BOOK0001", "conflict", blocked),
+            v6Row("EPUB0001", "conflict", blocked, { itemType: "attachment", parentItem: "BOOK0001" }),
+            v6Row("ANNOTAT1", "conflict", blocked, { itemType: "annotation", parentItem: "EPUB0001" }),
+        ]);
+
+        const groups = await db.syncGroups.toArray();
+        expect(groups.map((g) => g.id)).toEqual(["BOOK0001"]);
+        expect(groups[0]!.members.sort()).toEqual(["ANNOTAT1", "BOOK0001", "EPUB0001"]);
+        for (const key of ["BOOK0001", "EPUB0001", "ANNOTAT1"]) {
+            expect(await db.syncConflicts.get([LIB, key])).toMatchObject({ kind: "remote-deleted", group: "BOOK0001" });
+        }
+    });
+
+    describe("a remote deletion 1.6.6 blocked only for a delete made here", () => {
+        // 1.6.6 counted a pending delete as a local change, so deleting an
+        // annotation here and its book in Zotero marked the whole subtree.
+        const blocked = { syncError: "Remote deletion blocked: Contains unsynced local changes." };
+        const book = () => [
+            v6Row("BOOK0001", "conflict", blocked),
+            v6Row("EPUB0001", "conflict", blocked, { itemType: "attachment", parentItem: "BOOK0001" }),
+            v6Row("ANNOTAT1", "conflict", blocked, { itemType: "annotation", parentItem: "EPUB0001", deleted: true }),
+        ];
+
+        test("is no conflict: the deletion applies", async () => {
+            await migrate(book());
+
+            expect(await db.items.count()).toBe(0);
+            expect(await db.syncGroups.count()).toBe(0);
+            expect(await db.syncConflicts.count()).toBe(0);
+            expect(await db.syncDeleteLog.count()).toBe(0);
+        });
+
+        test("with an edit beside it, the group keeps the edit and drops the delete", async () => {
+            await migrate([
+                ...book(),
+                v6Row("ANNOTAT2", "conflict", blocked, { itemType: "annotation", parentItem: "EPUB0001" }),
+            ]);
+
+            const groups = await db.syncGroups.toArray();
+            expect(groups.map((g) => g.id)).toEqual(["BOOK0001"]);
+            expect(groups[0]!.members.sort()).toEqual(["ANNOTAT2", "BOOK0001", "EPUB0001"]);
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.count()).toBe(0);
+        });
+
+        test("with a note created under it, the group stays", async () => {
+            await migrate([...book(), v6Row("NOTE0001", "created", { version: 0 }, { itemType: "note", parentItem: "BOOK0001" })]);
+
+            expect((await db.syncGroups.toArray()).map((g) => g.id)).toEqual(["BOOK0001"]);
+            expect(await db.syncConflicts.get([LIB, "NOTE0001"])).toMatchObject({ kind: "remote-deleted", group: "BOOK0001" });
+        });
+    });
+
+    describe("an annotation 1.6.6 deleted here", () => {
+        // 1.6.6 deleted an annotation by flagging it; a conflict or a 412
+        // on the DELETE then replaced the "deleted" status.
+        const flagged = { itemType: "annotation", parentItem: "ATTACH01", deleted: true };
+
+        test("still in conflict with a server copy is deleted here, changed there", async () => {
+            await migrate([
+                v6Row("ANNOTAT1", "conflict", {
+                    syncError: "Remote update conflict",
+                    serverCopyRaw: { key: "ANNOTAT1", version: 9, data: { key: "ANNOTAT1", version: 9, itemType: "annotation", annotationComment: "remote" } },
+                }, flagged),
+            ]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ version: 5 });
+            expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "local-deleted", remoteVersion: 9 });
+        });
+
+        test("refused by a 412 stays a delete to send, not an edit uploading deleted: 1", async () => {
+            await migrate([v6Row("ANNOTAT1", "conflict", { syncError: "Remote item has been modified since you deleted it." }, flagged)]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.get([LIB, "ANNOTAT1"])).toMatchObject({ version: 5 });
+            expect(await db.syncConflicts.count()).toBe(0);
+        });
+
+        // An annotation in Zotero's trash carries the same flag: the API
+        // accepts `deleted: 1` on one and keeps it in /items/trash.
+        for (const status of ["synced", "updated"]) {
+            test(`the flag alone on a ${status} row is the server's trash, not a delete`, async () => {
+                await migrate([v6Row("ANNOTAT1", status, {}, { ...flagged, deleted: 1 })]);
+
+                expect(await db.items.get([LIB, "ANNOTAT1"])).toMatchObject({ synced: status === "synced" ? 1 : 0 });
+                expect(await db.syncDeleteLog.count()).toBe(0);
+                expect(await db.syncConflicts.count()).toBe(0);
+            });
+        }
+
+        test("in conflict with a server copy that is in the trash too is no delete", async () => {
+            await migrate([
+                v6Row("ANNOTAT1", "conflict", {
+                    syncError: "Remote update conflict",
+                    serverCopyRaw: { key: "ANNOTAT1", version: 9, data: { key: "ANNOTAT1", version: 9, itemType: "annotation", deleted: 1, annotationComment: "remote" } },
+                }, flagged),
+            ]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeDefined();
+            expect(await db.syncDeleteLog.count()).toBe(0);
+            expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "changed" });
+        });
+
+        test("deleted on the server too is simply gone", async () => {
+            await migrate([v6Row("ANNOTAT1", "conflict", { syncError: "Remote deletion blocked: Contains unsynced local changes." }, flagged)]);
+
+            expect(await db.items.get([LIB, "ANNOTAT1"])).toBeUndefined();
+            expect(await db.syncDeleteLog.count()).toBe(0);
+            expect(await db.syncConflicts.count()).toBe(0);
+            expect(await db.syncGroups.count()).toBe(0);
+        });
+    });
+
     test("a refused write becomes a refused conflict", async () => {
         await migrate([v6Row("ARTICLE1", "conflict", { syncError: "413: Tag too long" })]);
 

@@ -1,7 +1,7 @@
 import Dexie from "dexie";
 
 import { itemTitle } from "db/normalize";
-import { migrateRowV7, needsWholeRow, planV7Migration } from "db/sync/migrate-v7";
+import { migrateRowV7, needsWholeRow, planV7Migration, toV6Index } from "db/sync/migrate-v7";
 import { BASE_FIELD_MAP } from "types/zotero-base-fields";
 
 import type { IndexableTypePart, Table } from "dexie";
@@ -153,14 +153,9 @@ export class ZotFlowDB extends Dexie {
                 const index: V6Index[] = [];
                 const whole: V6Row[] = [];
                 await items.each((r) => {
-                    index.push({
-                        libraryID: r.libraryID,
-                        key: r.key,
-                        parentItem: r.parentItem,
-                        syncStatus: r.syncStatus,
-                        syncError: r.syncError,
-                    });
-                    if (needsWholeRow(r)) whole.push(r);
+                    const entry = toV6Index(r);
+                    index.push(entry);
+                    if (needsWholeRow(entry)) whole.push(r);
                 });
                 const plan = planV7Migration(index, whole, new Date().toISOString());
 

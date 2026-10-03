@@ -14,13 +14,15 @@
  * | `synced`        | `synced = 1`                                         |
  * | `created`       | `synced = 0`, `version = 0`                          |
  * | `updated`       | `synced = 0`, no merge base (the merge falls back to `reconcile2`) |
- * | `deleted`       | row removed, delete log written (snapshot = the row) |
+ * | `deleted`       | row removed, delete log written (snapshot = the row); also an annotation still flagged `deleted` under another status (`isLocalDelete`), with a `local-deleted` conflict if v6 held a server copy |
  * | `conflict`      | by its evidence: a server copy → `changed`; "Remote deletion blocked" → `remote-deleted`; `NNN:` → `refused`; anything else → plain unsynced |
  * | `ignore`        | `localOnly`                                          |
  *
- * A blocked remote deletion becomes a group of its root and every
- * descendant not itself pending deletion: the one place membership is
- * inferred from the parent/child structure, and it happens once.
+ * A blocked remote deletion becomes a group of its topmost marked row and
+ * every descendant not itself pending deletion: the one place membership is
+ * inferred from the parent/child structure, and it happens once. A group
+ * whose only local changes were deletes is no conflict: its rows are
+ * removed, as the remote deletion would have.
  */
 import { reconcile2 } from "db/sync/reconcile";
 import { deriveSyncStatus } from "db/sync/model";
@@ -42,14 +44,58 @@ export type V6Row = Omit<AnyIDBZoteroItem, "synced" | "syncStatus"> & {
 };
 
 /** What the plan needs of every v6 row (the rest is read only for the few rows below). */
-export type V6Index = Pick<V6Row, "libraryID" | "key" | "parentItem" | "syncStatus" | "syncError">;
+export type V6Index = Pick<V6Row, "libraryID" | "key" | "parentItem" | "syncStatus" | "syncError"> & {
+    /** Deleted on this device and not yet deleted on the server (see `isLocalDelete`). */
+    localDelete: boolean;
+};
+
+/** v6's message for a DELETE refused with 412. */
+const DELETE_REFUSED = "Remote item has been modified since you deleted it.";
+const REMOTE_DELETION_BLOCKED = "Remote deletion blocked";
+
+const isBlockedV6 = (row: Pick<V6Row, "syncStatus" | "syncError">): boolean =>
+    row.syncStatus === "conflict" && !!row.syncError?.startsWith(REMOTE_DELETION_BLOCKED);
+
+/**
+ * Whether v6 held this row as a delete still to be sent. v6 deleted an
+ * annotation by marking it (`syncStatus: "deleted"`, `data.deleted`), and
+ * a conflict or a 412 on the DELETE then replaced the status, leaving only
+ * the data flag. The flag alone proves nothing: an annotation can sit in
+ * Zotero's trash (the API accepts `deleted: 1` on one), and v6 then held
+ * it with the flag as a plain synced or edited row. So a conflict counts
+ * only with v6's own evidence: the refused DELETE's message, a remote
+ * deletion (gone on the server either way), or a server copy that is not
+ * in the trash itself.
+ */
+export function isLocalDelete(
+    row: Pick<V6Row, "syncStatus" | "syncError" | "itemType" | "raw" | "serverCopyRaw">,
+): boolean {
+    if (row.syncStatus === "deleted") return true;
+    if (row.syncStatus !== "conflict" || row.itemType !== "annotation") return false;
+    if (!(row.raw?.data as { deleted?: unknown } | undefined)?.deleted) return false;
+    if (row.syncError === DELETE_REFUSED || isBlockedV6(row)) return true;
+    const remote = row.serverCopyRaw?.data as { deleted?: unknown } | undefined;
+    return !!remote && !remote.deleted;
+}
+
+/** The index entry of a v6 row. */
+export function toV6Index(row: V6Row): V6Index {
+    return {
+        libraryID: row.libraryID,
+        key: row.key,
+        parentItem: row.parentItem,
+        syncStatus: row.syncStatus,
+        syncError: row.syncError,
+        localDelete: isLocalDelete(row),
+    };
+}
 
 /**
  * Whether the plan needs the whole row: a pending delete keeps it as its
  * snapshot, and a conflict compares its data with the server copy.
  */
 export function needsWholeRow(row: V6Index): boolean {
-    return row.syncStatus === "deleted" || row.syncStatus === "conflict";
+    return row.localDelete || row.syncStatus === "conflict";
 }
 
 export interface V7Plan {
@@ -121,23 +167,77 @@ export function planV7Migration(index: V6Index[], whole: V6Row[], now: string): 
     }
 
     for (const [libraryID, rows] of libraries) {
+        const byKey = new Map(rows.map((r) => [r.key, r]));
         const byParent = new Map<string, V6Index[]>();
         for (const r of rows) {
             // A row pending deletion leaves with its delete log; it is no
             // one's member.
-            if (!r.parentItem || r.syncStatus === "deleted") continue;
+            if (!r.parentItem || r.localDelete) continue;
             const list = byParent.get(r.parentItem) ?? [];
             list.push(r);
             byParent.set(r.parentItem, list);
         }
 
+        // v6 marked every deleted key whose subtree held local changes, so
+        // one remote deletion (a parent, its attachment, its annotations)
+        // left a mark on each of them. They are one group: the topmost
+        // marked ancestor's.
+        const blocked = new Set(rows.filter((r) => !r.localDelete && isBlockedV6(r)).map((r) => r.key));
+        const groupRoot = (key: string): string => {
+            let root = key;
+            const seen = new Set([key]);
+            for (let p = byKey.get(key)?.parentItem; p && !seen.has(p); p = byKey.get(p)?.parentItem) {
+                seen.add(p);
+                if (blocked.has(p)) root = p;
+            }
+            return root;
+        };
+
+        // Whether a group holds a change made here. v6's mark replaced a
+        // row's own status, so a marked row counts as changed itself
+        // unless something under it explains the mark: a change, a
+        // local delete, or another mark. A local delete is no change to
+        // keep: the server deleted that row as well.
+        const allChildren = new Map<string, V6Index[]>();
+        for (const r of rows) {
+            if (!r.parentItem) continue;
+            const list = allChildren.get(r.parentItem) ?? [];
+            list.push(r);
+            allChildren.set(r.parentItem, list);
+        }
+        const ownChange = (r: V6Index) =>
+            !r.localDelete && !blocked.has(r.key) && r.syncStatus !== "synced" && r.syncStatus !== "ignore";
+        const explainedBelow = (key: string) =>
+            descendants(allChildren, key).some((d) => d.localDelete || blocked.has(d.key) || ownChange(d));
+        const holdsChange = (members: string[]) =>
+            members.some((k) => {
+                const r = byKey.get(k);
+                return !!r && (ownChange(r) || (blocked.has(k) && !explainedBelow(k)));
+            });
+
         const conflicts = new Map<string, IDBSyncConflict>();
+        for (const root of new Set([...blocked].map(groupRoot))) {
+            const members = [root, ...descendants(byParent, root).map((d) => d.key)];
+            if (!holdsChange(members)) {
+                // Only local deletes under it (each handled below): the
+                // remote deletion applies, nothing to ask about.
+                for (const m of members) plan.removed.push([libraryID, m]);
+                continue;
+            }
+            plan.groups.push({ libraryID, id: root, root, members });
+            for (const m of members) {
+                conflicts.set(m, { libraryID, key: m, fields: [], createdAt: now, kind: "remote-deleted", remoteVersion: 0, group: root });
+            }
+        }
+
         for (const r of rows) {
             const base = { libraryID, key: r.key, fields: [], createdAt: now };
             const full = wholeOf.get(`${libraryID}/${r.key}`);
 
-            if (r.syncStatus === "deleted" && full) {
+            if (r.localDelete && full) {
                 plan.removed.push([libraryID, r.key]);
+                // Deleted on the server too: nothing left to send.
+                if (isBlockedV6(r)) continue;
                 const snapshot = migrateRowV7(structuredClone(full), undefined);
                 snapshot.synced = 1;
                 plan.deleteLog.push({
@@ -149,9 +249,14 @@ export function planV7Migration(index: V6Index[], whole: V6Row[], now: string): 
                     dateDeleted: now,
                     snapshot,
                 });
+                // Changed on the server since: deleted here, changed there.
+                const remote = full.serverCopyRaw;
+                if (r.syncStatus === "conflict" && remote?.data) {
+                    conflicts.set(r.key, { ...base, kind: "local-deleted", remote: remote.data, remoteVersion: remote.version });
+                }
                 continue;
             }
-            if (r.syncStatus !== "conflict") continue;
+            if (r.syncStatus !== "conflict" || blocked.has(r.key)) continue;
 
             const serverCopyRaw = full?.serverCopyRaw;
             if (serverCopyRaw?.data && full) {
@@ -163,12 +268,6 @@ export function planV7Migration(index: V6Index[], whole: V6Row[], now: string): 
                     remoteVersion: serverCopyRaw.version,
                     fields: reconcile2(local, serverCopyRaw.data).conflicts.map(([c]) => c.field),
                 });
-            } else if (r.syncError?.startsWith("Remote deletion blocked")) {
-                const members = [r.key, ...descendants(byParent, r.key).map((d) => d.key)];
-                plan.groups.push({ libraryID, id: r.key, root: r.key, members });
-                for (const m of members) {
-                    conflicts.set(m, { ...base, key: m, kind: "remote-deleted", remoteVersion: 0, group: r.key });
-                }
             } else if (r.syncError && /^\d{3}:/.test(r.syncError)) {
                 conflicts.set(r.key, { ...base, kind: "refused", remoteVersion: 0, error: r.syncError });
             }
