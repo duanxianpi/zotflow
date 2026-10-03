@@ -593,3 +593,33 @@ describe("sameContent", () => {
         expect(sameContent({ deleted: true }, {})).toBe(false);
     });
 });
+
+describe("deleted: the boolean and the number", () => {
+    // The server answers `deleted: 1`; ZotFlow (and 1.6.6) write `true`
+    // locally when a note goes to the trash. Both mean "in the trash".
+    test("diff sees no change between true and 1", () => {
+        expect(diff({ deleted: true }, { deleted: 1 }, ignoreFields)).toEqual([]);
+    });
+
+    test("a note trashed on both sides takes the remote text, and deleted is no change", () => {
+        // Both in the trash: Zotero applies the remote side without conflicts.
+        const local = { deleted: true, note: "<p>local</p>" };
+        const remote = { deleted: 1, note: "<p>remote</p>" };
+        const r = reconcile2(local, remote);
+        expect(r.conflicts).toEqual([]);
+        expect(r.changes.map((c) => c.field)).toEqual(["note"]);
+    });
+
+    test("patch sends no deleted against a base that holds 1", () => {
+        expect(patch({ deleted: 1, title: "a" }, { deleted: true, title: "b" })).toEqual({ title: "b" });
+    });
+
+    test("trashing on both sides is no change against a base", () => {
+        const r = reconcile3({ note: "<p>a</p>" }, { note: "<p>a</p>", deleted: true }, { note: "<p>a</p>", deleted: 1 });
+        expect(r.conflicts).toEqual([]);
+    });
+
+    test("restoring still counts: 1 against false is a change", () => {
+        expect(diff({ deleted: 1 }, { deleted: false }, ignoreFields)).not.toEqual([]);
+    });
+});

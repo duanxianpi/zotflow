@@ -189,6 +189,9 @@ function fieldChanged(field: string, a: unknown, b: unknown): boolean {
             return tagsChanged(a as Tag[], b as Tag[] | undefined);
         case "relations":
             return relationsChanged(a as Relations, b as Relations | undefined);
+        // The server answers `deleted: 1`; a local trash writes `true`.
+        case "deleted":
+            return !!a !== !!b;
         default:
             if (a && b && typeof a === "object" && typeof b === "object") {
                 return JSON.stringify(a) !== JSON.stringify(b);
@@ -325,6 +328,8 @@ export function diff(a: ObjectJSON, b: ObjectJSON, ignoreFields: readonly string
             }
             default:
                 if (v1 === v2) break;
+                // The server answers `deleted: 1`; a local trash writes `true`.
+                if (field === "deleted" && !!v1 === !!v2) break;
                 if (hasValue(v1) && !hasValue(v2)) out.push({ field, op: "delete" });
                 else if (!hasValue(v1) && hasValue(v2)) out.push({ field, op: "add", value: v2 });
                 else out.push({ field, op: "modify", value: v2 });
