@@ -256,6 +256,11 @@ export interface LocalDeleteResult {
  * edit, uploaded as a patch); annotations and anything else are hard-deleted
  * — the row goes at once and the delete log carries the DELETE to the
  * server. An item that never reached the server is simply removed.
+ *
+ * Only the rows named are touched, never their children: callers pass
+ * leaves (annotations, notes). Hard-deleting an item with children here
+ * (an attachment with annotations) would orphan them; delete the children
+ * first, or extend this to do so.
  */
 export async function deleteLocalItems(libraryID: number, keys: string[]): Promise<LocalDeleteResult> {
     const result: LocalDeleteResult = { removed: [], trashed: [] };

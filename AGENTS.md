@@ -284,7 +284,8 @@ src/
 │   ├── log-service.ts              # In-memory log buffer (max 1000)
 │   ├── notification-service.ts     # Styled Obsidian Notice wrapper
 │   ├── task-monitor.ts             # Task state store (replays the task list to subscribers)
-│   ├── event-hub.ts                # Data-change events (tree/note/annotation changed, sync finished)
+│   ├── event-hub.ts                # Data-change events (tree/note/annotation changed, note gone, sync finished)
+│   ├── pending-edits.ts            # Edits the main thread still holds back, flushed before a sync
 │   ├── csl-folder-service.ts       # Vault folder watcher feeding .csl/locale XML to the worker
 │   └── view-state-service.ts       # Reader view state persistence
 │
@@ -349,6 +350,8 @@ src/
 │   │   ├── zotero.ts               # ZoteroAPIService (zotero-api-client wrapper)
 │   │   ├── sync.ts                 # SyncService (upload-then-download engine; decisions in db/sync/decide)
 │   │   ├── conflict.ts             # ConflictService (list by group, resolve; Keep Local / Accept Remote)
+│   │   ├── removed-items.ts        # Files that go with removed item rows (annotation PNGs)
+│   │   ├── edit-queue.ts           # EditQueue (debounced note/comment edits; flushed before a source-note render and a sync)
 │   │   ├── attachment.ts           # AttachmentService (download, cache, LRU prune)
 │   │   ├── webdav.ts               # WebDavService (file download, verify)
 │   │   ├── library-note.ts         # LibraryNoteService (library source note CRUD)

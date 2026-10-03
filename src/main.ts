@@ -702,9 +702,6 @@ export default class ZotFlow extends Plugin {
         );
     }
 
-    /**
-     * Handle protocol calls for zotflow
-     */
     /** Open an annotation's attachment, navigated to the annotation. */
     private async openAnnotation(libID: number, key: string) {
         const annotation = await workerBridge.dbHelper.getItem(libID, key);
@@ -731,6 +728,9 @@ export default class ZotFlow extends Plugin {
         );
     }
 
+    /**
+     * Handle protocol calls for zotflow
+     */
     private async handleProtocolCall(
         params: ObsidianProtocolData,
     ): Promise<void> {
