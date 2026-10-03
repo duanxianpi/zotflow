@@ -16,6 +16,13 @@
  * | `updated`       | `synced = 0`, no merge base (the merge falls back to `reconcile2`) |
  * | `deleted`       | row removed, delete log written (snapshot = the row); also an annotation whose data still holds the boolean `deleted: true` 1.6.6 wrote, under any status (`isLocalDelete`), with a `local-deleted` conflict if v6 held a server copy |
  * | `conflict`      | by its evidence: a server copy → `changed`; "Remote deletion blocked" → `remote-deleted`; `NNN:` → `refused`; anything else → plain unsynced |
+ * | `updated` + a conflict's message | the conflict a later edit hid: "Remote update conflict" with a server copy → `changed`; "Remote deletion blocked" → `remote-deleted` |
+ * | `created` / `updated` under a parent with no row | `refused`, `orphan` (1.6.6 dropped only the parent's row) |
+ *
+ * Every library is then downloaded in full once: 1.6.6's Accept Remote on a
+ * conflict with no server copy (a refused write, a refused DELETE) deleted
+ * the row although the server kept the item, and the download cursor was
+ * already past it.
  * | `ignore`        | `localOnly`                                          |
  *
  * A blocked remote deletion becomes a group of its topmost marked row and
@@ -50,9 +57,27 @@ export type V6Index = Pick<V6Row, "libraryID" | "key" | "parentItem" | "syncStat
 };
 
 const REMOTE_DELETION_BLOCKED = "Remote deletion blocked";
+const REMOTE_UPDATE_CONFLICT = "Remote update conflict";
 
+/**
+ * A v6 remote deletion held back by local changes. v6's edits (note,
+ * annotation, comment) set any row but a created one to "updated", a row
+ * in conflict included, and left the message: it is still the deletion.
+ * (Keep Local cleared the message; a successful upload too.)
+ */
 const isBlockedV6 = (row: Pick<V6Row, "syncStatus" | "syncError">): boolean =>
-    row.syncStatus === "conflict" && !!row.syncError?.startsWith(REMOTE_DELETION_BLOCKED);
+    (row.syncStatus === "conflict" || row.syncStatus === "updated") &&
+    !!row.syncError?.startsWith(REMOTE_DELETION_BLOCKED);
+
+/**
+ * A v6 "Remote update conflict" a later edit set to "updated" (see
+ * `isBlockedV6`); the server copy stayed and the row's `version` is the
+ * server's, so uploading it would replace the server's change unseen. The
+ * message must match exactly: a successful upload cleared the message but
+ * kept a stale server copy on the row.
+ */
+const isHiddenConflictV6 = (row: Pick<V6Row, "syncStatus" | "syncError">): boolean =>
+    row.syncStatus === "updated" && row.syncError === REMOTE_UPDATE_CONFLICT;
 
 /**
  * Whether v6 held this row as a delete still to be sent.
@@ -92,7 +117,7 @@ export function toV6Index(row: V6Row): V6Index {
  * snapshot, and a conflict compares its data with the server copy.
  */
 export function needsWholeRow(row: V6Index): boolean {
-    return row.localDelete || row.syncStatus === "conflict";
+    return row.localDelete || row.syncStatus === "conflict" || isHiddenConflictV6(row);
 }
 
 export interface V7Plan {
@@ -253,7 +278,26 @@ export function planV7Migration(index: V6Index[], whole: V6Row[], now: string): 
                 }
                 continue;
             }
-            if (r.syncStatus !== "conflict" || blocked.has(r.key)) continue;
+            if (blocked.has(r.key)) continue;
+            // An unsynced row whose parent has no row: 1.6.6's Accept Remote
+            // on a remote deletion removed only the parent's row. It would be
+            // refused on every upload (the server deleted the parent too).
+            if (
+                (r.syncStatus === "created" || r.syncStatus === "updated") &&
+                !isHiddenConflictV6(r) &&
+                r.parentItem &&
+                !byKey.has(r.parentItem)
+            ) {
+                conflicts.set(r.key, {
+                    ...base,
+                    kind: "refused",
+                    remoteVersion: 0,
+                    error: "Its parent item was deleted in Zotero.",
+                    orphan: true,
+                });
+                continue;
+            }
+            if (r.syncStatus !== "conflict" && !isHiddenConflictV6(r)) continue;
 
             const serverCopyRaw = full?.serverCopyRaw;
             if (serverCopyRaw?.data && full) {

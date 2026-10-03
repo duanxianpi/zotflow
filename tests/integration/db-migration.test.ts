@@ -319,7 +319,10 @@ describe("v7: the sync model", () => {
         // accepts `deleted: 1` on one and keeps it in /items/trash.
         for (const status of ["synced", "updated"]) {
             test(`the flag alone on a ${status} row is the server's trash, not a delete`, async () => {
-                await migrate([v6Row("ANNOTAT1", status, {}, { ...flagged, deleted: 1 })]);
+                await migrate([
+                    v6Row("ATTACH01", "synced", {}, { itemType: "attachment" }),
+                    v6Row("ANNOTAT1", status, {}, { ...flagged, deleted: 1 }),
+                ]);
 
                 expect(await db.items.get([LIB, "ANNOTAT1"])).toMatchObject({ synced: status === "synced" ? 1 : 0 });
                 expect(await db.syncDeleteLog.count()).toBe(0);
@@ -410,6 +413,100 @@ describe("v7: the sync model", () => {
 
         expect(await db.syncConflicts.count()).toBe(0);
         expect((await db.items.get([LIB, "ARTICLE1"]))!.syncStatus).toBe("updated");
+    });
+
+    describe("a conflict 1.6.6 hid behind a later edit", () => {
+        // 1.6.6's note, annotation and comment edits set any row but a
+        // created one to "updated", a row in conflict included. The
+        // conflict's evidence stayed: the server copy, the message. The
+        // row's `version` is the server's (the download set it), so an
+        // upload would replace the server's change unseen.
+        test("a server copy and 'Remote update conflict' under 'updated' is still a changed conflict", async () => {
+            await migrate([
+                v6Row("NOTEAAAA", "updated", {
+                    syncError: "Remote update conflict",
+                    version: 9,
+                    serverCopyRaw: { key: "NOTEAAAA", version: 9, data: { key: "NOTEAAAA", version: 9, itemType: "note", note: "<p>remote</p>" } },
+                }, { itemType: "note", note: "<p>local, edited again</p>" }),
+            ]);
+
+            expect(await db.syncConflicts.get([LIB, "NOTEAAAA"])).toMatchObject({ kind: "changed", remoteVersion: 9 });
+            expect((await db.syncConflicts.get([LIB, "NOTEAAAA"]))!.fields).toContain("note");
+            expect(await db.items.get([LIB, "NOTEAAAA"])).toMatchObject({ syncStatus: "conflict", synced: 0 });
+        });
+
+        test("'Remote deletion blocked' under 'updated' is still the remote deletion", async () => {
+            await migrate([
+                v6Row("ANNOTAT1", "updated", { syncError: "Remote deletion blocked: Contains unsynced local changes." }, {
+                    itemType: "annotation",
+                    parentItem: "ATTACH01",
+                    annotationComment: "edited after the block",
+                }),
+                v6Row("ATTACH01", "synced", {}, { itemType: "attachment" }),
+            ]);
+
+            expect((await db.syncGroups.get([LIB, "ANNOTAT1"]))?.members).toEqual(["ANNOTAT1"]);
+            expect(await db.syncConflicts.get([LIB, "ANNOTAT1"])).toMatchObject({ kind: "remote-deleted", group: "ANNOTAT1" });
+            expect((await db.items.get([LIB, "ATTACH01"]))!.syncStatus).toBe("synced");
+        });
+
+        // A successful upload wrote `{ ...item, syncStatus: "synced",
+        // syncError: undefined }`: the server copy stayed on the row.
+        for (const status of ["synced", "updated"]) {
+            test(`a stale server copy on a ${status} row without the message is no conflict`, async () => {
+                await migrate([
+                    v6Row("NOTEAAAA", status, {
+                        serverCopyRaw: { key: "NOTEAAAA", version: 3, data: { key: "NOTEAAAA", version: 3, itemType: "note", note: "<p>old</p>" } },
+                    }, { itemType: "note", note: "<p>now</p>" }),
+                ]);
+
+                expect(await db.syncConflicts.count()).toBe(0);
+                expect((await db.items.get([LIB, "NOTEAAAA"]))!.syncStatus).toBe(status);
+            });
+        }
+
+        test("Keep Local cleared the message: a plain edit, uploaded as 1.6.6 would have", async () => {
+            await migrate([v6Row("ARTICLE1", "updated", { syncError: "" })]);
+
+            expect(await db.syncConflicts.count()).toBe(0);
+            expect((await db.items.get([LIB, "ARTICLE1"]))!.syncStatus).toBe("updated");
+        });
+    });
+
+    describe("a row 1.6.6 left under a parent it dropped", () => {
+        // Accept Remote on a remote deletion removed only that row; what was
+        // made under it stayed, unsynced, under a parent that exists nowhere.
+        for (const status of ["created", "updated"]) {
+            test(`a ${status} note is an orphan: refused, never uploaded as is`, async () => {
+                await migrate([
+                    v6Row("NOTEAAAA", status, status === "created" ? { version: 0 } : {}, { itemType: "note", parentItem: "GONE0001", note: "<p>kept</p>" }),
+                ]);
+
+                expect(await db.syncConflicts.get([LIB, "NOTEAAAA"])).toMatchObject({ kind: "refused", orphan: true });
+                expect(await db.items.get([LIB, "NOTEAAAA"])).toMatchObject({ syncStatus: "conflict" });
+            });
+        }
+
+        test("a synced row under a missing parent is no conflict (the full download settles it)", async () => {
+            await migrate([v6Row("NOTEAAAA", "synced", {}, { itemType: "note", parentItem: "GONE0001" })]);
+
+            expect(await db.syncConflicts.count()).toBe(0);
+        });
+    });
+
+    test("every library is downloaded in full once", async () => {
+        const legacy = await openV6();
+        await legacy.table("libraries").bulkPut([
+            { id: LIB, type: "user", name: "Mine", itemVersion: 40, collectionVersion: 40 },
+            { id: 99, type: "group", name: "Group", itemVersion: 7, collectionVersion: 7 },
+        ]);
+        legacy.close();
+        await db.open();
+
+        for (const lib of await db.libraries.toArray()) {
+            expect(lib).toMatchObject({ needsFullSync: true });
+        }
+        expect((await db.libraries.get(LIB))!.itemVersion).toBe(40);
     });
 
     test("ignore rows become local-only", async () => {

@@ -167,6 +167,9 @@ export class ZotFlowDB extends Dexie {
                 await items.toCollection().modify((r) => {
                     migrateRowV7(r, conflictOf.get(`${r.libraryID}/${r.key}`));
                 });
+                // A full download once: 1.6.6 could drop rows the server
+                // still has, behind the cursor (see migrate-v7.ts).
+                await tx.table("libraries").toCollection().modify({ needsFullSync: true });
                 await tx.table("syncDeleteLog").bulkPut(plan.deleteLog);
                 await tx.table("syncConflicts").bulkPut(plan.conflicts);
                 await tx.table("syncGroups").bulkPut(plan.groups);
