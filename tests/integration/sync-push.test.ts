@@ -355,6 +355,37 @@ describe("write response handling", () => {
         expect(conflict.remote!.title).toBe("Original");
     });
 
+    test("a server copy that could not be fetched is fetched by the next sync", async () => {
+        // Without it Accept Remote stays unavailable ("retry the sync first");
+        // conflicts migrated from v6 never had one.
+        const lib = await syncedItem();
+        await mutateItem(USER_ID, "AAAAAAAA", (d: any) => (d.title = "x".repeat(10)));
+        lib.rejectWrite("AAAAAAAA", { code: 413, message: "Too long" });
+        let failed = false;
+        const real = globalThis.fetch;
+        globalThis.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (!failed && (init?.method ?? "GET") === "GET" && url.includes("itemKey=AAAAAAAA")) {
+                failed = true;
+                return Promise.reject(new TypeError("Failed to fetch"));
+            }
+            return real(input, init);
+        };
+        try {
+            await h.sync.startSync();
+        } finally {
+            globalThis.fetch = real;
+        }
+        expect(failed).toBe(true);
+        expect((await db.syncConflicts.get([USER_ID, "AAAAAAAA"]))!.remote).toBeUndefined();
+
+        await h.sync.startSync();
+
+        const conflict = (await db.syncConflicts.get([USER_ID, "AAAAAAAA"]))!;
+        expect(conflict).toMatchObject({ kind: "refused", remoteVersion: lib.items.get("AAAAAAAA")!.version });
+        expect(conflict.remote!.title).toBe("Original");
+    });
+
     test("a server copy is taken only for the requested key", async () => {
         // Measured live: an itemKey the server cannot parse is ignored, and
         // the answer lists other items. None of them is this item's copy.

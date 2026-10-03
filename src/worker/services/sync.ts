@@ -327,6 +327,7 @@ export class SyncService {
         signal?: AbortSignal,
     ): Promise<void> {
         await this.pullCollections(libraryType, libraryID, signal);
+        await this.fetchMissingServerCopies(libraryType, libraryID, signal);
 
         const lib = await db.libraries.get(libraryID);
         const hasLocalData = (await db.items.where("[libraryID+key]").between(...libraryRange(libraryID)).count()) > 0;
@@ -626,7 +627,7 @@ export class SyncService {
                 signal,
             );
             if ((res.getVersion() ?? v0) !== v0) throw new DownloadRestart();
-            // Only what was asked for (see fetchServerCopy).
+            // Only what was asked for (see fetchServerCopies).
             const asked = new Set(slice);
             let batch = (res.raw as AnyZoteroItem[]).filter((o) => asked.has(o.key));
 
@@ -1145,6 +1146,7 @@ export class SyncService {
                 await db.libraries.update(libraryID, { itemVersion: version });
             });
 
+            const refused: string[] = [];
             for (const { key, followUp } of followUps) {
                 switch (followUp) {
                     case "full-sync":
@@ -1154,7 +1156,7 @@ export class SyncService {
                         if (await this.recreateMissingParent(libraryID, key)) restart = true;
                         break;
                     case "refused":
-                        await this.fetchServerCopy(libraryType, libraryID, key, signal);
+                        refused.push(key);
                         break;
                     case "retry-later": {
                         const entry = await db.syncQueue.get([libraryID, key]);
@@ -1171,6 +1173,7 @@ export class SyncService {
                     }
                 }
             }
+            if (refused.length > 0) await this.fetchServerCopies(libraryType, libraryID, refused, signal);
         }
 
         if (fullSyncNeeded) {
@@ -1248,35 +1251,68 @@ export class SyncService {
         });
     }
 
-    /** Stores the server's copy on a refused write's conflict, for Keep Remote. */
-    private async fetchServerCopy(libraryType: "user" | "group", libraryID: number, key: string, signal?: AbortSignal) {
-        let remote: AnyZoteroItem | undefined;
-        try {
-            const res = await this.request(
-                () => this.lib(libraryType, libraryID).items().get({ itemKey: key, includeTrashed: true }),
-                signal,
-            );
-            // Only an object with the requested key: the server ignores an
-            // `itemKey` filter it cannot parse (an invalid key) and answers
-            // with other items (measured on api.zotero.org).
-            remote = (res.raw as AnyZoteroItem[]).find((o) => o.key === key);
-        } catch (e) {
-            this.parentHost.log("warn", `Could not fetch the server copy of ${key}`, "SyncService", e);
-            return;
-        }
-        if (!remote) return;
-        await syncTransaction(async () => {
-            const state = await readKey(libraryID, key);
-            if (state.conflict?.kind !== "refused") return;
-            const writer = new SyncWriter(libraryID);
-            await writer.commit(key, state, {
-                ...state,
-                conflict: {
-                    ...state.conflict,
-                    remote: structuredClone(remote.data as unknown as ItemDataJSON),
-                    remoteVersion: remote.version,
-                },
+    /**
+     * Stores the server's copies on refused writes' conflicts, for Accept
+     * Remote. Best-effort: a copy that cannot be fetched now is fetched by
+     * a later sync (see `fetchMissingServerCopies`).
+     */
+    private async fetchServerCopies(
+        libraryType: "user" | "group",
+        libraryID: number,
+        keys: string[],
+        signal?: AbortSignal,
+    ) {
+        for (const slice of chunk(keys, FETCH_BULK_SIZE)) {
+            let remotes: AnyZoteroItem[];
+            try {
+                const res = await this.request(
+                    () =>
+                        this.lib(libraryType, libraryID)
+                            .items()
+                            .get({ itemKey: slice.join(","), includeTrashed: true }),
+                    signal,
+                );
+                // Only objects with a requested key: the server ignores an
+                // `itemKey` filter it cannot parse (an invalid key) and
+                // answers with other items (measured on api.zotero.org).
+                const asked = new Set(slice);
+                remotes = (res.raw as AnyZoteroItem[]).filter((o) => asked.has(o.key));
+            } catch (e) {
+                if (signal?.aborted) throw e;
+                this.parentHost.log("warn", `Could not fetch the server copy of ${slice.join(", ")}`, "SyncService", e);
+                continue;
+            }
+            if (remotes.length === 0) continue;
+            await syncTransaction(async () => {
+                const writer = new SyncWriter(libraryID);
+                for (const remote of remotes) {
+                    const state = await readKey(libraryID, remote.key);
+                    if (state.conflict?.kind !== "refused") continue;
+                    await writer.commit(remote.key, state, {
+                        ...state,
+                        conflict: {
+                            ...state.conflict,
+                            remote: structuredClone(remote.data as unknown as ItemDataJSON),
+                            remoteVersion: remote.version,
+                        },
+                    });
+                }
             });
-        });
+        }
+    }
+
+    /**
+     * Refused writes whose conflict lacks the server's copy — its fetch
+     * failed, or the conflict came from v6, which kept none — get it now:
+     * without it Accept Remote is unavailable.
+     */
+    private async fetchMissingServerCopies(libraryType: "user" | "group", libraryID: number, signal?: AbortSignal) {
+        const conflicts = await db.syncConflicts.where("[libraryID+key]").between(...libraryRange(libraryID)).toArray();
+        const refused = conflicts.filter((c) => c.kind === "refused" && !c.remote);
+        if (refused.length === 0) return;
+        const rows = await db.items.bulkGet(refused.map((c): [number, string] => [libraryID, c.key]));
+        // A create the server never had has no copy to fetch.
+        const keys = refused.filter((_, i) => (rows[i]?.version ?? 0) > 0).map((c) => c.key);
+        if (keys.length > 0) await this.fetchServerCopies(libraryType, libraryID, keys, signal);
     }
 }
