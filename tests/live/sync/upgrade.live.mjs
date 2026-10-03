@@ -33,6 +33,7 @@ import {
     LIBRARY_ID,
     local,
     remote,
+    requests,
     reset,
     resetServer,
     session,
@@ -193,7 +194,15 @@ const K = {
     delete412: key("attention-pdf-note"),
     // base-field titles 1.6.6 stored empty
     legalCase: key("legal-case"),
+    // also: changed here, deleted in Zotero, then kept locally in 1.6.6
+    // and not yet uploaded (an edit of a key the server has deleted)
     statute: key("legal-statute"),
+    // refused, then Accept Remote in 1.6.6: it deleted the row here
+    // although the server still has the item
+    droppedRefused: key("unfiled-preprint"),
+    // a note created under it, it deleted in Zotero, then Accept Remote in
+    // 1.6.6: the parent row went, the note stayed
+    orphanParent: key("morphology-chapter"),
 };
 
 const TEXT = {
@@ -205,6 +214,10 @@ const TEXT = {
     createdNote: "Created in 1.6.6, never synced",
     comment: "Comment edited in 1.6.6",
     remoteComment: "Changed in Zotero after 1.6.6 deleted it",
+    hiddenLocal: "Edited again in 1.6.6 after the conflict",
+    hiddenRemote: "Changed in Zotero (the conflict 1.6.6 then hid)",
+    blockedEdit: "Edited again in 1.6.6 after Zotero deleted it",
+    orphanNote: "Note created in 1.6.6 under an item whose deletion it then accepted",
 };
 
 /** Filled in while 1.6.6 builds the state. */
@@ -245,6 +258,19 @@ const newKey = () => {
     return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 };
 
+/** Annotations made in 1.6.6's reader on the attention PDF (copies of one fixture annotation). */
+const v6CreateAnnotations = (ids, comment) =>
+    inV6(async (call, h, lib, pdf, template, ids, comment) => {
+        const apiKey = window.app.plugins.plugins.zotflow.settings.zoteroapikey;
+        const keyInfo = await call(["annotation", "getKeyInfo"], apiKey);
+        const attachment = await call(["dbHelper", "getAttachmentItem"], lib, pdf);
+        const all = await call(["annotation", "getAnnotations"], attachment, apiKey);
+        const base = all.find((a) => a.id === template);
+        if (!base) throw new Error(`No annotation ${template}`);
+        const made = ids.map((id) => ({ ...base, id, comment, dateModified: new Date().toISOString() }));
+        await call(["annotation", "saveAnnotations"], attachment, keyInfo, [...all, ...made]);
+    }, LIBRARY_ID, K.attentionPdf, key("attention-pdf-text"), ids, comment);
+
 async function buildV6State() {
     // Fresh database, released build, the key verified the way 1.6.6's
     // settings tab does it, the library downloaded.
@@ -261,7 +287,16 @@ async function buildV6State() {
 
     // A write the server refuses: 1.6.6 marks it `conflict`, "413: …".
     await v6(["tag", "setItemTags"], LIBRARY_ID, K.refused, [{ tag: "x".repeat(300) }]);
+    await v6(["tag", "setItemTags"], LIBRARY_ID, K.droppedRefused, [{ tag: "y".repeat(300) }]);
+    // Annotations made in 1.6.6 and uploaded, for the states below.
+    made.hiddenConflict = newKey();
+    made.hiddenBlocked = newKey();
+    made.undone = newKey();
+    await v6CreateAnnotations([made.hiddenConflict, made.hiddenBlocked, made.undone], "Made in 1.6.6");
     await v6Sync();
+    // Accept Remote on a refused write: 1.6.6 had no server copy and
+    // deleted the row, though the item is still on the server.
+    await v6(["conflict", "resolveItemConflict"], LIBRARY_ID, K.droppedRefused, "accept-remote");
 
     // Conflicts. Downloaded only (read-only mode), so 1.6.6 pushes nothing
     // of what is pending under them.
@@ -299,8 +334,30 @@ async function buildV6State() {
 
     await remote.patch(K.trashedAnnotation, { deleted: 1 });
 
+    await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, made.hiddenConflict, "Edited in 1.6.6");
+    await remote.patch(made.hiddenConflict, { annotationComment: TEXT.hiddenRemote });
+
+    await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, made.hiddenBlocked, "Edited in 1.6.6");
+    await remote.delete(made.hiddenBlocked);
+
+    await v6(["tag", "setItemTags"], LIBRARY_ID, K.statute, [{ tag: "kept-in-1.6.6" }]);
+    await remote.delete(K.statute);
+
+    made.orphanNote = await v6(["itemNote", "createChildNote"], LIBRARY_ID, K.orphanParent);
+    await v6(["itemNote", "updateNoteContent"], LIBRARY_ID, made.orphanNote, TEXT.orphanNote, "editor");
+    await remote.delete(K.orphanParent);
+
     await v6Sync();
     await setMode("bidirectional");
+
+    // Edits of rows in conflict: 1.6.6 set them to "updated", hiding the
+    // conflict (the server copy and the message stayed).
+    await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, made.hiddenConflict, TEXT.hiddenLocal);
+    await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, made.hiddenBlocked, TEXT.blockedEdit);
+    // Keep Local on a remote deletion: an edit of a key the server deleted.
+    await v6(["conflict", "resolveItemConflict"], LIBRARY_ID, K.statute, "keep-local");
+    // Accept Remote on a remote deletion: 1.6.6 removed that row only.
+    await v6(["conflict", "resolveItemConflict"], LIBRARY_ID, K.orphanParent, "accept-remote");
 
     // Keep Local on a delete that conflicted: 1.6.6 made it an edit with
     // `deleted: true`, which its next push would have sent as a trash.
@@ -334,6 +391,19 @@ async function buildV6State() {
     [K.attentionPdf, K.attentionPdf],
     [key("attention-pdf-highlight-title"), key("attention-pdf-text")],
     [made.createdAnnotation, made.externalAnnotation]);
+
+    // The reader's undo of a delete: 1.6.6 skipped its own "deleted" rows
+    // when saving, so the annotation came back as "created" (version 0)
+    // under a key the server has.
+    await inV6(async (call, h, lib, pdf, k) => {
+        const apiKey = window.app.plugins.plugins.zotflow.settings.zoteroapikey;
+        const keyInfo = await call(["annotation", "getKeyInfo"], apiKey);
+        const attachment = await call(["dbHelper", "getAttachmentItem"], lib, pdf);
+        const json = (await call(["annotation", "getAnnotations"], attachment, apiKey)).find((a) => a.id === k);
+        await call(["annotation", "deleteAnnotations"], attachment, [k]);
+        const rest = await call(["annotation", "getAnnotations"], attachment, apiKey);
+        await call(["annotation", "saveAnnotations"], attachment, keyInfo, [...rest, json]);
+    }, LIBRARY_ID, K.attentionPdf, made.undone);
 
     await v6(["annotation", "updateAnnotationComment"], LIBRARY_ID, K.commentEdited, TEXT.comment);
     await v6(["tag", "setItemTags"], LIBRARY_ID, K.tagsEdited, [{ tag: "中文标签" }, { tag: "pending-1.6.6" }]);
@@ -414,6 +484,22 @@ describe("upgrade from 1.6.6", () => {
                 assert.match(v6Row(k).syncError, /^Remote deletion blocked/, k);
             }
             assert.equal(v6Row(K.deletedPdfHighlight).data.deleted, true);
+        });
+
+        test("has the states 1.6.6 left after an edit or a resolution", () => {
+            assert.equal(v6Row(made.hiddenConflict)?.syncStatus, "updated");
+            assert.equal(v6Row(made.hiddenConflict).syncError, "Remote update conflict");
+            assert.ok(v6Row(made.hiddenConflict).hasServerCopy);
+            assert.equal(v6Row(made.hiddenBlocked)?.syncStatus, "updated");
+            assert.match(v6Row(made.hiddenBlocked).syncError, /^Remote deletion blocked/);
+            assert.equal(v6Row(K.statute)?.syncStatus, "updated");
+            assert.equal(v6Row(K.statute).syncError, "");
+            assert.equal(v6Row(K.droppedRefused), undefined, "Accept Remote deleted the row");
+            assert.equal(v6Row(K.orphanParent), undefined, "Accept Remote deleted the parent's row");
+            assert.equal(v6Row(made.orphanNote)?.syncStatus, "created");
+            assert.equal(v6Row(made.orphanNote).parentItem, K.orphanParent);
+            assert.equal(v6Row(made.undone)?.syncStatus, "created");
+            assert.equal(v6Row(made.undone).version, 0);
         });
     });
 
@@ -552,7 +638,9 @@ describe("upgrade from 1.6.6", () => {
             const missing = made.groups.find((g) => g.root === K.missing);
             assert.deepEqual([...missing.members].sort(), [K.missing, made.missingNote].sort());
             assert.equal(conflict(made.missingNote)?.group, K.missing);
-            assert.equal(made.groups.length, 2, "no other groups");
+            // The deletion 1.6.6 hid behind a later edit is one of its own.
+            assert.deepEqual(made.groups.find((g) => g.root === made.hiddenBlocked)?.members, [made.hiddenBlocked]);
+            assert.equal(made.groups.length, 3, "no other groups");
         });
 
         test("a refused write is a refused conflict with the server's reason", () => {
@@ -573,10 +661,23 @@ describe("upgrade from 1.6.6", () => {
             assert.equal(conflict(K.delete412), undefined);
         });
 
+        test("a conflict 1.6.6 hid behind a later edit is still a changed conflict", () => {
+            const c = conflict(made.hiddenConflict);
+            assert.equal(c?.kind, "changed");
+            assert.equal(c.remoteData.annotationComment, TEXT.hiddenRemote);
+            assert.match(c.localData.annotationComment, /Edited again in 1\.6\.6/);
+        });
+
+        test("a remote deletion 1.6.6 hid behind a later edit is still a remote-deleted conflict", () => {
+            assert.equal(conflict(made.hiddenBlocked)?.kind, "remote-deleted");
+            assert.match(row(made.hiddenBlocked).raw.data.annotationComment, /Edited again in 1\.6\.6/);
+        });
+
         test("no other conflicts", () => {
             const expected = [
                 K.refused, K.noteBoth, K.itemBoth, K.deletedChanged,
                 K.book, K.bookEpub, K.bookAnnotation, K.missing, made.missingNote,
+                made.hiddenConflict, made.hiddenBlocked, made.orphanNote,
             ].sort();
             assert.deepEqual(made.conflicts.map((c) => c.key).filter((k) => k !== K.delete412).sort(), expected);
         });
@@ -587,6 +688,8 @@ describe("upgrade from 1.6.6", () => {
             await intercept();
             await local.sync();
             made.firstWrites = await writes();
+            made.firstRequests = (await requests()).map((r) => `${r.method} ${new URL(r.url).pathname.replace(/^\/groups\/\d+/, "")}${new URL(r.url).search} → ${r.status ?? r.error}`);
+            fact(F, "requests of the first sync after the upgrade", made.firstRequests);
             made.afterFirst = await local.conflicts();
             fact(F, "writes of the first sync after the upgrade", made.firstWrites);
             fact(F, "conflicts after the first sync", made.afterFirst.map((c) => ({ key: c.key, kind: c.kind, group: c.group })));
@@ -618,6 +721,47 @@ describe("upgrade from 1.6.6", () => {
             }
         });
 
+        test("downloads the library in full, once", async () => {
+            // 1.6.6 could drop rows behind the cursor; only a full listing finds them.
+            const full = (rs) => rs.filter((r) => /^GET \/items\?format=versions&includeTrashed=true →/.test(r));
+            assert.equal(full(made.firstRequests).length, 1);
+            await intercept();
+            await local.sync();
+            const again = (await requests()).map((r) => `${r.method} ${new URL(r.url).pathname.replace(/^\/groups\/\d+/, "")}${new URL(r.url).search} → ${r.status}`);
+            assert.deepEqual(full(again), []);
+        });
+
+        test("writes no collections", () => {
+            assert.deepEqual(made.firstWrites.filter((w) => w.includes("/collections")), []);
+        });
+
+        test("brings back the item 1.6.6 dropped on Accept Remote of a refused write", async () => {
+            const r = await local.row(K.droppedRefused);
+            assert.equal(r?.syncStatus, "synced");
+            assert.deepEqual(r.raw.data.tags, (await remote.get(K.droppedRefused)).data.tags);
+        });
+
+        test("recreates in Zotero the item 1.6.6 kept against a remote deletion", async () => {
+            const server = await remote.get(K.statute);
+            assert.deepEqual(server?.data.tags.map((t) => t.tag), ["kept-in-1.6.6"]);
+            assert.equal((await local.row(K.statute))?.syncStatus, "synced");
+        });
+
+        test("syncs the annotation the reader's undo brought back, without a conflict", async () => {
+            assert.equal(made.afterFirst.some((c) => c.key === made.undone), false);
+            assert.equal((await local.row(made.undone))?.syncStatus, "synced");
+            assert.equal((await remote.get(made.undone))?.data.annotationComment, "Made in 1.6.6");
+        });
+
+        test("keeps the note whose parent 1.6.6 dropped, lists it, and never uploads it", async () => {
+            const r = await local.row(made.orphanNote);
+            assert.match(r?.raw.data.note ?? "", /Note created in 1\.6\.6 under an item/);
+            const c = made.afterFirst.find((x) => x.key === made.orphanNote);
+            assert.equal(c?.kind, "refused");
+            assert.equal(c.keepLocalBlocked, undefined, "a note can be kept on its own");
+            assert.equal(await remote.get(made.orphanNote), null);
+        });
+
         test("keeps the local-only annotation local", async () => {
             assert.equal(await remote.get(made.externalAnnotation), null);
             assert.equal((await local.row(made.externalAnnotation))?.syncStatus, "ignore");
@@ -631,6 +775,8 @@ describe("upgrade from 1.6.6", () => {
             assert.equal(await remote.get(K.book), null);
             assert.equal(await remote.get(made.missingNote), null);
             assert.deepEqual((await remote.get(K.refused)).data.tags, []);
+            assert.equal((await remote.get(made.hiddenConflict))?.data.annotationComment, TEXT.hiddenRemote);
+            assert.equal(await remote.get(made.hiddenBlocked), null);
             assert.equal(Number((await remote.get(K.trashedAnnotation))?.data.deleted), 1, "still in the trash");
         });
 
@@ -643,7 +789,10 @@ describe("upgrade from 1.6.6", () => {
 
         test("the conflicts of 1.6.6 are still listed", () => {
             const keys = new Set(made.afterFirst.map((c) => c.key));
-            for (const k of [K.refused, K.noteBoth, K.itemBoth, K.deletedChanged, K.book, K.missing, made.missingNote]) {
+            for (const k of [
+                K.refused, K.noteBoth, K.itemBoth, K.deletedChanged, K.book, K.missing, made.missingNote,
+                made.hiddenConflict, made.hiddenBlocked,
+            ]) {
                 assert.ok(keys.has(k), k);
             }
         });
@@ -694,6 +843,28 @@ describe("upgrade from 1.6.6", () => {
             await local.sync();
             assert.equal(await remote.get(K.deletedChanged), null);
             assert.equal(await local.row(K.deletedChanged), undefined);
+        });
+
+        test("keep-local on the conflict 1.6.6 hid uploads the later edit", async () => {
+            await local.resolve(made.hiddenConflict, "keep-local");
+            await local.sync();
+            assert.match((await remote.get(made.hiddenConflict))?.data.annotationComment ?? "", /Edited again in 1\.6\.6 after the conflict/);
+        });
+
+        test("accept-remote on the remote deletion 1.6.6 hid removes it here", async () => {
+            await local.resolve(made.hiddenBlocked, "accept-remote");
+            await local.sync();
+            assert.equal(await local.row(made.hiddenBlocked), undefined);
+            assert.equal(await remote.get(made.hiddenBlocked), null);
+        });
+
+        test("keep-local on the orphaned note saves it in Zotero as a standalone note", async () => {
+            await local.resolve(made.orphanNote, "keep-local");
+            await local.sync();
+            const server = await remote.get(made.orphanNote);
+            assert.match(server?.data.note ?? "", /Note created in 1\.6\.6 under an item/);
+            assert.equal(server.data.parentItem, undefined);
+            assert.equal((await local.row(made.orphanNote))?.parentItem, "");
         });
 
         test("then nothing is left: no conflict, nothing pending, an idle sync writes nothing", async () => {
