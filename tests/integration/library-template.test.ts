@@ -235,6 +235,18 @@ describe("frontmatter", () => {
         expect(out).toContain("library-version: 1234");
     });
 
+    test("marks taken before the render are written, not what the database holds after it", async () => {
+        // A sync landing while the note renders must leave an older mark on
+        // newer content (a needless re-render later), never the reverse.
+        const item = await seedArticle();
+        await db.libraries.update(LIB, { itemVersion: 1234 });
+
+        const out = await service.renderLibrarySourceNote(item, "body", {}, { tree: "beforethe", libraryVersion: 1200 });
+
+        expect(out).toContain("item-tree: beforethe");
+        expect(out).toContain("library-version: 1200");
+    });
+
     test("the mandatory fields come first, ahead of template and older note keys", async () => {
         const item = await seedArticle();
         await db.libraries.update(LIB, { itemVersion: 1234 });

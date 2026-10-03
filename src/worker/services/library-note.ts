@@ -1,11 +1,10 @@
 import type { AnyIDBZoteroItem, IDBZoteroItem } from "types/db-schema";
-import { LibraryTemplateService } from "./library-template";
+import { LibraryTemplateService, takeSourceNoteSnapshot } from "./library-template";
 import { db, getCombinations } from "db/db";
 import { Zotero_Item_Types } from "types/zotero-item-const";
 import type { ZotFlowSettings } from "settings/types";
 import type { AttachmentData } from "types/zotero-item";
 import { getAnnotationJson } from "db/annotation";
-import { itemTreeFingerprint } from "db/sync/commit";
 import type { IParentProxy } from "bridge/types";
 import type { AttachmentService } from "./attachment";
 import type { DocumentWorkerService } from "./document-worker";
@@ -546,11 +545,6 @@ export class LibraryNoteService {
         return notePath;
     }
 
-    /** How far this device has downloaded the library (its sync cursor). */
-    private async librarySyncVersion(libraryID: number): Promise<number> {
-        return (await db.libraries.get(libraryID))?.itemVersion ?? 0;
-    }
-
     /**
      * Perform file update (with version check)
      */
@@ -573,11 +567,13 @@ export class LibraryNoteService {
         // Children changing leave the item's version alone; the subtree
         // fingerprint catches them (a note written before it existed has
         // none, and is refreshed once).
+        // Taken before anything is rendered, and recorded in the note as is
+        // (see renderLibrarySourceNote).
+        const snapshot = await takeSourceNoteSnapshot(item.libraryID, item.key);
         const rawTree = fileCheck.frontmatter?.["item-tree"];
-        const tree = await itemTreeFingerprint(item.libraryID, item.key);
         const treeChanged =
-            tree !== undefined &&
-            (typeof rawTree === "string" ? rawTree : undefined) !== tree;
+            snapshot.tree !== undefined &&
+            (typeof rawTree === "string" ? rawTree : undefined) !== snapshot.tree;
 
         // A note rendered on another device from a newer copy of the library
         // must not be rewritten from this device's older one: "different"
@@ -585,8 +581,7 @@ export class LibraryNoteService {
         // the note's renderer had (a library version is ordered; the
         // fingerprint is not).
         const behind =
-            (await this.librarySyncVersion(item.libraryID)) <
-            noteLibraryVersion(fileCheck.frontmatter);
+            snapshot.libraryVersion < noteLibraryVersion(fileCheck.frontmatter);
         if (behind && !forceUpdate) {
             this.parentHost.log(
                 "debug",
@@ -635,6 +630,7 @@ export class LibraryNoteService {
                 item,
                 templateContent,
                 fileCheck.frontmatter || {},
+                snapshot,
             );
 
             const spliced = reinsertPersistRegions(content, extracted);

@@ -576,12 +576,22 @@ export class LibraryTemplateService {
         this.settings = newSettings;
     }
 
+    /**
+     * Renders a source note. `snapshot` is what the note records about the
+     * data it was rendered from (`item-tree`, `library-version`); it must be
+     * taken before the content is read, so a change landing during the
+     * render leaves an older mark (a needless re-render later) rather than
+     * a newer one on older content (a stale note taken as current). Read
+     * here first when the caller has not taken it.
+     */
     async renderLibrarySourceNote(
         item: AnyIDBZoteroItem,
         templateContent: string | null,
         originalFrontmatter: Record<string, unknown> = {},
+        snapshot?: SourceNoteSnapshot,
     ): Promise<string> {
         try {
+            const marks = snapshot ?? (await takeSourceNoteSnapshot(item.libraryID, item.key));
             const context = await this.prepareItemContext(item);
             const template = templateContent || DEFAULT_ITEM_TEMPLATE;
 
@@ -639,13 +649,11 @@ export class LibraryTemplateService {
             };
             // The subtree fingerprint: Zotero does not bump an item's version
             // when a child (attachment, annotation, note) changes.
-            const tree = await itemTreeFingerprint(item.libraryID, item.key);
-            if (tree) mandatory["item-tree"] = tree;
+            if (marks.tree) mandatory["item-tree"] = marks.tree;
             // How far this device had synced the library: a device that is
             // behind leaves the note alone (see LibraryNoteService).
-            const library = await db.libraries.get(item.libraryID);
-            if (library?.itemVersion) {
-                mandatory["library-version"] = library.itemVersion;
+            if (marks.libraryVersion) {
+                mandatory["library-version"] = marks.libraryVersion;
             }
             const finalFrontmatter = withMandatoryFirst(
                 mandatory,
@@ -1042,4 +1050,20 @@ export class LibraryTemplateService {
             annotations,
         };
     }
+}
+
+/** What a source note records about the data it was rendered from. */
+export interface SourceNoteSnapshot {
+    /** The item's subtree fingerprint (`item-tree`); none for a child. */
+    tree: string | undefined;
+    /** This device's sync cursor for the library (`library-version`); 0 if never synced. */
+    libraryVersion: number;
+}
+
+/** Reads the marks a source note records (see `renderLibrarySourceNote`). */
+export async function takeSourceNoteSnapshot(libraryID: number, key: string): Promise<SourceNoteSnapshot> {
+    return {
+        tree: await itemTreeFingerprint(libraryID, key),
+        libraryVersion: (await db.libraries.get(libraryID))?.itemVersion ?? 0,
+    };
 }

@@ -34,7 +34,7 @@ let settings: ZotFlowSettings;
 let service: LibraryNoteService;
 /** What the faked template service returns for the next render. */
 let rendered: string;
-let renderCalls: { key: string; frontmatter: Record<string, unknown> }[];
+let renderCalls: { key: string; frontmatter: Record<string, unknown>; snapshot?: unknown }[];
 let renderedImages: { libraryID: number; count: number }[];
 /** Callbacks fired on each render, so tests can await the event itself. */
 let renderWaiters: (() => void)[];
@@ -83,8 +83,9 @@ async function setup(over: Partial<ZotFlowSettings> = {}) {
             item: AnyIDBZoteroItem,
             _template: string | null,
             frontmatter: Record<string, unknown>,
+            snapshot?: unknown,
         ) => {
-            renderCalls.push({ key: item.key, frontmatter });
+            renderCalls.push({ key: item.key, frontmatter, snapshot });
             renderWaiters.splice(0).forEach((notify) => notify());
             return Promise.resolve(rendered);
         },
@@ -295,6 +296,17 @@ describe("updating an existing note", () => {
         await service.ensureNote(LIB, "PARENT01", {});
 
         expect(host.vault.get("Source/@PARENT01.md")).toBe(rendered);
+    });
+
+    test("the render gets the marks read before it, the ones the check compared", async () => {
+        await seedItem({ libraryID: LIB, key: "ATTACH01", itemType: "attachment", parentItem: "PARENT01", version: 8 } as any);
+        await db.libraries.update(LIB, { itemVersion: 30 });
+        const tree = await itemTreeFingerprint(LIB, "PARENT01");
+        placeNote("Source/@PARENT01.md", "old body", { "zotero-key": "PARENT01", "item-version": 6 });
+
+        await service.ensureNote(LIB, "PARENT01", {});
+
+        expect(renderCalls[0]!.snapshot).toEqual({ tree, libraryVersion: 30 });
     });
 
     test("a note at the item's version and item-tree is left alone", async () => {
