@@ -17,6 +17,7 @@ import type {
     UpdateOptions,
 } from "worker/services/library-note";
 import type { ItemNoteService } from "worker/services/item-note";
+import type { EditQueue } from "worker/services/edit-queue";
 import type { LocalNoteService } from "worker/services/local-note";
 import type { ConflictService } from "worker/services/conflict";
 import type { AnnotationService } from "worker/services/annotation";
@@ -57,6 +58,7 @@ export class WorkerBridge {
     private _treeView: Comlink.Remote<TreeViewService>;
     private _libraryNote: Comlink.Remote<LibraryNoteService>;
     private _itemNote: Comlink.Remote<ItemNoteService>;
+    private _editQueue: Comlink.Remote<EditQueue>;
     private _localNote: Comlink.Remote<LocalNoteService>;
     private _conflict: Comlink.Remote<ConflictService>;
     private _annotation: Comlink.Remote<AnnotationService>;
@@ -156,6 +158,10 @@ export class WorkerBridge {
         this._itemNote = await materializeComlinkProxy(
             "itemNote",
             this._api.itemNote,
+        );
+        this._editQueue = await materializeComlinkProxy(
+            "editQueue",
+            this._api.editQueue,
         );
         this._localNote = await materializeComlinkProxy(
             "localNote",
@@ -280,6 +286,12 @@ export class WorkerBridge {
     get itemNote() {
         this.assertInitialized();
         return this._itemNote;
+    }
+
+    /** Edits typed into source notes and the note editor, written by the worker (see EditQueue). */
+    get editQueue() {
+        this.assertInitialized();
+        return this._editQueue;
     }
 
     get localNote() {

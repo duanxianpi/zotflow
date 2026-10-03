@@ -531,12 +531,35 @@ describe("updating note content", () => {
         const row = (await db.items.get([LIB, key]))!;
         expect(row).toMatchObject({ itemType: "note", parentItem: "PARENT01", syncStatus: "created" });
         expect((row.raw.data as any).note).toContain("kept text");
+        // The parent's source note is re-rendered at once: an editor open on
+        // it then edits the new note, not the gone one.
+        expect(triggerCalls).toContainEqual({
+            libraryID: LIB,
+            key: "PARENT01",
+            options: { forceUpdateContent: true, forceUpdateImages: false },
+            debounce: false,
+        });
     });
 
     test("with its parent gone too, the text becomes a standalone note", async () => {
         const key = await service.saveAsNewNote(LIB, "PARENT01", "kept text");
 
         expect((await db.items.get([LIB, key]))!.parentItem).toBe("");
+    });
+
+    test("text that converts to the stored note is not written again", async () => {
+        // A flush of what is already saved (or an edit typed and undone)
+        // must not mark the note for upload.
+        await seedNote("NOTEKEY1", "<p>old</p>");
+        await service.updateNoteContent(LIB, "NOTEKEY1", "same text");
+        const once = (await db.items.get([LIB, "NOTEKEY1"]))!;
+
+        const result = await service.updateNoteContent(LIB, "NOTEKEY1", "same text");
+
+        expect(result).toEqual({ status: "saved" });
+        const twice = (await db.items.get([LIB, "NOTEKEY1"]))!;
+        expect(twice.localRevision).toBe(once.localRevision);
+        expect(twice.dateModified).toBe(once.dateModified);
     });
 
     test("a non-note item is never rewritten", async () => {

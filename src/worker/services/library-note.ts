@@ -51,6 +51,18 @@ export class LibraryNoteService {
         private notePathService: NotePathService,
     ) {}
 
+    /** Run before a source note is rendered (see `setBeforeRender`). */
+    private beforeRender?: (libraryID: number, key: string) => Promise<void>;
+
+    /**
+     * `fn` runs before the source note of `key` is rendered: the edits it
+     * shows that are still waiting to be written go to the database first,
+     * or the render would overwrite them with older text.
+     */
+    setBeforeRender(fn: (libraryID: number, key: string) => Promise<void>) {
+        this.beforeRender = fn;
+    }
+
     updateSettings(newSettings: ZotFlowSettings) {
         this.settings = newSettings;
         this.templateService.updateSettings(newSettings);
@@ -335,6 +347,8 @@ export class LibraryNoteService {
     ): Promise<string> {
         const { forceUpdateContent = false, forceUpdateImages = false } =
             options;
+
+        await this.beforeRender?.(libraryID, key);
 
         // Prepare data
         const item = await db.items.get({ libraryID, key });

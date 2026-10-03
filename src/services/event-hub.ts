@@ -36,11 +36,27 @@ export class EventHub {
     public readonly treeChanged = new EventBus<[change?: TreeChange]>();
 
     /**
+     * Fires when an edit reaches a note deleted in Zotero (and removed by a
+     * sync): its text is offered to be saved as a new note.
+     */
+    public readonly noteGone = new EventBus<[note: NoteGoneEvent]>();
+
+    /**
      * Fires once when a sync task reaches a terminal state (completed,
      * failed or cancelled). `task.input.libraryId`, when present, names the
      * only library the sync covered.
      */
     public readonly syncFinished = new EventBus<[task: ITaskInfo]>();
+}
+
+/** An edit that reached a note no longer in the database. */
+export interface NoteGoneEvent {
+    libraryID: number;
+    noteKey: string;
+    parentKey: string;
+    parentExists: boolean;
+    /** The text that could not be saved. */
+    content: string;
 }
 
 /** Items whose fields changed without changing the tree's shape. */
@@ -61,4 +77,5 @@ export type WorkerEventName =
     | "annotationChanged"
     | "noteChangedByEditor"
     | "noteChangedByNoteView"
-    | "treeChanged";
+    | "treeChanged"
+    | "noteGone";

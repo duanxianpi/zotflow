@@ -12,6 +12,7 @@ import { DocumentWorkerService } from "./services/document-worker";
 import { LocalNoteService } from "./services/local-note";
 import { LocalTemplateService } from "./services/local-template";
 import { ConflictService } from "./services/conflict";
+import { EditQueue } from "./services/edit-queue";
 import { AnnotationService } from "./services/annotation";
 import { KeyService } from "./services/key";
 import { LibraryService } from "./services/library";
@@ -68,6 +69,7 @@ export interface WorkerAPI {
     treeView: Exposed<TreeViewService>;
     libraryNote: Exposed<LibraryNoteService>;
     itemNote: Exposed<ItemNoteService>;
+    editQueue: Exposed<EditQueue>;
     localNote: Exposed<LocalNoteService>;
     conflict: Exposed<ConflictService>;
     annotation: Exposed<AnnotationService>;
@@ -115,6 +117,7 @@ let _treeView: TreeViewService | undefined;
 let _template: LibraryTemplateService | undefined;
 let _libraryNote: LibraryNoteService | undefined;
 let _itemNote: ItemNoteService | undefined;
+let _editQueue: EditQueue | undefined;
 let _localNote: LocalNoteService | undefined;
 let _localTemplate: LocalTemplateService | undefined;
 let _conflict: ConflictService | undefined;
@@ -314,6 +317,11 @@ const exposedApi: WorkerAPI = {
                 parentHost,
                 _convert,
             );
+            _editQueue = new EditQueue(parentHost, _itemNote, _annotation);
+            // A source note's render writes the edits it shows first.
+            _libraryNote.setBeforeRender((libraryID, key) =>
+                _editQueue!.flushFor(libraryID, key),
+            );
             _key = new KeyService(_zotero, parentHost);
 
             _taskManager = new TaskManager(parentHost);
@@ -422,6 +430,16 @@ const exposedApi: WorkerAPI = {
                 "Worker not initialized",
             );
         return Comlink.proxy(_itemNote);
+    },
+
+    get editQueue() {
+        if (!_editQueue)
+            throw new ZotFlowError(
+                ZotFlowErrorCode.UNKNOWN,
+                "Worker",
+                "Worker not initialized",
+            );
+        return Comlink.proxy(_editQueue);
     },
 
     get localNote() {
@@ -580,6 +598,7 @@ const exposedApi: WorkerAPI = {
     },
 
     dispose: () => {
+        _editQueue?.dispose();
         _displayTitle?.dispose();
         _libraryNote?.dispose();
         _localNote?.dispose();
@@ -594,6 +613,8 @@ const exposedApi: WorkerAPI = {
 
     createSyncTask: async (libraryId?: number) => {
         assertInitialized();
+        // The sync uploads the edits still waiting, not the text before them.
+        await _editQueue!.flushAll();
         return _taskManager!.createSyncTask(
             _sync!,
             libraryId,

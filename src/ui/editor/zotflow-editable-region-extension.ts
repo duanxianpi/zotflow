@@ -5,12 +5,12 @@ import {
     type EditorState,
     type Text,
 } from "@codemirror/state";
-import { ViewPlugin, type ViewUpdate } from "@codemirror/view";
+import { ViewPlugin, type EditorView, type ViewUpdate } from "@codemirror/view";
 import { TFile } from "obsidian";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { LocalDataManager } from "ui/reader/local-data-manager";
-import { NoteGoneModal } from "ui/modals/note-gone-modal";
+import { registerNoteTextSource } from "ui/modals/note-gone-modal";
 import {
     parseEditableRegions,
     type EditableRegion,
@@ -159,12 +159,52 @@ type SyncTarget =
 /*  ViewPlugin — sync edits to Worker                               */
 /* ================================================================ */
 
-const DEBOUNCE_DELAY = 2000;
+/** Pause before an annotation comment of a local file is written to its sidecar. */
+const LOCAL_DEBOUNCE_DELAY = 2000;
 
+/** The text of NOTE region `key` as sent to the worker (meta comment included), or null. */
+export function noteRegionText(state: EditorState, key: string): string | null {
+    const region = (state.field(editableRegionsField, false) ?? []).find(
+        (r) => r.type === "NOTE" && r.key === key,
+    );
+    if (!region) return null;
+    return state.doc.sliceString(region.metaFrom ?? region.from, region.to);
+}
+
+/** A local annotation comment waiting out the debounce. */
+interface PendingWrite {
+    timer: number;
+    /** Writes the comment; resolves once it is in the sidecar. */
+    run: () => Promise<void>;
+}
+
+/**
+ * Sends region edits as the user types. Zotero notes and annotation
+ * comments go straight to the worker's edit queue, which debounces and
+ * writes them (and writes them first when the source note re-renders or a
+ * sync starts). Comments on local files are written to their sidecar here,
+ * after a pause.
+ */
 const editableRegionSyncPlugin = ViewPlugin.fromClass(
     class {
-        /** Values are `window.setTimeout` handles — numbers, not Node's `Timeout`. */
-        private debouncers = new Map<string, number>();
+        private pending = new Map<string, PendingWrite>();
+        private destroyed = false;
+        private unregister: (() => void)[];
+
+        constructor(private readonly view: EditorView) {
+            this.unregister = [
+                // A sync first writes the sidecar comments still held back.
+                services.pendingEdits.register(() => this.flush()),
+                // A gone note's prompt reads its latest text from here.
+                registerNoteTextSource({
+                    text: (libraryID, noteKey) =>
+                        this.destroyed ||
+                        getLibraryId(this.view.state.doc) !== libraryID
+                            ? null
+                            : noteRegionText(this.view.state, noteKey),
+                }),
+            ];
+        }
 
         update(update: ViewUpdate) {
             if (!update.docChanged) return;
@@ -200,147 +240,153 @@ const editableRegionSyncPlugin = ViewPlugin.fromClass(
             if (!target) return;
 
             // Find which regions were touched by the changes
+            const touched = new Set<EditableRegion>();
             update.changes.iterChangedRanges((fromA, toA) => {
                 for (const region of regions) {
                     // Check if the change range overlaps this region's editable zone
                     if (fromA <= region.to && toA >= region.from) {
-                        this.scheduleSync(target, region, update.state);
+                        touched.add(region);
                     }
                 }
             });
+            for (const region of touched) {
+                this.send(target, region, update.state);
+            }
         }
 
-        private scheduleSync(
+        /** Writes the sidecar comments still held back. */
+        flush(): Promise<void> {
+            const runs = [...this.pending.values()];
+            this.pending.clear();
+            for (const p of runs) window.clearTimeout(p.timer);
+            return Promise.all(runs.map((p) => p.run())).then(() => undefined);
+        }
+
+        private send(
             target: SyncTarget,
             region: EditableRegion,
             state: EditorState,
         ) {
             // PERSIST regions are purely local — never sync them anywhere.
             if (region.type === "PERSIST") return;
-            // Local notes only carry ANNO regions.
-            if (target.kind === "local" && region.type !== "ANNO") return;
 
-            const debounceKey =
-                target.kind === "zotero"
-                    ? `${target.libraryId}-${region.key}`
-                    : `${target.attachmentPath}-${region.key}`;
-
-            // Clear previous timer for this region
-            const existing = this.debouncers.get(debounceKey);
-            if (existing !== undefined) {
-                window.clearTimeout(existing);
-            }
-
-            const timer = window.setTimeout(() => {
-                this.debouncers.delete(debounceKey);
-
+            if (target.kind === "zotero") {
+                // The source note's item: the parent of its child notes, and
+                // the note whose render must first write these edits.
+                const sourceKey = getZoteroKey(state.doc) ?? "";
                 if (region.type === "NOTE") {
-                    if (target.kind !== "zotero") return;
                     // NOTE regions: include meta comment for wrapper-div
                     // attributes reconstruction, then convert MD → HTML.
-                    const syncFrom = region.metaFrom ?? region.from;
-                    const noteContent = state.doc.sliceString(
-                        syncFrom,
-                        region.to,
-                    );
-                    const libraryID = target.libraryId;
-                    // The note's parent, should the note turn out to be gone
-                    // before this edit reads it: the text is then offered as
-                    // a new note under it (standalone if it is gone too).
-                    const parentKey = getZoteroKey(state.doc) ?? "";
-                    workerBridge.itemNote
-                        .updateNoteContent(
-                            libraryID,
-                            region.key,
-                            noteContent,
-                            "editor",
-                            parentKey,
-                        )
-                        .then((result) => {
-                            if (result.status !== "gone") return;
-                            // The note was deleted in Zotero: the text stays
-                            // in this source note until the user chooses.
-                            NoteGoneModal.show(services.app, {
-                                libraryID,
-                                noteKey: region.key,
-                                parentKey: result.parentKey,
-                                parentExists: result.parentExists,
-                                content: () => noteContent,
-                            });
-                        })
-                        .catch(() => {
-                            // Background sync — errors logged by worker
-                        });
-                } else if (region.type === "ANNO") {
-                    // ANNO regions live inside blockquotes in the template:
-                    //   > <!-- ZF_ANNO_BEG_KEY -->
-                    //   > comment text here
-                    //   > <!-- ZF_ANNO_END_KEY -->
-                    // Strip the leading `> ` prefix from each line first.
                     const content = state.doc.sliceString(
-                        region.from,
+                        region.metaFrom ?? region.from,
                         region.to,
                     );
-                    const stripped = content.replace(/^>[ \t]?/gm, "");
-
-                    if (target.kind === "zotero") {
-                        // MD → restricted HTML happens worker-side.
-                        workerBridge.annotation
-                            .updateAnnotationComment(
-                                target.libraryId,
-                                region.key,
-                                stripped,
-                            )
-                            .catch(() => {
-                                // Background sync — errors logged by worker
-                            });
-                    } else {
-                        // Local attachment: comments live in the .zf.json
-                        // sidecar as Zotero's restricted annotation HTML —
-                        // LocalDataManager converts MD → HTML, mirroring the
-                        // worker path. No note re-render (the note already
-                        // contains the new text).
-                        const file = services.app.vault.getAbstractFileByPath(
-                            target.attachmentPath,
-                        );
-                        if (!(file instanceof TFile)) return;
-
-                        new LocalDataManager(file)
-                            .updateAnnotationCommentFromNote(
-                                region.key,
-                                stripped,
-                            )
-                            .then((changed) => {
-                                if (changed) {
-                                    // Let an open local reader refresh its cache.
-                                    services.eventHub.localAnnotationChanged.emit(
-                                        target.attachmentPath,
-                                        region.key,
-                                    );
-                                }
-                            })
-                            .catch((e) => {
-                                services.logService.error(
-                                    "Failed to save local annotation comment from note",
-                                    "ZotFlowEditableRegion",
-                                    e,
-                                );
-                            });
-                    }
+                    workerBridge.editQueue
+                        .submitNote(
+                            target.libraryId,
+                            region.key,
+                            content,
+                            "editor",
+                            sourceKey,
+                            sourceKey,
+                        )
+                        .catch((e: unknown) => this.reportSendFailure(e));
+                } else if (region.type === "ANNO") {
+                    // MD → restricted HTML happens worker-side.
+                    workerBridge.editQueue
+                        .submitAnnotationComment(
+                            target.libraryId,
+                            region.key,
+                            annoCommentText(state, region),
+                            sourceKey,
+                        )
+                        .catch((e: unknown) => this.reportSendFailure(e));
                 }
-            }, DEBOUNCE_DELAY);
+                return;
+            }
 
-            this.debouncers.set(debounceKey, timer);
+            // Local notes only carry ANNO regions.
+            if (region.type !== "ANNO") return;
+            const debounceKey = `${target.attachmentPath}-${region.key}`;
+            const existing = this.pending.get(debounceKey);
+            if (existing !== undefined) window.clearTimeout(existing.timer);
+
+            const run = () =>
+                this.writeLocalComment(
+                    target.attachmentPath,
+                    region.key,
+                    annoCommentText(state, region),
+                );
+            const timer = window.setTimeout(() => {
+                this.pending.delete(debounceKey);
+                void run();
+            }, LOCAL_DEBOUNCE_DELAY);
+            this.pending.set(debounceKey, { timer, run });
+        }
+
+        private reportSendFailure(e: unknown) {
+            services.logService.error(
+                "Failed to send an edit to the worker",
+                "ZotFlowEditableRegion",
+                e,
+            );
+        }
+
+        /**
+         * Local attachment: comments live in the .zf.json sidecar as Zotero's
+         * restricted annotation HTML — LocalDataManager converts MD → HTML,
+         * mirroring the worker path. No note re-render (the note already
+         * contains the new text). Never rejects.
+         */
+        private async writeLocalComment(
+            attachmentPath: string,
+            annotationKey: string,
+            comment: string,
+        ): Promise<void> {
+            const file = services.app.vault.getAbstractFileByPath(attachmentPath);
+            if (!(file instanceof TFile)) return;
+            try {
+                const changed = await new LocalDataManager(
+                    file,
+                ).updateAnnotationCommentFromNote(annotationKey, comment);
+                if (changed) {
+                    // Let an open local reader refresh its cache.
+                    services.eventHub.localAnnotationChanged.emit(
+                        attachmentPath,
+                        annotationKey,
+                    );
+                }
+            } catch (e) {
+                services.logService.error(
+                    "Failed to save local annotation comment from note",
+                    "ZotFlowEditableRegion",
+                    e,
+                );
+            }
         }
 
         destroy() {
-            for (const timer of this.debouncers.values()) {
-                window.clearTimeout(timer);
-            }
-            this.debouncers.clear();
+            // Closing the editor writes what it still holds back.
+            void this.flush();
+            this.destroyed = true;
+            for (const unregister of this.unregister) unregister();
         }
     },
 );
+
+/**
+ * An ANNO region's comment. ANNO regions live inside blockquotes in the
+ * template:
+ *   > <!-- ZF_ANNO_BEG_KEY -->
+ *   > comment text here
+ *   > <!-- ZF_ANNO_END_KEY -->
+ * so the leading `> ` of each line is stripped.
+ */
+function annoCommentText(state: EditorState, region: EditableRegion): string {
+    return state.doc
+        .sliceString(region.from, region.to)
+        .replace(/^>[ \t]?/gm, "");
+}
 
 /* ================================================================ */
 /*  Region Unlock Toggle                                            */

@@ -152,7 +152,8 @@
    Tag Edit Modal
    ============================================================ */
 
-.zotflow-tag-edit-modal {
+.zotflow-tag-edit-modal,
+.zotflow-note-gone-modal {
     & .modal-header {
         & .modal-title {
             font-size: var(--font-ui-medium);
@@ -2123,6 +2124,46 @@
         width: auto;
         flex: 1 1 120px;
     }
+}
+
+/* ============================================================
+   Note Gone Modal (an edit reached a note deleted in Zotero)
+   ============================================================ */
+
+.zotflow-note-gone-subtitle {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+    margin-bottom: var(--size-4-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The note's first lines, so the user knows which note it is. */
+.zotflow-note-gone-preview {
+    padding: var(--size-4-2) var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background-color: var(--background-secondary);
+    font-size: var(--font-ui-small);
+    max-height: 9em;
+    overflow: hidden;
+
+    & > div {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+.zotflow-note-gone-preview-empty,
+.zotflow-note-gone-preview-more {
+    color: var(--text-faint);
+}
+
+.zotflow-note-gone-text {
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
 }
 
 /* ============================================================

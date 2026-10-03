@@ -237,6 +237,25 @@ export class ItemNoteService {
             key,
             usable ? parentKey : "",
         );
+        // The parent's source note shows the new note in place of the gone
+        // one; an editor open on it then edits the new note.
+        if (usable) {
+            this.sourceNoteService
+                .triggerUpdate(
+                    libraryID,
+                    parentKey,
+                    { forceUpdateContent: true, forceUpdateImages: false },
+                    false,
+                )
+                .catch((e) =>
+                    this.parentHost.log(
+                        "error",
+                        "Failed to update the source note after saving a new note",
+                        "ItemNoteService",
+                        e,
+                    ),
+                );
+        }
         return key;
     }
 
@@ -281,6 +300,13 @@ export class ItemNoteService {
         }
 
         const noteHtmlContent = await this.noteHtml(content);
+
+        // Nothing changed (an edit typed and undone, a flush of text already
+        // written): no write, so the note is not marked for upload again.
+        const current = await db.items.get([libraryID, noteKey]);
+        if (current?.itemType === "note" && current.raw.data.note === noteHtmlContent) {
+            return { status: "saved" };
+        }
 
         // The conversion above is async, so the row is re-read inside the
         // write transaction rather than written back from `item`.

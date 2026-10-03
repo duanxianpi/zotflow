@@ -309,6 +309,20 @@ describe("updating an existing note", () => {
         expect(renderCalls[0]!.snapshot).toEqual({ tree, libraryVersion: 30 });
     });
 
+    test("the edits waiting for the note are written before it renders", async () => {
+        const flushes: { key: string; rendersBefore: number }[] = [];
+        service.setBeforeRender(async (_libraryID, key) => {
+            flushes.push({ key, rendersBefore: renderCalls.length });
+        });
+        placeNote("Source/@PARENT01.md", "old body", { "zotero-key": "PARENT01", "item-version": 6 });
+
+        await service.ensureNote(LIB, "PARENT01", { forceUpdateContent: true });
+
+        // Flushed once, before the render read anything.
+        expect(flushes).toEqual([{ key: "PARENT01", rendersBefore: 0 }]);
+        expect(renderCalls).toHaveLength(1);
+    });
+
     test("a note at the item's version and item-tree is left alone", async () => {
         placeNote("Source/@PARENT01.md", "existing body", {
             "zotero-key": "PARENT01",

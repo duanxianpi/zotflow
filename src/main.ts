@@ -29,6 +29,7 @@ import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
 import { ZotFlowEditableRegionExtension } from "ui/editor/zotflow-editable-region-extension";
 import { handleEditorDrop } from "ui/editor/citation-helper";
 import { startSync } from "ui/start-sync";
+import { promptNoteGone } from "ui/modals/note-gone-modal";
 
 import { openAttachment, openItemNote } from "utils/viewer";
 import { getLocalSidecarPath } from "utils/utils";
@@ -501,6 +502,9 @@ export default class ZotFlow extends Plugin {
         this.zotFlowSettingTab = new ZotFlowSettingTab(this.app, this);
         this.addSettingTab(this.zotFlowSettingTab);
         finishStage("Register settings tab");
+
+        // An edit that reached a note deleted in Zotero: offer its text.
+        this.register(services.eventHub.noteGone.subscribe(promptNoteGone));
 
         // Track file renames to keep viewStates and .zf.json sidecar in sync
         this.registerEvent(
