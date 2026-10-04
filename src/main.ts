@@ -615,6 +615,12 @@ export default class ZotFlow extends Plugin {
             <defs><mask maskUnits="userSpaceOnUse" id="a"><g style="display:inline"><path fill="#fff" d="M0 0h100v100H0z"/><circle cx="64.5" cy="68.25" r="28"/><path stroke="#000" stroke-width="26" stroke-linecap="round" style="stroke-width:40;stroke-dasharray:none" d="m70 70 30 30"/></g></mask></defs><path mask="url(#a)" style="fill:none;stroke:currentColor;stroke-width:8.33331;stroke-linecap:round;stroke-linejoin:round" d="M17.214 8.333H82.28l5.219 9.839L42.803 74.26h44.36v17.407H17.551L12.5 81.155l44.107-55.163H17.046Z"/><g transform="matrix(2.5 0 0 2.5 37 40.75)"><circle cx="11" cy="11" r="8" style="fill:none;stroke:currentColor;stroke-width:3.33;stroke-linecap:round;stroke-linejoin:round"/><path d="m21 21-4.34-4.34" style="fill:none;stroke:currentColor;stroke-width:3.33;stroke-linecap:round;stroke-linejoin:round"/></g>
             `,
         );
+        // Brand zf mark (micro outline), drawn on a 24×24 grid like Lucide.
+        // No stroke-width here: it inherits the user's --icon-stroke.
+        addIcon(
+            "zotflow-logo",
+            `<g transform="scale(4.1666667)" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M2,9.236 L11.691,9.236 L4.062,18.308 L10.041,18.308"/><path d="M13.546,21.195 L17.258,5.525 C18.082,2.638 20.144,2.226 22,3.463"/><path d="M11.485,9.236 L21.381,9.236"/></g>`,
+        );
     }
 
     async registerTreeView(active = false) {
