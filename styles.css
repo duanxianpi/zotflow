@@ -2661,10 +2661,6 @@ button.zotflow-conflict-back:hover {
 }
 
 /* Summary, table and decision scroll together; only Resolve stays in view. */
-.is-phone .zotflow-conflict-resolver > .zotflow-conflict-footer {
-    display: contents;
-}
-
 .is-phone .zotflow-conflict-decision {
     margin-top: auto;
     padding-top: var(--size-4-2);

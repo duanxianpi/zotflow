@@ -271,6 +271,17 @@ export const ConflictPanel: React.FC<{
 /*  Resolver — why, choose, preview, resolve                        */
 /* ================================================================ */
 
+const ConflictFooter: React.FC<React.PropsWithChildren<{ phone: boolean }>> = ({
+    phone,
+    children,
+}) =>
+    // On phones, only Resolve sticks; the decision scrolls with the content.
+    phone ? (
+        <>{children}</>
+    ) : (
+        <div className="zotflow-conflict-footer">{children}</div>
+    );
+
 const ConflictResolver: React.FC<{
     entry: ConflictItemInfo;
     title: string;
@@ -375,7 +386,7 @@ const ConflictResolver: React.FC<{
                 <SideTable entry={entry} />
             )}
 
-            <div className="zotflow-conflict-footer">
+            <ConflictFooter phone={Platform.isPhone}>
                 {/* The decision on the left, its outcome and Resolve on the right. */}
                 <div className="zotflow-conflict-decision">
                     {showCopies && (
@@ -458,7 +469,7 @@ const ConflictResolver: React.FC<{
                               : "Resolve"}
                     </button>
                 </div>
-            </div>
+            </ConflictFooter>
         </div>
     );
 };
