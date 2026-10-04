@@ -33,7 +33,18 @@ for (const name of wanted) {
         process.exit(1);
     }
 }
-const names = wanted.length > 0 ? wanted : available;
+// On a device (ZF_LIVE_TARGET=ios, see webkit-session.mjs) the page has no
+// Playwright locators, and the upgrade test deletes the whole database.
+const IOS_SKIP = ["source-notes", "upgrade"];
+const onIos = process.env.ZF_LIVE_TARGET === "ios";
+if (onIos) {
+    const refused = wanted.filter((n) => IOS_SKIP.includes(n));
+    if (refused.length > 0) {
+        console.error(`Not on a device: ${refused.join(", ")}`);
+        process.exit(1);
+    }
+}
+const names = wanted.length > 0 ? wanted : available.filter((n) => !onIos || !IOS_SKIP.includes(n));
 
 const out = join(LOCAL_DIR, "live-sync");
 mkdirSync(out, { recursive: true });

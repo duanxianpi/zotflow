@@ -36,6 +36,8 @@ import {
     planIsEmpty,
 } from "../../../scripts/zotero-fixtures-lib.mjs";
 
+import { webkitSession } from "./webkit-session.mjs";
+
 export const config = loadConfig();
 if (!config.apiKey) throw new Error("Set zoteroApiKey in .obsidian-test/config.json");
 if (!config.fixtureLibrary?.startsWith("groups/")) {
@@ -60,7 +62,7 @@ let connecting;
  * Opened on first use and shared by everything in this process.
  */
 export function session() {
-    connecting ??= new Harness(config).playwright();
+    connecting ??= process.env.ZF_LIVE_TARGET === "ios" ? webkitSession() : new Harness(config).playwright();
     return connecting;
 }
 
