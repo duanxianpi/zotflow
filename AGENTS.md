@@ -923,6 +923,25 @@ The release has no test hooks, so its worker is driven with raw Comlink
 `APPLY` messages (`v6()` in that file). It puts the current build, hot-reload
 and a clean library back when it ends.
 
+`ZF_LIVE_TARGET=ios npm run live:sync` runs the same sync tests against
+Obsidian on an iPad or iPhone, because iOS has its own network layer:
+`requestUrl` there goes through Capacitor's native HTTP, which silently drops
+non-string header values (that once stripped `If-Unmodified-Since-Version`
+from every upload). `tests/live/sync/webkit-session.mjs` replaces the
+Playwright page with the WebKit Inspector Protocol through
+`ios_webkit_debug_proxy` (`brew install ios-webkit-debug-proxy`, then
+`ios_webkit_debug_proxy -c <udid>:9222`; `idevice_id -l` lists the udid,
+`ZF_IOS_PROXY` overrides the address). The device needs Settings → Safari →
+Advanced → Web Inspector, Obsidian in the foreground and unlocked, the plugin
+with the test hooks flag set in that vault, and no other inspector on the
+page: the device gives a page to one inspector at a time, so close Safari's
+Web Inspector and do not poll the page from a second connection during a
+run. It provides only `evaluate` and `waitForFunction`, so `source-notes`
+(Playwright locators) is skipped, and so is `upgrade` (it deletes the whole
+database, which on a device is the user's own). The tests reset only the
+fixture library. Copy the build into the device vault's
+`.obsidian/plugins/zotflow/` before running.
+
 `npm run live:app` runs the live UI tests in `tests/live/app/` with
 Playwright (`playwright-core`, no bundled browser) attached to the running
 test Obsidian over CDP: `Harness#playwright()` → `{ page, disconnect }`
