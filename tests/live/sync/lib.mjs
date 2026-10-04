@@ -22,6 +22,7 @@
 // plugin already holds.
 
 import { after } from "node:test";
+import { clearTimeout, setTimeout } from "node:timers";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import spec from "../../../scripts/fixture-library.mjs";
@@ -170,15 +171,65 @@ export function inPage(fn, ...args) {
     return evaluateWith("null", `(_, h, ...rest) => (${fn.toString()})(h, ...rest)`, args);
 }
 
+/**
+ * How long one call into the page may take before the test fails (seconds;
+ * `ZF_LIVE_CALL_TIMEOUT_S`). A backstop: a call answered by a worker that
+ * was replaced never settles, and the test would otherwise wait forever.
+ */
+const CALL_TIMEOUT_MS = Number(process.env.ZF_LIVE_CALL_TIMEOUT_S ?? 600) * 1000;
+
+/** When the build the instance loads was last written, for failure messages. */
+function buildWritten() {
+    try {
+        return statSync(join(REPO_ROOT, "main.js")).mtime.toLocaleTimeString();
+    } catch {
+        return "unknown";
+    }
+}
+
 async function evaluateWith(firstExpression, fn, args) {
     const { page } = await session();
     await page.evaluate(installPageHelpers);
     // A string expression rather than a function: `fn` arrives as source and
-    // is spliced in, which needs no eval in the page.
-    return page.evaluate(`(async () => {
+    // is spliced in, which needs no eval in the page. With the test hooks,
+    // the call fails as soon as the plugin reloads under it (hot reload after
+    // a rebuild): its worker is gone, and the call would never settle.
+    const call = page.evaluate(`(async () => {
         const first = ${firstExpression};
-        return await (${fn.toString()})(first, window.__zfLive, ...${JSON.stringify(args)});
+        const run = (async () => (${fn.toString()})(first, window.__zfLive, ...${JSON.stringify(args)}))();
+        if (!first) return await run;
+        let timer;
+        const reloaded = new Promise((_, reject) => {
+            timer = setInterval(() => {
+                if (window.__zotflowTest !== first) reject(new Error("ZOTFLOW_RELOADED"));
+            }, 500);
+        });
+        try {
+            return await Promise.race([run, reloaded]);
+        } finally {
+            clearInterval(timer);
+        }
     })()`);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+            () => reject(new Error(`Obsidian did not answer within ${CALL_TIMEOUT_MS / 1000}s (main.js last written ${buildWritten()})`)),
+            CALL_TIMEOUT_MS,
+        );
+    });
+    try {
+        return await Promise.race([call, timeout]);
+    } catch (e) {
+        if (String(e?.message).includes("ZOTFLOW_RELOADED")) {
+            throw new Error(
+                `ZotFlow was reloaded during this call, so its worker is gone (main.js last written ${buildWritten()}; ` +
+                    "a rebuild while live tests run makes hot-reload restart the plugin)",
+            );
+        }
+        throw e;
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /** Make sure the instance runs with the test hooks on. */
@@ -480,9 +531,9 @@ export async function reset() {
 /*  Facts for the report                                              */
 /* ------------------------------------------------------------------ */
 
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { LOCAL_DIR } from "../../../scripts/obsidian-harness.mjs";
+import { LOCAL_DIR, REPO_ROOT } from "../../../scripts/obsidian-harness.mjs";
 
 const FACTS_DIR = join(LOCAL_DIR, "live-sync");
 mkdirSync(FACTS_DIR, { recursive: true });

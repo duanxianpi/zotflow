@@ -907,7 +907,10 @@ They reach the page through one Playwright connection per test file
 worker through `window.__zotflowTest`
 (`src/dev/test-hooks.ts`), which exists only when the vault's localStorage
 holds `zotflow-test-hooks = "1"` — set by the tests in the isolated profile,
-never by the plugin. Rebuild and reload the plugin before running. Results:
+never by the plugin. Rebuild and reload the plugin before running, and not during a run:
+hot-reload restarts the plugin, and a call into it then fails with "ZotFlow
+was reloaded during this call" (every call into the page also has a
+`ZF_LIVE_CALL_TIMEOUT_S` limit, 600 by default). Results:
 `.obsidian-test/live-sync/` (JUnit XML, and `facts.jsonl` with the server
 behaviour each test observed). Put a new live sync test in the file for its
 kind; record server behaviour it depends on with `fact()`.
