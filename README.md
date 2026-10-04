@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/wordmark-dark.svg">
+    <img src="assets/logo/wordmark-light.svg" alt="ZotFlow" width="320">
+  </picture>
+</p>
+
 # ZotFlow — Keep Your Research in Flow
 
 English | [简体中文](README.zh-CN.md)
@@ -6,7 +13,7 @@ English | [简体中文](README.zh-CN.md)
 
 ZotFlow is a community plugin for [Obsidian](https://obsidian.md) that brings the full power of [Zotero](https://www.zotero.org) into your vault. Read papers, annotate PDFs, generate templated source notes, and cite literature — all without ever leaving Obsidian.
 
-![ZotFlow Hero](docs/assets/hero.gif)
+![ZotFlow Hero](assets/hero.gif)
 
 ---
 

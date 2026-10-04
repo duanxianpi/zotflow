@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/wordmark-dark.svg">
+    <img src="assets/logo/wordmark-light.svg" alt="ZotFlow" width="320">
+  </picture>
+</p>
+
 # ZotFlow — 让你的科研工作流保持顺畅
 
 [English](README.md) | 简体中文
@@ -6,7 +13,7 @@
 
 ZotFlow 是一个 [Obsidian](https://obsidian.md) 社区插件，可将 [Zotero](https://www.zotero.org) 的核心能力直接带入你的库。你可以在不离开 Obsidian 的情况下阅读论文、标注 PDF、生成模板化来源笔记并插入引用。
 
-![ZotFlow Hero](docs/assets/hero.gif)
+![ZotFlow Hero](assets/hero.gif)
 
 ---
 
