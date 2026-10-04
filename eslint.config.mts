@@ -13,6 +13,9 @@ export default defineConfig(
         // live:obsidian harness state: a vault with linked main.js and an
         // Obsidian profile full of Chromium caches.
         ".obsidian-test/**",
+        // Internal docs (gitignored), including the logo generator scripts,
+        // which belong to no tsconfig.
+        "docs/**",
         "reader/reader/**",
         "note-editor/note-editor/**",
         "zotflow-enhancement-pack/**",
