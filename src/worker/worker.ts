@@ -198,11 +198,19 @@ const exposedApi: WorkerAPI = {
         };
         workerGlobal.originalFetch = workerGlobal.fetch;
         const proxiedFetchImpl = async (url: string, init?: RequestInit) => {
+            // Through `Headers`, so every value is a string:
+            // zotero-api-client sets the version headers as numbers, and
+            // requestUrl on iOS silently drops non-string values (an upload
+            // would lose its If-Unmodified-Since-Version).
+            const headers: Record<string, string> = {};
+            new Headers(init?.headers).forEach((value, name) => {
+                headers[name] = value;
+            });
             try {
                 const response = await parentHost.request({
                     url: url,
                     method: init?.method || "GET",
-                    headers: init?.headers as Record<string, string>,
+                    headers,
                     body: init?.body as string | ArrayBuffer,
                     throw: false, // We handle status codes in Services
                     contentType: "application/json",
