@@ -624,7 +624,17 @@
    Activity Center
    ============================================================ */
 
+/*
+ * Conflict colour language: orange = a conflict to decide, red = deletion /
+ * data loss / error, accent = selection; and one colour per side wherever a
+ * value or a count comes from: Local (this device, ↑), Zotero (↓), Combined.
+ */
 .mod-zotflow-ac {
+    --zotflow-side-local: var(--color-blue);
+    --zotflow-side-local-rgb: var(--color-blue-rgb);
+    --zotflow-side-remote: var(--color-green);
+    --zotflow-side-remote-rgb: var(--color-green-rgb);
+    --zotflow-side-combined: var(--color-cyan);
     width: 90vw;
     height: 80vh;
 
@@ -992,17 +1002,60 @@
 .zotflow-sync-controls {
     display: flex;
     flex-direction: column;
-    min-height: 25%;
-    max-height: 45%;
+    min-height: 0;
     flex: 0 1 auto;
 }
 
-.zotflow-sync-conflicts {
+/* Sync tab: a pointer to the Conflicts tab */
+.zotflow-sync-conflict-callout {
     display: flex;
-    flex-direction: column;
-    min-height: 55%;
-    max-height: 75%;
-    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--size-4-2);
+    flex-shrink: 0;
+    padding: var(--size-4-2) var(--size-4-3);
+    background-color: rgba(var(--color-red-rgb), 0.06);
+    border: 1px solid rgba(var(--color-red-rgb), 0.2);
+    border-radius: var(--radius-s);
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+}
+
+.zotflow-sync-conflict-callout > div:first-child {
+    color: var(--text-error);
+}
+
+.zotflow-sync-conflict-callout button {
+    margin-left: auto;
+}
+
+.zotflow-sync-count.is-link {
+    cursor: pointer;
+}
+
+.zotflow-sync-count.is-link:hover {
+    text-decoration: underline;
+}
+
+/* Conflicts tab */
+.zotflow-conflicts-view {
+    gap: var(--size-4-2);
+}
+
+.zotflow-conflicts-view .zotflow-conflict-container {
+    flex: 1;
+}
+
+/* Count badge on an Activity Center tab */
+.zotflow-ac-tab-badge {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background-color: var(--color-red);
+    color: var(--text-on-accent);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-semibold);
+    line-height: 18px;
+    text-align: center;
 }
 
 /* Conflict count badge */
@@ -1180,32 +1233,7 @@
     transition: all 0.15s ease;
 }
 
-.zotflow-conflict-group-heading {
-    display: flex;
-    align-items: center;
-    gap: var(--size-4-2);
-    padding: var(--size-4-1) var(--size-4-2);
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-}
 
-.zotflow-conflict-item--member {
-    margin-left: var(--size-4-3);
-}
-
-.zotflow-conflict-note {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--size-4-2);
-    margin: var(--size-4-2) 0;
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-}
-
-.zotflow-conflict-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
 
 .zotflow-conflict-item:hover {
     background-color: var(--background-modifier-hover);
@@ -1227,22 +1255,22 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 4px;
+    flex-wrap: wrap;
+    gap: 2px var(--size-4-2);
+    margin-top: 4px;
 }
 
 .zotflow-conflict-type-badge {
-    font-size: 10px;
-    font-weight: var(--font-semibold);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 1px 6px;
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-medium);
+    padding: 0 6px;
     border-radius: var(--radius-s);
-    flex-shrink: 0;
+    min-width: 0;
 }
 
 .zotflow-conflict-type-badge--update {
-    background-color: rgba(var(--color-yellow-rgb), 0.15);
-    color: var(--text-warning);
+    background-color: rgba(var(--color-orange-rgb), 0.15);
+    color: var(--color-orange);
 }
 
 .zotflow-conflict-type-badge--delete {
@@ -1251,14 +1279,10 @@
 }
 
 .zotflow-conflict-type-badge--push {
-    background-color: rgba(var(--color-orange-rgb), 0.15);
-    color: var(--text-warning);
+    background-color: rgba(var(--color-red-rgb), 0.15);
+    color: var(--text-error);
 }
 
-.zotflow-conflict-type-badge--collection {
-    background-color: rgba(var(--color-blue-rgb), 0.15);
-    color: var(--text-accent);
-}
 
 .zotflow-conflict-title {
     display: block;
@@ -1290,19 +1314,6 @@
     flex-shrink: 0;
 }
 
-/* Sync error banner in diff pane */
-.zotflow-conflict-sync-error {
-    display: flex;
-    align-items: center;
-    gap: var(--size-4-2);
-    padding: var(--size-4-2) var(--size-4-3);
-    background-color: rgba(var(--color-red-rgb), 0.08);
-    border: 1px solid rgba(var(--color-red-rgb), 0.2);
-    border-radius: var(--radius-s);
-    font-size: var(--font-ui-smaller);
-    color: var(--text-error);
-    flex-shrink: 0;
-}
 
 /* Field diff table */
 .zotflow-field-diff-wrapper {
@@ -1342,14 +1353,6 @@
     width: 140px;
 }
 
-.zotflow-field-diff-local {
-    color: var(--text-error);
-}
-
-.zotflow-field-diff-remote {
-    color: var(--text-success);
-}
-
 .zotflow-field-diff-table td {
     padding: var(--size-4-2) var(--size-4-3);
     border-bottom: 1px solid var(--background-modifier-border);
@@ -1369,6 +1372,7 @@
 
 .zotflow-field-diff-val pre {
     margin: 0;
+    user-select: text;
     font-family: var(--font-monospace);
     font-size: var(--font-ui-smaller);
     line-height: 1.5;
@@ -1377,49 +1381,494 @@
     word-break: break-word;
 }
 
-.zotflow-field-diff-val--local {
-    background-color: rgba(var(--color-red-rgb), 0.04);
+
+
+
+
+
+/* Push / pull / conflict counts */
+.zotflow-sync-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
 }
 
-.zotflow-field-diff-val--remote {
-    background-color: rgba(var(--color-green-rgb), 0.04);
-}
-
-/* Conflict action buttons */
-.zotflow-conflict-actions {
-    display: flex;
-    gap: var(--size-4-3);
-    justify-content: flex-end;
-    flex-shrink: 0;
-}
-
-.zotflow-conflict-btn {
-    padding: var(--size-4-2) var(--size-4-4);
-    border: none;
-    border-radius: var(--radius-s);
-    font-size: var(--font-ui-small);
-    font-weight: var(--font-medium);
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.zotflow-conflict-btn--local {
-    background-color: var(--background-modifier-border);
+.zotflow-sync-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: var(--font-ui-smaller);
+    font-variant-numeric: tabular-nums;
     color: var(--text-normal);
 }
 
-.zotflow-conflict-btn--local:hover {
-    background-color: var(--background-modifier-border-hover);
+.zotflow-sync-count svg {
+    width: 12px;
+    height: 12px;
 }
 
-.zotflow-conflict-btn--remote {
-    background-color: var(--interactive-accent);
-    color: var(--text-on-accent);
+.zotflow-sync-count--push svg {
+    color: var(--zotflow-side-local);
 }
 
-.zotflow-conflict-btn--remote:hover {
-    filter: brightness(1.1);
+.zotflow-sync-count--pull svg {
+    color: var(--zotflow-side-remote);
 }
+
+.zotflow-sync-count--conflict {
+    color: var(--text-error);
+}
+
+.zotflow-sync-count.is-zero {
+    color: var(--text-faint);
+}
+
+.zotflow-sync-count.is-zero svg {
+    color: var(--text-faint);
+}
+
+/* Resolver header */
+.zotflow-conflict-diff-title-row {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    min-width: 0;
+}
+
+.zotflow-conflict-why-btn {
+    flex-shrink: 0;
+}
+
+.zotflow-conflict-diff-header {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex-shrink: 0;
+    min-width: 0;
+}
+
+.zotflow-conflict-meta {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The resolver scrolls as a whole; its footer stays in view. */
+.zotflow-conflict-diff.zotflow-conflict-resolver {
+    overflow-y: auto;
+    padding-right: var(--size-4-2);
+}
+
+.zotflow-conflict-resolver > * {
+    flex-shrink: 0;
+}
+
+.zotflow-conflict-resolver .zotflow-field-diff-wrapper {
+    flex: none;
+    overflow: visible;
+}
+
+/* The pane scrolls, not the table: a sticky header would slide over the footer. */
+.zotflow-conflict-resolver .zotflow-field-diff-table thead {
+    position: static;
+}
+
+.zotflow-conflict-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--size-4-3);
+    padding-top: var(--size-4-2);
+    background-color: var(--modal-background, var(--background-primary));
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Why is this a conflict? */
+.zotflow-conflict-why {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-3);
+    font-size: var(--font-ui-small);
+}
+
+
+.zotflow-conflict-why-text {
+    margin: 0;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.zotflow-conflict-facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px var(--size-4-3);
+    margin: 0;
+}
+
+.zotflow-conflict-facts dt {
+    color: var(--text-faint);
+}
+
+.zotflow-conflict-facts dd {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+/* Strategy picker */
+.zotflow-conflict-strategies {
+    display: flex;
+    gap: var(--size-4-2);
+    flex-wrap: wrap;
+}
+
+.zotflow-conflict-strategies .zotflow-conflict-strategy {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    height: auto;
+    padding: var(--size-4-2) var(--size-4-3);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background-color: var(--background-primary);
+    box-shadow: none;
+    text-align: left;
+    cursor: pointer;
+}
+
+.zotflow-conflict-strategies .zotflow-conflict-strategy:hover:not(:disabled) {
+    border-color: var(--background-modifier-border-hover);
+    background-color: var(--background-modifier-hover);
+}
+
+.zotflow-conflict-strategies .zotflow-conflict-strategy.is-active,
+.zotflow-conflict-strategies .zotflow-conflict-strategy.is-active:hover {
+    border-color: var(--interactive-accent);
+    background-color: rgba(var(--interactive-accent-rgb), 0.08);
+}
+
+.zotflow-conflict-strategies .zotflow-conflict-strategy:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.zotflow-conflict-strategy-name {
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+}
+
+.zotflow-conflict-strategy-hint {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    white-space: normal;
+}
+
+/* Footer: the decision on the left, outcome and Resolve on the right, bottom-aligned. */
+.zotflow-conflict-resolver > .zotflow-conflict-footer {
+    margin-top: auto;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.zotflow-conflict-decision {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.zotflow-conflict-commit {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-3);
+    margin-left: auto;
+}
+
+/* "Overwrite all fields with the selected side" under the two resolutions */
+.zotflow-conflict-overwrite {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.zotflow-conflict-overwrite input[type="checkbox"] {
+    margin: 0;
+}
+
+/* Git-style marks in a value: removed text struck through, added text on its side's colour */
+.zotflow-diff-del {
+    color: var(--text-faint);
+    text-decoration: line-through;
+}
+
+.zotflow-diff-add {
+    text-decoration: none;
+    border-radius: 2px;
+    color: var(--text-normal);
+}
+
+.zotflow-diff-add--local {
+    background-color: rgba(var(--zotflow-side-local-rgb), 0.18);
+}
+
+.zotflow-diff-add--remote {
+    background-color: rgba(var(--zotflow-side-remote-rgb), 0.18);
+}
+
+/* A remote deletion's members, as a tree */
+.zotflow-conflict-member {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.zotflow-conflict-member:last-child {
+    border-bottom: none;
+}
+
+.zotflow-conflict-member-head {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    padding: var(--size-4-2) var(--size-4-3);
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-conflict-member--depth-1 .zotflow-conflict-member-head {
+    padding-left: calc(var(--size-4-3) + 1 * var(--size-4-5));
+}
+
+.zotflow-conflict-member--depth-2 .zotflow-conflict-member-head {
+    padding-left: calc(var(--size-4-3) + 2 * var(--size-4-5));
+}
+
+.zotflow-conflict-member--depth-3 .zotflow-conflict-member-head,
+.zotflow-conflict-member--depth-4 .zotflow-conflict-member-head {
+    padding-left: calc(var(--size-4-3) + 3 * var(--size-4-5));
+}
+
+.zotflow-conflict-member-head.is-expandable {
+    cursor: pointer;
+}
+
+.zotflow-conflict-member-head.is-expandable:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.zotflow-conflict-member-chevron {
+    flex-shrink: 0;
+    color: var(--text-faint);
+}
+
+.zotflow-conflict-member-chevron svg {
+    width: 14px;
+    height: 14px;
+}
+
+.zotflow-conflict-member-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-normal);
+}
+
+.zotflow-conflict-member-type {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-conflict-member-status {
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-conflict-member.is-unchanged .zotflow-conflict-member-title {
+    color: var(--text-muted);
+}
+
+.zotflow-conflict-member.is-unchanged .zotflow-conflict-member-status {
+    color: var(--text-faint);
+}
+
+.zotflow-conflict-member-fields {
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Field rows line up under their item's title. */
+.zotflow-conflict-member-fields td.zotflow-field-diff-name {
+    padding-left: calc(var(--size-4-3) + 22px);
+}
+
+.zotflow-conflict-member--depth-1 .zotflow-conflict-member-fields td.zotflow-field-diff-name {
+    padding-left: calc(var(--size-4-3) + 22px + 1 * var(--size-4-5));
+}
+
+.zotflow-conflict-member--depth-2 .zotflow-conflict-member-fields td.zotflow-field-diff-name {
+    padding-left: calc(var(--size-4-3) + 22px + 2 * var(--size-4-5));
+}
+
+.zotflow-conflict-member--depth-3 .zotflow-conflict-member-fields td.zotflow-field-diff-name,
+.zotflow-conflict-member--depth-4 .zotflow-conflict-member-fields td.zotflow-field-diff-name {
+    padding-left: calc(var(--size-4-3) + 22px + 3 * var(--size-4-5));
+}
+
+.zotflow-field-diff-table .zotflow-conflict-member-field-col {
+    width: 30%;
+}
+
+.zotflow-conflict-member-fields tr:last-child td {
+    border-bottom: none;
+}
+
+/* Field tables: merge preview */
+
+.zotflow-field-diff-table tr.is-conflict .zotflow-field-diff-name {
+    box-shadow: inset 3px 0 0 var(--color-orange);
+}
+
+.zotflow-field-diff-name > span {
+    display: block;
+}
+
+.zotflow-field-diff-flag {
+    margin-top: 2px;
+    font-family: var(--font-interface);
+    font-size: 10px;
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-orange);
+}
+
+.zotflow-field-diff-base {
+    margin-top: 2px;
+    font-family: var(--font-interface);
+    font-weight: normal;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.zotflow-field-diff-missing {
+    font-style: italic;
+    color: var(--text-faint);
+}
+
+.zotflow-field-diff-val.is-chosen {
+    box-shadow: inset 0 0 0 1px rgba(var(--interactive-accent-rgb), 0.5);
+}
+
+.zotflow-field-diff-val.is-chosen pre {
+    color: var(--text-normal);
+}
+
+.zotflow-field-diff-val--result pre {
+    color: var(--text-normal);
+}
+
+.zotflow-field-diff-origin {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 2px;
+    font-size: 10px;
+    font-weight: var(--font-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.zotflow-field-diff-origin svg {
+    width: 10px;
+    height: 10px;
+}
+
+.zotflow-field-diff-origin--local {
+    color: var(--zotflow-side-local);
+}
+
+.zotflow-field-diff-origin--remote {
+    color: var(--zotflow-side-remote);
+}
+
+.zotflow-field-diff-origin--combined {
+    color: var(--zotflow-side-combined);
+}
+
+/* A thin mark under each side's column header, in that side's colour. */
+.zotflow-field-diff-table th.zotflow-field-diff-head--local {
+    box-shadow: inset 0 -2px 0 var(--zotflow-side-local);
+}
+
+.zotflow-field-diff-table th.zotflow-field-diff-head--remote {
+    box-shadow: inset 0 -2px 0 var(--zotflow-side-remote);
+}
+
+/* What happened to this item: orange for a conflict, red for a deletion or refusal. */
+.zotflow-conflict-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--size-4-2) var(--size-4-3);
+    border-left: 3px solid var(--zotflow-summary-tone);
+    border-radius: var(--radius-s);
+    background-color: rgba(var(--zotflow-summary-tone-rgb), 0.08);
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    line-height: 1.5;
+}
+
+.zotflow-conflict-summary--conflict {
+    --zotflow-summary-tone: var(--color-orange);
+    --zotflow-summary-tone-rgb: var(--color-orange-rgb);
+}
+
+.zotflow-conflict-summary--danger {
+    --zotflow-summary-tone: var(--color-red);
+    --zotflow-summary-tone-rgb: var(--color-red-rgb);
+}
+
+.zotflow-conflict-summary-label {
+    font-weight: var(--font-semibold);
+    color: var(--zotflow-summary-tone);
+}
+
+/* Zotero's refusal, last in the "?" modal. */
+.zotflow-conflict-server-error {
+    margin: 0;
+    color: var(--text-error);
+    word-break: break-word;
+}
+
+/* Outcome summary above the Resolve button */
+
+.zotflow-conflict-outcome-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-conflict-outcome-unit {
+    color: var(--text-faint);
+}
+
+
+
 
 /* Sync reminder after resolving all conflicts */
 .zotflow-sync-reminder {
@@ -1432,6 +1881,10 @@
     border-radius: var(--radius-s);
     font-size: var(--font-ui-small);
     color: var(--text-accent);
+}
+
+.zotflow-sync-reminder button {
+    margin-left: auto;
 }
 
 /* ============================================================
@@ -2059,6 +2512,11 @@
 
     .zotflow-ac-content {
         padding: var(--size-4-3) var(--size-2-1);
+    }
+
+    /* Conflicts: decision above Resolve when the row is too narrow */
+    .zotflow-conflict-resolver > .zotflow-conflict-footer {
+        flex-wrap: wrap;
     }
 
     /* Sync: stack the conflict list above the diff pane */

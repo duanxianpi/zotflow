@@ -543,6 +543,62 @@ function keptLocal(local: ItemDataJSON, remote: ItemDataJSON, base: ItemDataJSON
     return applyChanges(local, r.changes.filter((c) => !own.has(c.field)));
 }
 
+/** The merge base of a `changed` conflict: none for a row never on the server. */
+export function mergeBase(state: KeyState): ItemDataJSON | undefined {
+    return state.row?.version === 0 ? undefined : state.cache?.data;
+}
+
+/** Which side a field takes in a merge. */
+export type FieldChoice = "local" | "remote";
+
+/**
+ * The fields of a `changed` conflict the user chooses a side for: the ones
+ * the conflict listed, and any a later local edit made conflict too.
+ */
+export function mergeConflictFields(state: KeyState): string[] {
+    const { row, conflict } = state;
+    if (conflict?.kind !== "changed" || !row || !conflict.remote) return [];
+    const base = mergeBase(state);
+    const r = base ? reconcile3(base, dataOf(row), conflict.remote) : reconcile2(dataOf(row), conflict.remote);
+    return [...new Set([...conflict.fields, ...r.conflicts.map(([c]) => c.field)])];
+}
+
+/**
+ * The data a merge of a `changed` conflict keeps: the local data with the
+ * remote changes that did not conflict, and the local side of each
+ * conflicting field unless `choices` names the remote side. Undefined for
+ * any other conflict.
+ */
+export function mergedData(state: KeyState, choices: Record<string, FieldChoice> = {}): ItemDataJSON | undefined {
+    const { row, conflict } = state;
+    if (conflict?.kind !== "changed" || !row || !conflict.remote) return undefined;
+    const local = dataOf(row);
+    const remote = conflict.remote;
+    const data = keptLocal(local, remote, mergeBase(state), conflict.fields);
+    for (const [field, side] of Object.entries(choices)) {
+        const from = side === "remote" ? remote : local;
+        if (from[field] === undefined) delete data[field];
+        else data[field] = structuredClone(from[field]);
+    }
+    return data;
+}
+
+/**
+ * Accept Remote's whole-copy variant for an item changed on both sides:
+ * the remote copy as it is, so local changes that did not conflict are
+ * given up too. Any other conflict: `acceptRemote`.
+ */
+export function acceptRemoteCopy(state: KeyState): KeyState {
+    const { row, conflict } = state;
+    if (conflict?.kind !== "changed" || !row || !conflict.remote) return acceptRemote(state);
+    return {
+        ...state,
+        conflict: undefined,
+        cache: undefined,
+        row: withData(row, conflict.remote, conflict.remoteVersion || row.version, 1),
+    };
+}
+
 /**
  * Keep the local side. `merged`, when given, is the data to keep (a
  * per-field choice); by default the local data as it is.
@@ -558,7 +614,7 @@ export function keepLocal(state: KeyState, merged?: ItemDataJSON): KeyState {
             if (!row || !remote) return next;
             // By default: the local side of every conflicting field, plus
             // the remote changes that did not conflict.
-            const data = merged ?? keptLocal(dataOf(row), remote, row.version === 0 ? undefined : state.cache?.data, conflict.fields);
+            const data = merged ?? keptLocal(dataOf(row), remote, mergeBase(state), conflict.fields);
             if (sameContent(data, remote)) {
                 next.row = withData(row, remote, conflict.remoteVersion, 1);
                 next.cache = undefined;
@@ -613,11 +669,23 @@ function keepOrphan(state: KeyState): KeyState {
     };
 }
 
-/** Keep the remote side. Throws for a conflict whose remote side is unavailable (`acceptRemoteBlocked`). */
+/**
+ * Keep the remote side: for an item changed on both sides, the remote value
+ * of each conflicting field (local changes that did not conflict stay, to be
+ * uploaded); otherwise the remote copy whole. Throws for a conflict whose
+ * remote side is unavailable (`acceptRemoteBlocked`).
+ */
 export function acceptRemote(state: KeyState): KeyState {
     const { row, conflict } = state;
     if (!conflict) return state;
     const next: KeyState = { ...state, conflict: undefined };
+
+    // Changed on both sides: the remote side of each conflicting field; the
+    // changes that did not conflict merge as they would have without one.
+    if (conflict.kind === "changed" && row && conflict.remote && !conflict.orphan) {
+        const remoteSide = Object.fromEntries(mergeConflictFields(state).map((f): [string, FieldChoice] => [f, "remote"]));
+        return keepLocal(state, mergedData(state, remoteSide));
+    }
 
     switch (conflict.kind) {
         case "changed":

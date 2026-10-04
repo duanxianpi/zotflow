@@ -24,10 +24,11 @@ export interface LibraryRow {
     /** The currently configured mode from settings (falls back to defaultMode). */
     mode: LibrarySyncMode;
     syncedAt: string;
-    changedCount: number;
+    /** Changes waiting to be uploaded: created and edited items, deletions (conflicts excluded). */
+    pushCount: number;
+    /** Conflicts to resolve; a remote deletion's members count once. */
+    conflictCount: number;
 }
-
-const DIRTY_STATUSES = ["created", "updated", "conflict"] as const;
 
 /**
  * Worker-side service for Zotero API key, group, and library metadata.
@@ -68,7 +69,7 @@ export class KeyService {
             const hasNotesAccess = u.notes;
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(keyInfo.userID);
-            const changedCount = await this.countChangedItems(keyInfo.userID);
+            const counts = await this.countLocalChanges(keyInfo.userID);
 
             rows.push({
                 id: keyInfo.userID,
@@ -83,7 +84,7 @@ export class KeyService {
                     settings.librariesConfig[keyInfo.userID]?.mode ??
                     defaultMode,
                 syncedAt: libState?.syncedAt ?? "",
-                changedCount,
+                ...counts,
             });
         }
 
@@ -98,7 +99,7 @@ export class KeyService {
             const hasNotesAccess = access.notes;
             const { defaultMode, allowed } = getModes(canRead, canWrite);
             const libState = await db.libraries.get(group.id);
-            const changedCount = await this.countChangedItems(group.id);
+            const counts = await this.countLocalChanges(group.id);
 
             rows.push({
                 id: group.id,
@@ -111,7 +112,7 @@ export class KeyService {
                 defaultMode,
                 mode: settings.librariesConfig[group.id]?.mode ?? defaultMode,
                 syncedAt: libState?.syncedAt ?? "",
-                changedCount,
+                ...counts,
             });
         }
 
@@ -186,22 +187,24 @@ export class KeyService {
 
     // Count items + collections with a non-synced status for a library,
     // plus local deletes not yet uploaded (their rows are already gone).
-    private async countChangedItems(libraryID: number): Promise<number> {
-        let total = await db.syncDeleteLog
-            .where("[libraryID+key]")
-            .between([libraryID, Dexie.minKey], [libraryID, Dexie.maxKey])
-            .count();
-        for (const status of DIRTY_STATUSES) {
-            total += await db.items
-                .where("[libraryID+syncStatus]")
-                .equals([libraryID, status])
-                .count();
-            total += await db.collections
-                .where("[libraryID+syncStatus]")
-                .equals([libraryID, status])
-                .count();
-        }
-        return total;
+    /** What a sync would upload from a library, and what waits on the user. */
+    private async countLocalChanges(libraryID: number): Promise<{ pushCount: number; conflictCount: number }> {
+        const range: [[number, unknown], [number, unknown]] = [
+            [libraryID, Dexie.minKey],
+            [libraryID, Dexie.maxKey],
+        ];
+        const [created, updated, deletes, conflicts] = await Promise.all([
+            db.items.where("[libraryID+syncStatus]").equals([libraryID, "created"]).count(),
+            db.items.where("[libraryID+syncStatus]").equals([libraryID, "updated"]).count(),
+            db.syncDeleteLog.where("[libraryID+key]").between(...range).primaryKeys(),
+            db.syncConflicts.where("[libraryID+key]").between(...range).toArray(),
+        ]);
+        // A pending delete in conflict waits on the user, not on a sync.
+        const inConflict = new Set(conflicts.map((c) => c.key));
+        const pendingDeletes = deletes.filter(([, key]) => !inConflict.has(key)).length;
+        // A remote deletion's members are resolved together: one conflict.
+        const conflictCount = new Set(conflicts.map((c) => (c.group ? `group:${c.group}` : c.key))).size;
+        return { pushCount: created + updated + pendingDeletes, conflictCount };
     }
 }
 

@@ -3512,5 +3512,50 @@
 			"translator": "translator"
 		}
 	},
-	"locales": {}
+	"locales": {
+		"en-US": {
+			"itemTypes": {
+				"annotation": "Annotation",
+				"artwork": "Artwork",
+				"attachment": "Attachment",
+				"audioRecording": "Audio Recording",
+				"bill": "Bill",
+				"blogPost": "Blog Post",
+				"book": "Book",
+				"bookSection": "Book Section",
+				"case": "Case",
+				"computerProgram": "Software",
+				"conferencePaper": "Conference Paper",
+				"dataset": "Dataset",
+				"dictionaryEntry": "Dictionary Entry",
+				"document": "Document",
+				"email": "E-mail",
+				"encyclopediaArticle": "Encyclopedia Article",
+				"film": "Film",
+				"forumPost": "Forum Post",
+				"hearing": "Hearing",
+				"instantMessage": "Instant Message",
+				"interview": "Interview",
+				"journalArticle": "Journal Article",
+				"letter": "Letter",
+				"magazineArticle": "Magazine Article",
+				"manuscript": "Manuscript",
+				"map": "Map",
+				"newspaperArticle": "Newspaper Article",
+				"note": "Note",
+				"patent": "Patent",
+				"podcast": "Podcast",
+				"preprint": "Preprint",
+				"presentation": "Presentation",
+				"radioBroadcast": "Radio Broadcast",
+				"report": "Report",
+				"standard": "Standard",
+				"statute": "Statute",
+				"thesis": "Thesis",
+				"tvBroadcast": "TV Broadcast",
+				"videoRecording": "Video Recording",
+				"webpage": "Web Page"
+			}
+		}
+	}
 }

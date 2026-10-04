@@ -310,7 +310,7 @@ const exposedApi: WorkerAPI = {
             );
             finishStage("Create template and note services");
 
-            _conflict = new ConflictService(parentHost, settings);
+            _conflict = new ConflictService(parentHost, settings, _convert);
 
             _annotation = new AnnotationService(
                 _libraryNote,

@@ -3,12 +3,12 @@ import { ObsidianIcon } from "../ObsidianIcon";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { startSync } from "ui/start-sync";
+import { CountChip } from "./ConflictPanel";
 
-import type {
-    ConflictItemInfo,
-    ConflictAction,
-} from "worker/services/conflict";
 import type { LibraryRow } from "worker/services/key";
+
+/** A library's pull count: known, being checked, or unreachable. */
+type PullCount = number | "loading" | "error";
 
 /* ================================================================ */
 /*  Helpers                                                         */
@@ -36,26 +36,27 @@ async function loadLibraries(): Promise<LibraryRow[]> {
     return workerBridge.key.getLibraryRows(services.settings);
 }
 
-/**
- * Load all conflicts via the ConflictService in the worker.
- *
- * Items only: collections are pull-only, so they never conflict.
- */
-async function loadConflicts(): Promise<ConflictItemInfo[]> {
-    return workerBridge.conflict.getItemConflicts();
-}
-
 /* ================================================================ */
 /*  Sub-components                                                  */
 /* ================================================================ */
 
 const LibraryTable: React.FC<{
     libraries: LibraryRow[];
+    pullCounts: Map<number, PullCount>;
+    onOpenConflicts?: () => void;
     syncingAll: boolean;
     syncingLibId: number | null;
     onSyncLibrary: (id: number) => void;
     onSyncAll: () => void;
-}> = ({ libraries, syncingAll, syncingLibId, onSyncLibrary, onSyncAll }) => {
+}> = ({
+    libraries,
+    pullCounts,
+    onOpenConflicts,
+    syncingAll,
+    syncingLibId,
+    onSyncLibrary,
+    onSyncAll,
+}) => {
     if (libraries.length === 0) {
         return (
             <div className="zotflow-sync-empty">
@@ -85,7 +86,9 @@ const LibraryTable: React.FC<{
                             <th>Name</th>
                             <th>Access</th>
                             <th>Sync Mode</th>
-                            <th>Changes</th>
+                            <th title="Changes to upload (↑), to download (↓), and conflicts">
+                                Changes
+                            </th>
                             <th>Last Synced</th>
                             <th></th>
                         </tr>
@@ -144,13 +147,40 @@ const LibraryTable: React.FC<{
                                         </span>
                                     </td>
                                     <td>
-                                        {lib.changedCount > 0 ? (
-                                            <span className="zotflow-sync-changed-badge">
-                                                {lib.changedCount}
-                                            </span>
-                                        ) : (
+                                        {isIgnored ? (
                                             <span className="zotflow-sync-changed-none">
                                                 —
+                                            </span>
+                                        ) : (
+                                            <span className="zotflow-sync-counts">
+                                                <CountChip
+                                                    direction="push"
+                                                    count={lib.pushCount}
+                                                    title={`${lib.pushCount} change${lib.pushCount === 1 ? "" : "s"} here to upload`}
+                                                />
+                                                <CountChip
+                                                    direction="pull"
+                                                    count={pullCounts.get(
+                                                        lib.id,
+                                                    )}
+                                                    title={pullTitle(
+                                                        pullCounts.get(lib.id),
+                                                    )}
+                                                />
+                                                {lib.conflictCount > 0 && (
+                                                    <span
+                                                        className="zotflow-sync-count zotflow-sync-count--conflict is-link"
+                                                        title={`${lib.conflictCount} conflict${lib.conflictCount === 1 ? "" : "s"} to resolve`}
+                                                        onClick={
+                                                            onOpenConflicts
+                                                        }
+                                                    >
+                                                        <ObsidianIcon icon="git-merge" />
+                                                        <span>
+                                                            {lib.conflictCount}
+                                                        </span>
+                                                    </span>
+                                                )}
                                             </span>
                                         )}
                                     </td>
@@ -185,253 +215,90 @@ const LibraryTable: React.FC<{
     );
 };
 
-const ConflictPanel: React.FC<{
-    conflicts: ConflictItemInfo[];
-    selectedKey: string | null;
-    onSelect: (key: string) => void;
-    onResolve: (entry: ConflictItemInfo, action: ConflictAction) => void;
-}> = ({ conflicts, selectedKey, onSelect, onResolve }) => {
-    const selected = conflicts.find(
-        (c) => `${c.libraryID}:${c.key}` === selectedKey,
-    );
-
-    if (conflicts.length === 0) {
-        return (
-            <div className="zotflow-sync-empty">
-                <ObsidianIcon
-                    icon="check-circle"
-                    iconStyle={{ color: "var(--text-faint)" }}
-                />
-                <span>No conflicts. Everything is in sync.</span>
-            </div>
-        );
-    }
-
-    return (
-        <div className="zotflow-conflict-container">
-            {/* Conflict list sidebar */}
-            <div className="zotflow-conflict-list">
-                {conflicts.map((c, i) => {
-                    const id = `${c.libraryID}:${c.key}`;
-                    const prev = conflicts[i - 1];
-                    // Members of one remote deletion are listed (and
-                    // resolved) together, under their group's heading.
-                    const groupStart =
-                        c.group &&
-                        !(
-                            prev?.group === c.group &&
-                            prev.libraryID === c.libraryID
-                        );
-
-                    return (
-                        <React.Fragment key={id}>
-                            {groupStart && (
-                                <div className="zotflow-conflict-group-heading">
-                                    <ObsidianIcon icon="folder-x" />
-                                    <span>
-                                        Deleted in Zotero together (
-                                        {c.groupSize ?? 1})
-                                    </span>
-                                </div>
-                            )}
-                            <div
-                                className={`zotflow-conflict-item ${c.group ? "zotflow-conflict-item--member" : ""} ${selectedKey === id ? "is-selected" : ""}`}
-                                onClick={() => onSelect(id)}
-                            >
-                                <div className="zotflow-conflict-item-header">
-                                    <span className="zotflow-conflict-key">
-                                        {c.key}
-                                    </span>
-                                    <span
-                                        className={`zotflow-conflict-type-badge zotflow-conflict-type-badge--${c.conflictType}`}
-                                    >
-                                        {c.conflictType}
-                                    </span>
-                                </div>
-                                <span className="zotflow-conflict-title">
-                                    {c.title}
-                                </span>
-                            </div>
-                        </React.Fragment>
-                    );
-                })}
-            </div>
-
-            {/* Diff pane */}
-            {selected ? (
-                <ConflictDiffPane entry={selected} onResolve={onResolve} />
-            ) : (
-                <div className="zotflow-conflict-diff zotflow-sync-empty">
-                    <ObsidianIcon icon="arrow-left" />
-                    <span>Select a conflict to view details.</span>
-                </div>
-            )}
-        </div>
-    );
-};
-
-/* ================================================================ */
-/*  ConflictDiffPane — field-level diff table                       */
-/* ================================================================ */
-
-/** Fields hidden by default (noisy / internal metadata). */
-const DEFAULT_HIDDEN_FIELDS = new Set([
-    // "creators",
-    // "tags",
-    // "relations",
-    // "collections",
-    "annotationIsExternal",
-    "annotationAuthorName",
-    // "dateAdded",
-    // "dateModified",
-]);
-
-const ConflictDiffPane: React.FC<{
-    entry: ConflictItemInfo;
-    onResolve: (entry: ConflictItemInfo, action: ConflictAction) => void;
-}> = ({ entry, onResolve }) => {
-    const fields = entry.fields.filter(
-        (f) => !DEFAULT_HIDDEN_FIELDS.has(f.field),
-    );
-
-    return (
-        <div className="zotflow-conflict-diff">
-            <span className="zotflow-conflict-diff-heading">{entry.title}</span>
-
-            {entry.syncError && (
-                <div className="zotflow-conflict-sync-error">
-                    <ObsidianIcon icon="alert-triangle" />
-                    <span>{entry.syncError}</span>
-                </div>
-            )}
-
-            {fields.length > 0 ? (
-                <div className="zotflow-field-diff-wrapper">
-                    <table className="zotflow-field-diff-table">
-                        <thead>
-                            <tr>
-                                <th>Field</th>
-                                <th className="zotflow-field-diff-local">
-                                    Local (Obsidian)
-                                </th>
-                                <th className="zotflow-field-diff-remote">
-                                    Remote (Zotero)
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {fields.map((f) => (
-                                <tr key={f.field}>
-                                    <td className="zotflow-field-diff-name">
-                                        {f.field}
-                                    </td>
-                                    <td className="zotflow-field-diff-val zotflow-field-diff-val--local">
-                                        <pre>{f.localValue}</pre>
-                                    </td>
-                                    <td className="zotflow-field-diff-val zotflow-field-diff-val--remote">
-                                        <pre>{f.remoteValue}</pre>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            ) : (
-                <div className="zotflow-sync-empty">
-                    <ObsidianIcon icon="info" />
-                    <span>No field differences detected.</span>
-                </div>
-            )}
-
-            {entry.group && (entry.groupSize ?? 1) > 1 && (
-                <div className="zotflow-conflict-note">
-                    <ObsidianIcon icon="info" />
-                    <span>
-                        This resolves all {entry.groupSize} items deleted in
-                        Zotero together: Keep Local re-creates them, Accept
-                        Remote removes them here.
-                    </span>
-                </div>
-            )}
-
-            {(entry.keepLocalBlocked || entry.acceptRemoteBlocked) && (
-                <div className="zotflow-conflict-note">
-                    <ObsidianIcon icon="ban" />
-                    <span>{entry.keepLocalBlocked ?? entry.acceptRemoteBlocked}</span>
-                </div>
-            )}
-
-            <div className="zotflow-conflict-actions">
-                <button
-                    className="zotflow-conflict-btn zotflow-conflict-btn--local"
-                    disabled={!!entry.keepLocalBlocked}
-                    title={entry.keepLocalBlocked}
-                    onClick={() => onResolve(entry, "keep-local")}
-                >
-                    Keep Local
-                </button>
-                <button
-                    className="zotflow-conflict-btn zotflow-conflict-btn--remote"
-                    disabled={!!entry.acceptRemoteBlocked}
-                    title={entry.acceptRemoteBlocked}
-                    onClick={() => onResolve(entry, "accept-remote")}
-                >
-                    Accept Remote
-                </button>
-            </div>
-        </div>
-    );
-};
+function pullTitle(count: PullCount | undefined): string {
+    if (count === "loading") return "Checking Zotero for changes…";
+    if (count === "error" || count === undefined)
+        return "Could not reach Zotero";
+    return `${count} change${count === 1 ? "" : "s"} in Zotero to download`;
+}
 
 /* ================================================================ */
 /*  Main SyncView                                                   */
 /* ================================================================ */
 
-/** React component showing library sync controls and merge conflict resolution UI. */
-export const SyncView: React.FC = () => {
+/** React component showing library sync controls. */
+export const SyncView: React.FC<{
+    /** Switches the Activity Center to its Conflicts tab. */
+    onOpenConflicts?: () => void;
+}> = ({ onOpenConflicts }) => {
     const [libraries, setLibraries] = useState<LibraryRow[]>([]);
-    const [conflicts, setConflicts] = useState<ConflictItemInfo[]>([]);
-    const [selectedConflict, setSelectedConflict] = useState<string | null>(
-        null,
+    const [pullCounts, setPullCounts] = useState<Map<number, PullCount>>(
+        new Map(),
     );
     const [syncingAll, setSyncingAll] = useState(false);
     const [syncingLibId, setSyncingLibId] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
-    const [hasResolvedConflicts, setHasResolvedConflicts] = useState(false);
 
-    // Load data on mount
+    // Local state only: libraries, push and conflict counts.
     const refresh = useCallback(async () => {
         try {
-            const [libs, conf] = await Promise.all([
-                loadLibraries(),
-                loadConflicts(),
-            ]);
+            const libs = await loadLibraries();
             setLibraries(libs);
-            setConflicts(conf);
+            return libs;
         } catch (e) {
             services.logService.error(
                 "Failed to load sync data",
                 "SyncView",
                 e,
             );
+            return [];
         } finally {
             setLoading(false);
         }
     }, []);
 
+    // Ask Zotero what each library would download (one versions request each).
+    const checkRemote = useCallback(async (libs: LibraryRow[]) => {
+        const active = libs.filter((l) => l.mode !== "ignored");
+        setPullCounts(new Map(active.map((l) => [l.id, "loading"])));
+        await Promise.all(
+            active.map(async (lib) => {
+                let count: PullCount;
+                try {
+                    count = await workerBridge.sync.countRemoteChanges(
+                        lib.type,
+                        lib.id,
+                    );
+                } catch (e) {
+                    services.logService.warn(
+                        `Could not check ${lib.name} for remote changes`,
+                        "SyncView",
+                        e,
+                    );
+                    count = "error";
+                }
+                setPullCounts((prev) => new Map(prev).set(lib.id, count));
+            }),
+        );
+    }, []);
+
+    const refreshAll = useCallback(async () => {
+        await checkRemote(await refresh());
+    }, [refresh, checkRemote]);
+
     useEffect(() => {
-        void refresh();
-    }, [refresh]);
+        void refreshAll();
+    }, [refreshAll]);
 
     // Auto-refresh when a sync task completes or fails
     useEffect(
         () =>
             services.eventHub.syncFinished.subscribe((task) => {
                 if (task.status === "completed" || task.status === "failed") {
-                    void refresh();
+                    void refreshAll();
                 }
             }),
-        [refresh],
+        [refreshAll],
     );
 
     // Sync all libraries
@@ -472,51 +339,6 @@ export const SyncView: React.FC = () => {
         [refresh],
     );
 
-    // Conflict resolution via ConflictService in worker
-    const handleResolve = useCallback(
-        async (entry: ConflictItemInfo, action: ConflictAction) => {
-            const { libraryID, key } = entry;
-            try {
-                await workerBridge.conflict.resolveItemConflict(
-                    libraryID,
-                    key,
-                    action,
-                );
-
-                services.logService.info(
-                    `Conflict resolved (${action}): ${key}`,
-                    "SyncView",
-                );
-                services.notificationService.notify(
-                    "success",
-                    `Conflict resolved: ${action === "keep-local" ? "kept local" : "accepted remote"}.`,
-                );
-
-                setHasResolvedConflicts(true);
-
-                // Reload: resolving a group member resolves the whole group.
-                const remaining = await loadConflicts();
-                setConflicts(remaining);
-                setSelectedConflict((prev) =>
-                    remaining.some((c) => `${c.libraryID}:${c.key}` === prev)
-                        ? prev
-                        : null,
-                );
-            } catch (e) {
-                services.logService.error(
-                    "Conflict resolution failed",
-                    "SyncView",
-                    e,
-                );
-                services.notificationService.notify(
-                    "error",
-                    "Failed to resolve conflict.",
-                );
-            }
-        },
-        [],
-    );
-
     if (loading) {
         return (
             <div className="zotflow-sync-view">
@@ -528,50 +350,35 @@ export const SyncView: React.FC = () => {
         );
     }
 
+    const conflictTotal = libraries.reduce((n, l) => n + l.conflictCount, 0);
+
     return (
         <div className="zotflow-sync-view">
-            {/* Section 1: Sync Controls */}
             <div className="zotflow-sync-controls">
                 <span className="zotflow-sync-section-header">
                     Sync Libraries
                 </span>
                 <LibraryTable
                     libraries={libraries}
+                    pullCounts={pullCounts}
+                    onOpenConflicts={onOpenConflicts}
                     syncingAll={syncingAll}
                     syncingLibId={syncingLibId}
                     onSyncLibrary={(id) => void handleSyncLibrary(id)}
                     onSyncAll={() => void handleSyncAll()}
                 />
             </div>
-
-            {/* Section 2: Merge Conflicts */}
-            <div className="zotflow-sync-conflicts">
-                <span className="zotflow-sync-section-header">
-                    Merge Conflicts
-                    {conflicts.length > 0 && (
-                        <span className="zotflow-sync-conflict-badge">
-                            {conflicts.length}
-                        </span>
-                    )}
-                </span>
-                <ConflictPanel
-                    conflicts={conflicts}
-                    selectedKey={selectedConflict}
-                    onSelect={setSelectedConflict}
-                    onResolve={(entry, action) =>
-                        void handleResolve(entry, action)
-                    }
-                />
-                {hasResolvedConflicts && conflicts.length === 0 && (
-                    <div className="zotflow-sync-reminder">
-                        <ObsidianIcon icon="info" />
-                        <span>
-                            All conflicts resolved. Run a sync to push your
-                            changes to Zotero.
-                        </span>
-                    </div>
-                )}
-            </div>
+            {conflictTotal > 0 && (
+                <div className="zotflow-sync-conflict-callout">
+                    <ObsidianIcon icon="git-merge" />
+                    <span>
+                        {conflictTotal} conflict{conflictTotal === 1 ? "" : "s"}{" "}
+                        {conflictTotal === 1 ? "waits" : "wait"} for you.
+                        Nothing in conflict is uploaded until you resolve it.
+                    </span>
+                    <button onClick={onOpenConflicts}>Review conflicts</button>
+                </div>
+            )}
         </div>
     );
 };

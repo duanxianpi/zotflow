@@ -7,7 +7,11 @@ import { ZotFlowActivityCenter } from "./ZotFlowActivityCenter";
 export class ActivityCenterModal extends Modal {
     private root: Root | null = null;
 
-    constructor(app: App) {
+    /** `initialTab`: the tab to open on (e.g. `"conflicts"`). */
+    constructor(
+        app: App,
+        private initialTab?: string,
+    ) {
         super(app);
         this.setTitle("ZotFlow Activity Center");
     }
@@ -21,7 +25,7 @@ export class ActivityCenterModal extends Modal {
         this.root = createRoot(contentEl);
         this.root.render(
             <React.StrictMode>
-                <ZotFlowActivityCenter />
+                <ZotFlowActivityCenter initialTab={this.initialTab} />
             </React.StrictMode>,
         );
     }

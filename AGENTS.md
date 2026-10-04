@@ -331,7 +331,9 @@ src/
 │   ├── activity-center/
 │   │   ├── modal.tsx               # ActivityCenterModal (Obsidian Modal wrapper)
 │   │   ├── ZotFlowActivityCenter.tsx # Tab container component
-│   │   ├── SyncView.tsx            # Sync tab content (stub)
+│   │   ├── SyncView.tsx            # Sync tab: libraries (↑ push / ↓ pull / conflict counts)
+│   │   ├── ConflictsView.tsx       # Conflicts tab: loads, resolves, moves to the next conflict
+│   │   ├── ConflictPanel.tsx       # Conflict list + resolver (why, Keep Local / Accept Remote with a per-field preview)
 │   │   ├── TemplateTestView.tsx    # Template testing tab
 │   │   ├── CslStylesView.tsx       # CSL tab: styles (aliases nested under parents) & locales
 │   │   └── CslRows.tsx             # CSL tab row components (status dot, badges, alias rows)
@@ -407,6 +409,7 @@ src/
 | `uuid`                | Task/entity ID generation          | Worker                     |
 | `react` + `react-dom` | Tree view, activity center UI      | Main                       |
 | `react-arborist`      | Virtual tree component             | Main                       |
+| `diff` (jsdiff)       | Word/line diffs in the conflict panel | Main                    |
 
 ---
 

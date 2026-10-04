@@ -11,6 +11,7 @@
  */
 import { describe, test, expect, beforeEach, vi, afterEach } from "vitest";
 import { ConflictService } from "worker/services/conflict";
+import { ConvertService } from "worker/services/convert";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
 
@@ -174,7 +175,7 @@ describe("field diffs", () => {
 
         const fields = Object.fromEntries(info!.fields.map((f) => [f.field, [f.localValue, f.remoteValue]]));
         expect(fields.title).toEqual(["Local title", "Remote title"]);
-        expect(fields.publisher).toEqual(["(undefined)", "Remote Press"]);
+        expect(fields.publisher).toEqual(["", "Remote Press"]);
         expect(fields).not.toHaveProperty("pages");
     });
 
@@ -185,17 +186,15 @@ describe("field diffs", () => {
         expect(info!.fields.map((f) => f.field)).not.toContain("version");
     });
 
-    test("a remote deletion is shown as a whole-item diff", async () => {
+    test("a remote deletion lists the local side, with no remote value", async () => {
         await deletedFamily();
         const info = (await conflict.getItemConflicts()).find((c) => c.key === "NOTEAAAA")!;
 
-        expect(info.fields).toHaveLength(1);
-        expect(info.fields[0]!.field).toBe("(entire item)");
-        expect(info.fields[0]!.remoteValue).toBe("(deleted on server)");
-        expect(info.fields[0]!.localValue).toContain("local");
+        expect(info.fields.find((f) => f.field === "note")!.localValue).toContain("local");
+        expect(info.fields.every((f) => f.remoteValue === undefined)).toBe(true);
     });
 
-    test("structured values are stringified for display", async () => {
+    test("tags are listed by name; other values are printed", async () => {
         await seedItem({
             libraryID: LIB,
             key: "ARTICLE1",
@@ -206,8 +205,8 @@ describe("field diffs", () => {
         const [info] = await conflict.getItemConflicts();
 
         const fields = Object.fromEntries(info!.fields.map((f) => [f.field, [f.localValue, f.remoteValue]]));
-        expect(fields.tags![0]).toContain('"tag": "local"');
-        expect(fields.extra).toEqual(["(null)", "42"]);
+        expect(fields.tags).toEqual(["local", "remote"]);
+        expect(fields.extra).toEqual(["", "42"]);
     });
 });
 
@@ -413,5 +412,251 @@ describe("batch resolution", () => {
         vi.spyOn(db.items, "put").mockRejectedValue(new Error("disk full"));
 
         await expect(conflict.resolveAllItemConflicts("keep-local")).rejects.toThrow(/Failed to resolve item conflict/i);
+    });
+});
+
+describe("merge preview", () => {
+    test("each differing field says where a merge takes it from, conflicts first", async () => {
+        await conflictedItem();
+        const [info] = await conflict.getItemConflicts();
+
+        expect(info!.fields.map((f) => [f.field, f.merge])).toEqual([
+            ["title", "conflict"],
+            ["publisher", "remote"],
+        ]);
+        expect(info!.fields[0]).toMatchObject({ baseValue: "Original", mergedValue: "Local title" });
+        expect(info!.fields[1]).toMatchObject({ mergedValue: "Remote Press" });
+    });
+
+    test("a change made here only is kept and uploaded", async () => {
+        await conflictedItem();
+        const row = (await db.items.get([LIB, "ARTICLE1"]))!;
+        (row.raw.data as unknown as Record<string, unknown>).pages = "5-6";
+        await db.items.put(row);
+
+        const [info] = await conflict.getItemConflicts();
+        expect(info!.fields.find((f) => f.field === "pages")).toMatchObject({ merge: "local", mergedValue: "5-6" });
+    });
+
+    test("tags added on both sides are combined", async () => {
+        await seedItem({
+            libraryID: LIB,
+            key: "ARTICLE1",
+            syncStatus: "conflict",
+            version: 3,
+            raw: { key: "ARTICLE1", version: 3, data: article("ARTICLE1", 3, { title: "Local", tags: [{ tag: "mine" }] }) } as any,
+        });
+        await db.syncCache.put({ libraryID: LIB, key: "ARTICLE1", version: 3, data: article("ARTICLE1", 3, {}) });
+        await addConflict({
+            key: "ARTICLE1",
+            kind: "changed",
+            remote: article("ARTICLE1", 7, { title: "Remote", tags: [{ tag: "theirs" }] }),
+            remoteVersion: 7,
+            fields: ["title"],
+        });
+
+        const [info] = await conflict.getItemConflicts();
+        const tags = info!.fields.find((f) => f.field === "tags")!;
+        expect(tags.merge).toBe("combined");
+        expect(tags.mergedValue).toContain("mine");
+        expect(tags.mergedValue).toContain("theirs");
+    });
+
+    test("a changed item has no outcomes; the others have both", async () => {
+        await conflictedItem();
+        await deletedFamily();
+        const infos = await conflict.getItemConflicts();
+
+        expect(infos.find((c) => c.key === "ARTICLE1")!.outcomes).toBeUndefined();
+        const member = infos.find((c) => c.key === "NOTEAAAA")!;
+        expect(member.outcomes!["keep-local"]).toMatchObject({ push: 2, pull: 0 });
+        expect(member.outcomes!["accept-remote"]).toMatchObject({ push: 0, pull: 2 });
+        expect(member.outcomes!["accept-remote"].loses).toBeTruthy();
+    });
+});
+
+describe("conflict details", () => {
+    test("an edit on both sides names the version both started from", async () => {
+        await conflictedItem();
+        const [info] = await conflict.getItemConflicts();
+
+        expect(info!.details).toMatchObject({ label: "Edited on both sides", baseVersion: 3, localVersion: 3, detectedAt: AT });
+        expect(info!.details.explanation).toMatch(/only you can say which version is right/);
+        expect(info!.details.explanation).toMatch(/one other change merges automatically, unless you overwrite all fields/);
+    });
+
+    test("a member of a deletion group names the deleted item above it", async () => {
+        await deletedFamily();
+        const info = (await conflict.getItemConflicts()).find((c) => c.key === "NOTEAAAA")!;
+
+        expect(info.details.label).toBe("Parent deleted in Zotero");
+        expect(info.details.groupRoot).toMatchObject({ key: "PARENT01" });
+        expect(info.details.parent).toMatchObject({ key: "PARENT01" });
+    });
+
+    test("a refusal carries the server's answer", async () => {
+        await seedItem({ libraryID: LIB, key: "ARTICLE1", syncStatus: "conflict" });
+        await addConflict({ key: "ARTICLE1", kind: "refused", error: "413: Tag too long" });
+        const [info] = await conflict.getItemConflicts();
+
+        expect(info!.details).toMatchObject({ label: "Rejected by Zotero", serverError: "413: Tag too long" });
+    });
+
+    test("a local deletion lists what Zotero changed since this device's copy", async () => {
+        await db.syncDeleteLog.put({
+            libraryID: LIB,
+            key: "ANNOAAAA",
+            itemType: "annotation",
+            parentItem: "",
+            version: 4,
+            dateDeleted: AT,
+            snapshot: { libraryID: LIB, key: "ANNOAAAA", itemType: "annotation", parentItem: "", version: 4, synced: 1, raw: { key: "ANNOAAAA", data: { key: "ANNOAAAA", itemType: "annotation", annotationComment: "old" } } } as any,
+        });
+        await addConflict({ key: "ANNOAAAA", kind: "local-deleted", remote: { key: "ANNOAAAA", itemType: "annotation", annotationComment: "remote" }, remoteVersion: 9 });
+
+        const [info] = await conflict.getItemConflicts();
+        expect(info!.fields).toEqual([{ field: "annotationComment", remoteValue: "remote", baseValue: "old" }]);
+        expect(info!.details.label).toBe("Deleted here");
+    });
+});
+
+describe("resolving changes that did not conflict", () => {
+    test("accept-remote takes the remote value of conflicting fields and keeps local changes that did not conflict", async () => {
+        await conflictedItem();
+        const row = (await db.items.get([LIB, "ARTICLE1"]))!;
+        (row.raw.data as unknown as Record<string, unknown>).pages = "5-6";
+        await db.items.put(row);
+
+        await conflict.resolveItemConflict(LIB, "ARTICLE1", "accept-remote");
+
+        const stored = (await db.items.get([LIB, "ARTICLE1"]))!;
+        expect(stored.raw.data).toMatchObject({ title: "Remote title", publisher: "Remote Press", pages: "5-6" });
+        // The local change is still to be uploaded, as a patch on the server copy.
+        expect(stored.syncStatus).toBe("updated");
+        expect(stored.version).toBe(7);
+        expect((await db.syncCache.get([LIB, "ARTICLE1"]))!.data.title).toBe("Remote title");
+        expect(await db.syncConflicts.count()).toBe(0);
+    });
+
+    test("tags added on both sides are combined by either resolution", async () => {
+        const seed = async () => {
+            await resetDb();
+            await seedLibrary({ id: LIB, type: "user", name: "My Library" });
+            await seedItem({
+                libraryID: LIB,
+                key: "ARTICLE1",
+                syncStatus: "conflict",
+                version: 3,
+                raw: { key: "ARTICLE1", version: 3, data: article("ARTICLE1", 3, { title: "Local", tags: [{ tag: "mine" }] }) } as any,
+            });
+            await db.syncCache.put({ libraryID: LIB, key: "ARTICLE1", version: 3, data: article("ARTICLE1", 3, {}) });
+            await addConflict({ key: "ARTICLE1", kind: "changed", remote: article("ARTICLE1", 7, { title: "Remote", tags: [{ tag: "theirs" }] }), remoteVersion: 7, fields: ["title"] });
+        };
+        const tags = async () => ((await db.items.get([LIB, "ARTICLE1"]))!.raw.data.tags as { tag: string }[]).map((t) => t.tag).sort();
+
+        for (const action of ["keep-local", "accept-remote"] as const) {
+            await seed();
+            await conflict.resolveItemConflict(LIB, "ARTICLE1", action);
+            expect(await tags()).toEqual(["mine", "theirs"]);
+        }
+    });
+});
+
+describe("whole-copy resolutions", () => {
+    test("keep-local-copy keeps the local data whole, undoing Zotero's other changes", async () => {
+        await conflictedItem();
+
+        await conflict.resolveItemConflict(LIB, "ARTICLE1", "keep-local-copy");
+
+        const stored = (await db.items.get([LIB, "ARTICLE1"]))!;
+        expect(stored.raw.data).toMatchObject({ title: "Local title" });
+        expect(stored.raw.data).not.toHaveProperty("publisher");
+        // Uploaded as a patch against the server copy, which then drops the publisher.
+        expect(stored.syncStatus).toBe("updated");
+        expect(stored.version).toBe(7);
+        expect((await db.syncCache.get([LIB, "ARTICLE1"]))!.data.publisher).toBe("Remote Press");
+        expect(await db.syncConflicts.count()).toBe(0);
+    });
+
+    test("accept-remote-copy takes Zotero's copy whole, dropping local changes that did not conflict", async () => {
+        await conflictedItem();
+        const row = (await db.items.get([LIB, "ARTICLE1"]))!;
+        (row.raw.data as unknown as Record<string, unknown>).pages = "5-6";
+        await db.items.put(row);
+
+        await conflict.resolveItemConflict(LIB, "ARTICLE1", "accept-remote-copy");
+
+        const stored = (await db.items.get([LIB, "ARTICLE1"]))!;
+        expect(stored.raw.data).toMatchObject({ title: "Remote title", publisher: "Remote Press", pages: "1-10" });
+        expect(stored.syncStatus).toBe("synced");
+        expect(stored.version).toBe(7);
+        expect(await db.syncCache.count()).toBe(0);
+        expect(await db.syncConflicts.count()).toBe(0);
+    });
+
+    test("only an item changed on both sides has whole-copy resolutions", async () => {
+        await deletedFamily();
+
+        await expect(conflict.resolveItemConflict(LIB, "NOTEAAAA", "accept-remote-copy")).rejects.toThrow(/changed on both sides only/);
+        expect(await db.syncConflicts.count()).toBe(2);
+    });
+});
+
+describe("conflict summary", () => {
+    test("an edit on both sides names its conflicting fields and counts the merged ones", async () => {
+        await conflictedItem();
+        const [info] = await conflict.getItemConflicts();
+        expect(info!.summary).toBe("“title” was changed differently here and in Zotero. 1 other change merges automatically.");
+    });
+
+    test("a refusal gives Zotero's reason, shortened", async () => {
+        await seedItem({ libraryID: LIB, key: "ARTICLE1", syncStatus: "conflict" });
+        await addConflict({ key: "ARTICLE1", kind: "refused", error: `413: Tag '${"x".repeat(300)}' too long` });
+        const [info] = await conflict.getItemConflicts();
+        expect(info!.summary).toBe(`Zotero rejected the upload: Tag '${"x".repeat(24)}…' too long.`);
+    });
+
+    test("a member of a deletion group names the deleted item and the others resolved with it", async () => {
+        await deletedFamily();
+        const info = (await conflict.getItemConflicts()).find((c) => c.key === "NOTEAAAA")!;
+        expect(info.summary).toMatch(/was deleted in Zotero; this item has changes here that were never uploaded\. 1 other item is resolved with it\.$/);
+    });
+});
+
+describe("note and comment values as Markdown", () => {
+    async function changedNote(local: string, remote: string, base: string) {
+        const data = (note: string, version: number) => ({ key: "NOTE0001", version, itemType: "note", note, tags: [] });
+        await seedItem({
+            libraryID: LIB,
+            key: "NOTE0001",
+            itemType: "note",
+            syncStatus: "conflict",
+            version: 3,
+            raw: { key: "NOTE0001", version: 3, data: data(local, 3) } as any,
+        });
+        await db.syncCache.put({ libraryID: LIB, key: "NOTE0001", version: 3, data: data(base, 3) });
+        await addConflict({ key: "NOTE0001", kind: "changed", remote: data(remote, 7), remoteVersion: 7, fields: ["note"] });
+    }
+
+    test("note HTML is shown as the Markdown the editor shows", async () => {
+        await changedNote("<p>Local <strong>bold</strong> text</p>", "<p>Remote text</p>", "<p>Original text</p>");
+        const service = new ConflictService(host, undefined, new ConvertService());
+
+        const note = (await service.getItemConflicts())[0]!.fields.find((f) => f.field === "note")!;
+        expect(note.localValue).toBe("Local **bold** text");
+        expect(note.remoteValue).toBe("Remote text");
+        expect(note.baseValue).toBe("Original text");
+        expect(note.noDiff).toBeUndefined();
+    });
+
+    test("a value that fails to convert stays HTML and is not diffed", async () => {
+        await changedNote("<p>Local</p>", "<p>Remote</p>", "<p>Original</p>");
+        const convert = new ConvertService();
+        vi.spyOn(convert, "html2md").mockRejectedValue(new Error("bad HTML"));
+        const service = new ConflictService(host, undefined, convert);
+
+        const note = (await service.getItemConflicts())[0]!.fields.find((f) => f.field === "note")!;
+        expect(note.localValue).toBe("<p>Local</p>");
+        expect(note.noDiff).toBe(true);
     });
 });

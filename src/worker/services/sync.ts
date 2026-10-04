@@ -565,6 +565,33 @@ export class SyncService {
         return (await this.uploadCandidates(libraryID)).length > 0 || (await this.pendingDeletes(libraryID)).length > 0;
     }
 
+    /**
+     * What a sync would download from a library now, without downloading
+     * it: items changed in Zotero since the cursor that this device lacks,
+     * and deletions of items it still has. Reads versions only; stores
+     * nothing.
+     */
+    async countRemoteChanges(libraryType: "user" | "group", libraryID: number): Promise<number> {
+        try {
+            const libHandle = this.lib(libraryType, libraryID);
+            const since = (await db.libraries.get(libraryID))?.itemVersion || 0;
+            const response = await this.request(() =>
+                libHandle.items().get({ format: "versions", since, includeTrashed: true }),
+            );
+            const versions = (await (response.raw as Response).json()) as Record<string, number>;
+            const v0 = response.getVersion() || 0;
+            let count = (await this.keysToFetch(libraryID, versions)).length;
+            if (since > 0 && v0 > since) {
+                const deleted = ((await this.request(() => libHandle.deleted(since).get())).getData() as { items?: string[] }).items ?? [];
+                const rows = await db.items.bulkGet(deleted.map((k): [number, string] => [libraryID, k]));
+                count += rows.filter(Boolean).length;
+            }
+            return count;
+        } catch (e) {
+            throw ZotFlowError.wrap(e, ZotFlowErrorCode.NETWORK_ERROR, "SyncService", `Could not check library ${libraryID} for changes`);
+        }
+    }
+
     /** Keys from a versions listing whose newer version this device lacks. */
     private async keysToFetch(libraryID: number, versions: Record<string, number>): Promise<string[]> {
         const keys = Object.keys(versions);
