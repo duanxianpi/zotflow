@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Platform } from "obsidian";
 import { ObsidianIcon } from "../ObsidianIcon";
 import { services } from "services/services";
 import { ConflictDetailsModal } from "./conflict-details-modal";
@@ -176,13 +177,16 @@ export const ConflictPanel: React.FC<{
     entries: ConflictEntry[];
     libraryNames: Map<number, string>;
     selectedKey: string | null;
-    onSelect: (key: string) => void;
+    /** `null` goes back to the list (phones show one or the other). */
+    onSelect: (key: string | null) => void;
     onResolve: (
         entry: ConflictItemInfo,
         action: ConflictResolution,
     ) => Promise<void>;
 }> = ({ entries, libraryNames, selectedKey, onSelect, onResolve }) => {
     const selected = entries.find((e) => e.id === selectedKey);
+    // A phone has no room for both: the list, or one conflict full-screen.
+    const phone = Platform.isPhone;
 
     if (entries.length === 0) {
         return (
@@ -196,49 +200,61 @@ export const ConflictPanel: React.FC<{
         );
     }
 
+    const list = (
+        <div className="zotflow-conflict-list">
+            {entries.map((e) => {
+                const c = e.primary;
+                const count = e.members.length;
+                return (
+                    <div
+                        key={e.id}
+                        className={`zotflow-conflict-item ${selectedKey === e.id ? "is-selected" : ""}`}
+                        onClick={() => onSelect(e.id)}
+                    >
+                        <span className="zotflow-conflict-title">
+                            {e.title}
+                        </span>
+                        <div className="zotflow-conflict-item-header">
+                            <span
+                                className={`zotflow-conflict-type-badge zotflow-conflict-type-badge--${c.conflictType}`}
+                            >
+                                {count > 1
+                                    ? `Deleted in Zotero · ${count} items`
+                                    : c.details.label}
+                            </span>
+                            <span className="zotflow-conflict-key">
+                                {c.group ?? c.key}
+                            </span>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+
+    const resolver = selected && (
+        // Keyed: a newly selected conflict starts with a fresh choice.
+        <ConflictResolver
+            key={selected.id}
+            entry={selected.primary}
+            title={selected.title}
+            members={selected.members}
+            libraryName={libraryNames.get(selected.primary.libraryID)}
+            onResolve={onResolve}
+            onBack={phone ? () => onSelect(null) : undefined}
+        />
+    );
+
+    if (phone) {
+        return (
+            <div className="zotflow-conflict-container">{resolver ?? list}</div>
+        );
+    }
+
     return (
         <div className="zotflow-conflict-container">
-            <div className="zotflow-conflict-list">
-                {entries.map((e) => {
-                    const c = e.primary;
-                    const count = e.members.length;
-                    return (
-                        <div
-                            key={e.id}
-                            className={`zotflow-conflict-item ${selectedKey === e.id ? "is-selected" : ""}`}
-                            onClick={() => onSelect(e.id)}
-                        >
-                            <span className="zotflow-conflict-title">
-                                {e.title}
-                            </span>
-                            <div className="zotflow-conflict-item-header">
-                                <span
-                                    className={`zotflow-conflict-type-badge zotflow-conflict-type-badge--${c.conflictType}`}
-                                >
-                                    {count > 1
-                                        ? `Deleted in Zotero · ${count} items`
-                                        : c.details.label}
-                                </span>
-                                <span className="zotflow-conflict-key">
-                                    {c.group ?? c.key}
-                                </span>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-
-            {selected ? (
-                // Keyed: a newly selected conflict starts with a fresh choice.
-                <ConflictResolver
-                    key={selected.id}
-                    entry={selected.primary}
-                    title={selected.title}
-                    members={selected.members}
-                    libraryName={libraryNames.get(selected.primary.libraryID)}
-                    onResolve={onResolve}
-                />
-            ) : (
+            {list}
+            {resolver ?? (
                 <div className="zotflow-conflict-diff zotflow-sync-empty">
                     <ObsidianIcon icon="arrow-left" />
                     <span>
@@ -265,7 +281,9 @@ const ConflictResolver: React.FC<{
         entry: ConflictItemInfo,
         action: ConflictResolution,
     ) => Promise<void>;
-}> = ({ entry, title, members, libraryName, onResolve }) => {
+    /** Phones: back to the conflict list. */
+    onBack?: () => void;
+}> = ({ entry, title, members, libraryName, onResolve, onBack }) => {
     const isMerge = entry.kind === "changed";
     const isGroup = members.length > 1;
     // A group is described as a whole; its members' own summaries describe each item.
@@ -308,6 +326,12 @@ const ConflictResolver: React.FC<{
 
     return (
         <div className="zotflow-conflict-diff zotflow-conflict-resolver">
+            {onBack && (
+                <button className="zotflow-conflict-back" onClick={onBack}>
+                    <ObsidianIcon icon="chevron-left" />
+                    <span>Conflicts</span>
+                </button>
+            )}
             <div className="zotflow-conflict-diff-header">
                 <div className="zotflow-conflict-diff-title-row">
                     <span className="zotflow-conflict-diff-heading">
@@ -595,6 +619,11 @@ const MergeTable: React.FC<{
                                     <td
                                         key={s}
                                         className={`zotflow-field-diff-val ${side === s ? "is-chosen" : ""}`}
+                                        data-label={
+                                            s === "local"
+                                                ? "Local (Obsidian)"
+                                                : "Remote (Zotero)"
+                                        }
                                     >
                                         <DiffValue
                                             field={f}
@@ -607,7 +636,10 @@ const MergeTable: React.FC<{
                                         />
                                     </td>
                                 ))}
-                                <td className="zotflow-field-diff-val zotflow-field-diff-val--result">
+                                <td
+                                    className="zotflow-field-diff-val zotflow-field-diff-val--result"
+                                    data-label="Result"
+                                >
                                     {tag ? (
                                         <>
                                             <span
@@ -774,7 +806,10 @@ const SideTable: React.FC<{ entry: ConflictItemInfo }> = ({ entry }) => {
                             <td className="zotflow-field-diff-name">
                                 {f.field}
                             </td>
-                            <td className="zotflow-field-diff-val">
+                            <td
+                                className="zotflow-field-diff-val"
+                                data-label="Local (Obsidian)"
+                            >
                                 <DiffValue
                                     field={f}
                                     side="local"
@@ -782,7 +817,10 @@ const SideTable: React.FC<{ entry: ConflictItemInfo }> = ({ entry }) => {
                                     missing={missingLocal}
                                 />
                             </td>
-                            <td className="zotflow-field-diff-val">
+                            <td
+                                className="zotflow-field-diff-val"
+                                data-label="Remote (Zotero)"
+                            >
                                 <DiffValue
                                     field={f}
                                     side="remote"

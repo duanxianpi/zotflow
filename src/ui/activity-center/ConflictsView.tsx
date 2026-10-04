@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Platform } from "obsidian";
 import { ObsidianIcon } from "../ObsidianIcon";
 import { workerBridge } from "bridge";
 import { services } from "services/services";
@@ -52,13 +53,15 @@ export const ConflictsView: React.FC<{
                 workerBridge.key.getLibraryRows(services.settings),
             ]);
             setLibraryNames(new Map(libs.map((l) => [l.id, l.name])));
-            // Keep the selection; else open the first conflict, so the
-            // panel never starts empty.
             const entries = groupConflicts(conf);
+            // Keep the selection; else open the first conflict, so the panel
+            // never starts empty — except on a phone, which starts from the list.
             show(conf, (prev) =>
                 entries.some((e) => e.id === prev)
                     ? prev
-                    : (entries[0]?.id ?? null),
+                    : Platform.isPhone
+                      ? null
+                      : (entries[0]?.id ?? null),
             );
         } catch (e) {
             services.logService.error(
@@ -115,9 +118,13 @@ export const ConflictsView: React.FC<{
                 // Then move on to the conflict that took this one's place.
                 const remaining =
                     await workerBridge.conflict.getItemConflicts();
+                // Move on to the conflict that took this one's place; a
+                // phone goes back to the list instead.
                 const entries = groupConflicts(remaining);
                 const next = entries[Math.min(position, entries.length - 1)];
-                show(remaining, () => next?.id ?? null);
+                show(remaining, () =>
+                    Platform.isPhone ? null : (next?.id ?? null),
+                );
             } catch (e) {
                 services.logService.error(
                     "Conflict resolution failed",

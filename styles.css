@@ -1350,7 +1350,7 @@
 }
 
 .zotflow-field-diff-table th:first-child {
-    width: 140px;
+    width: 160px;
 }
 
 .zotflow-field-diff-table td {
@@ -1575,6 +1575,9 @@
     margin-top: auto;
     justify-content: space-between;
     align-items: flex-end;
+    /* Never overlap: Resolve moves below the decision when the row is full. */
+    flex-wrap: wrap;
+    row-gap: var(--size-4-2);
 }
 
 .zotflow-conflict-decision {
@@ -2496,6 +2499,191 @@
     }
 }
 
+/* ---------- By the width the panel actually has (container queries) ---------- */
+
+.zotflow-sync-view {
+    container: zf-sync / inline-size;
+}
+
+.zotflow-conflict-resolver {
+    container: zf-resolver / inline-size;
+}
+
+.mod-zotflow-ac .modal-content {
+    container: zf-ac / inline-size;
+}
+
+/* Sync: the hidden columns as one line under the library name */
+.zotflow-sync-lib-sub {
+    display: none;
+    margin-top: 2px;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+@container zf-sync (max-width: 820px) {
+    .zotflow-sync-col-detail {
+        display: none;
+    }
+
+    .zotflow-sync-lib-sub {
+        display: block;
+    }
+
+    /* Name, counts and the Sync button fit without scrolling sideways. */
+    .zotflow-sync-lib-table th,
+    .zotflow-sync-lib-table td {
+        padding: var(--size-4-2);
+    }
+
+    .zotflow-sync-lib-table td:first-of-type,
+    .zotflow-sync-lib-table td {
+        overflow-wrap: anywhere;
+    }
+
+    .zotflow-sync-lib-table td button {
+        padding: var(--size-2-2) var(--size-4-2);
+    }
+}
+
+/* Tabs: when they would not fit, only the active one keeps its label */
+@container zf-ac (max-width: 900px) {
+    .zotflow-ac-tab:not(.is-active) .zotflow-ac-tab-label {
+        display: none;
+    }
+
+    .zotflow-ac-tab {
+        padding: 10px 12px;
+    }
+}
+
+/* Conflict tables become one card per field, each value under its label */
+@container zf-resolver (max-width: 600px) {
+    .zotflow-field-diff-table,
+    .zotflow-field-diff-table tbody,
+    .zotflow-field-diff-table tr,
+    .zotflow-field-diff-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .zotflow-field-diff-table thead,
+    .zotflow-field-diff-table colgroup {
+        display: none;
+    }
+
+    .zotflow-field-diff-table tr {
+        border-bottom: 1px solid var(--background-modifier-border);
+    }
+
+    .zotflow-field-diff-table tr:last-child {
+        border-bottom: none;
+    }
+
+    .zotflow-field-diff-table td {
+        border-bottom: none;
+    }
+
+    .zotflow-field-diff-table td.zotflow-field-diff-val {
+        max-width: none;
+        padding-top: 0;
+    }
+
+    .zotflow-field-diff-table td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 2px;
+        font-size: 10px;
+        font-weight: var(--font-semibold);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--text-muted);
+    }
+
+    .zotflow-field-diff-table tr.is-conflict {
+        box-shadow: inset 3px 0 0 var(--color-orange);
+    }
+
+    .zotflow-field-diff-table tr.is-conflict .zotflow-field-diff-name {
+        box-shadow: none;
+    }
+
+    .zotflow-field-diff-name > span {
+        display: inline;
+        margin-right: var(--size-4-2);
+    }
+
+    /* The decision takes the full width; Resolve goes below it. */
+    .zotflow-conflict-decision {
+        flex-basis: 100%;
+    }
+}
+
+/* ---------- Obsidian's tablet layout ---------- */
+.is-tablet .modal.mod-zotflow-ac {
+    width: 96vw;
+    max-width: 96vw;
+    height: 90vh;
+    max-height: 90vh;
+}
+
+/* ---------- Obsidian's phone layout: list, or one conflict full-screen ---------- */
+.is-phone .zotflow-conflict-container {
+    flex-direction: column;
+}
+
+.is-phone .zotflow-conflict-list {
+    width: 100%;
+    max-height: none;
+    flex: 1;
+    padding-right: 0;
+    border-bottom: none;
+}
+
+.zotflow-conflict-back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--size-2-1);
+    align-self: flex-start;
+    padding: 0;
+    height: auto;
+    background: none;
+    border: none;
+    box-shadow: none;
+    color: var(--text-accent);
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+
+button.zotflow-conflict-back:hover {
+    background: none;
+    box-shadow: none;
+}
+
+/* Summary, table and decision scroll together; only Resolve stays in view. */
+.is-phone .zotflow-conflict-resolver > .zotflow-conflict-footer {
+    display: contents;
+}
+
+.is-phone .zotflow-conflict-decision {
+    margin-top: auto;
+    padding-top: var(--size-4-2);
+}
+
+.is-phone .zotflow-conflict-commit {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    /* Counts above the button when both do not fit, never past the edge. */
+    flex-wrap: wrap;
+    row-gap: var(--size-2-2);
+    justify-content: flex-end;
+    margin-left: 0;
+    padding: var(--size-4-2) 0;
+    background-color: var(--modal-background, var(--background-primary));
+    border-top: 1px solid var(--background-modifier-border);
+}
+
 /* ---------- Phone (<=600px) ---------- */
 @media (max-width: 600px) {
     /* Tabs become icon-only and share the width evenly */
@@ -2512,11 +2700,6 @@
 
     .zotflow-ac-content {
         padding: var(--size-4-3) var(--size-2-1);
-    }
-
-    /* Conflicts: decision above Resolve when the row is too narrow */
-    .zotflow-conflict-resolver > .zotflow-conflict-footer {
-        flex-wrap: wrap;
     }
 
     /* Sync: stack the conflict list above the diff pane */

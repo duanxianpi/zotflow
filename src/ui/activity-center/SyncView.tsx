@@ -82,14 +82,18 @@ const LibraryTable: React.FC<{
                 <table className="zotflow-sync-lib-table">
                     <thead>
                         <tr>
-                            <th>Type</th>
+                            <th className="zotflow-sync-col-detail">Type</th>
                             <th>Name</th>
-                            <th>Access</th>
-                            <th>Sync Mode</th>
+                            <th className="zotflow-sync-col-detail">Access</th>
+                            <th className="zotflow-sync-col-detail">
+                                Sync Mode
+                            </th>
                             <th title="Changes to upload (↑), to download (↓), and conflicts">
                                 Changes
                             </th>
-                            <th>Last Synced</th>
+                            <th className="zotflow-sync-col-detail">
+                                Last Synced
+                            </th>
                             <th></th>
                         </tr>
                     </thead>
@@ -107,7 +111,7 @@ const LibraryTable: React.FC<{
                                             : ""
                                     }
                                 >
-                                    <td>
+                                    <td className="zotflow-sync-col-detail">
                                         <span className="zotflow-sync-lib-type">
                                             <ObsidianIcon
                                                 icon={
@@ -123,8 +127,28 @@ const LibraryTable: React.FC<{
                                             </span>
                                         </span>
                                     </td>
-                                    <td title={`ID: ${lib.id}`}>{lib.name}</td>
-                                    <td>
+                                    <td title={`ID: ${lib.id}`}>
+                                        <span>{lib.name}</span>
+                                        {/* Narrow screens: the hidden columns, as one line. */}
+                                        <span className="zotflow-sync-lib-sub">
+                                            {[
+                                                lib.canWrite
+                                                    ? "Read/Write"
+                                                    : "Read Only",
+                                                lib.mode === "bidirectional"
+                                                    ? "Bidirectional"
+                                                    : lib.mode === "readonly"
+                                                      ? "Read-Only"
+                                                      : "Ignored",
+                                                lib.syncedAt
+                                                    ? formatSyncTime(
+                                                          lib.syncedAt,
+                                                      )
+                                                    : "Never synced",
+                                            ].join(" · ")}
+                                        </span>
+                                    </td>
+                                    <td className="zotflow-sync-col-detail">
                                         <span
                                             className={
                                                 lib.canWrite
@@ -137,7 +161,7 @@ const LibraryTable: React.FC<{
                                                 : "Read Only"}
                                         </span>
                                     </td>
-                                    <td>
+                                    <td className="zotflow-sync-col-detail">
                                         <span className="zotflow-sync-mode-label">
                                             {lib.mode === "bidirectional"
                                                 ? "Bidirectional"
@@ -184,7 +208,7 @@ const LibraryTable: React.FC<{
                                             </span>
                                         )}
                                     </td>
-                                    <td className="zotflow-sync-time-cell">
+                                    <td className="zotflow-sync-time-cell zotflow-sync-col-detail">
                                         {lib.syncedAt
                                             ? formatSyncTime(lib.syncedAt)
                                             : "Never"}
