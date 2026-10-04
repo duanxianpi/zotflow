@@ -805,13 +805,15 @@ describe("upgrade from 1.6.6", () => {
             assert.match((await remote.get(K.noteBoth)).data.note, /Local text written in 1\.6\.6/);
         });
 
-        test("accept-remote on an item takes the server copy", async () => {
+        test("accept-remote on an item takes the server's title and uploads the tag added in 1.6.6", async () => {
+            // The title conflicts; the tag 1.6.6 added does not, so it is kept.
             await local.resolve(K.itemBoth, "accept-remote");
             await local.sync();
             const r = await local.row(K.itemBoth);
             assert.equal(r.syncStatus, "synced");
             assert.equal(r.raw.data.title, TEXT.remoteTitle);
-            assert.deepEqual(r.raw.data.tags, []);
+            assert.deepEqual(r.raw.data.tags, [{ tag: "local-tag-1.6.6" }]);
+            assert.deepEqual((await remote.get(K.itemBoth)).data.tags, [{ tag: "local-tag-1.6.6" }]);
         });
 
         test("keep-local on the deleted book restores it in Zotero with the edit under it", async () => {

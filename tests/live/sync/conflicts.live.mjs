@@ -311,9 +311,27 @@ describe("a conflict on one field leaves the other changes merged", () => {
         assert.equal((await local.row(A())).syncStatus, "synced");
     });
 
-    test("accept-remote takes the server's copy as it is, colour included", async () => {
+    test("accept-remote takes the server's comment and keeps the local colour, which goes up", async () => {
         await oneFieldConflict();
         await local.resolve(A(), "accept-remote");
+
+        const row = await local.row(A());
+        assert.equal(row.raw.data.annotationComment, "remote comment");
+        assert.equal(row.raw.data.annotationColor, "#ffd400");
+        assert.equal(row.syncStatus, "updated");
+        const w = await syncAndWrites();
+
+        const server = (await remote.get(A())).data;
+        assert.deepEqual(w, ["POST /items → 200"]);
+        assert.equal(server.annotationComment, "remote comment");
+        assert.equal(server.annotationColor, "#ffd400");
+        assert.deepEqual(server.tags.map((t) => t.tag), ["remote-tag"]);
+        assert.equal((await local.row(A())).syncStatus, "synced");
+    });
+
+    test("accept-remote-copy takes the server's copy as it is, colour included", async () => {
+        await oneFieldConflict();
+        await local.resolve(A(), "accept-remote-copy");
 
         const row = await local.row(A());
         assert.equal(row.syncStatus, "synced");
