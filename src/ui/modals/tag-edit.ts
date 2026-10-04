@@ -159,7 +159,7 @@ export class TagEditModal extends Modal {
             placeholder: "Add a tag and press Enter…",
         });
 
-        new TagInputSuggest(
+        const suggest = new TagInputSuggest(
             this.app,
             this.inputEl,
             () => this.options.suggestions,
@@ -194,7 +194,12 @@ export class TagEditModal extends Modal {
             );
 
         this.renderChips();
-        window.setTimeout(() => this.inputEl.blur(), 0);
+        // Put the caret in the input, but keep the suggestion list closed
+        // until the user types (the suggest opens itself on focus).
+        window.setTimeout(() => {
+            this.inputEl.focus();
+            suggest.close();
+        }, 0);
     }
 
     onClose(): void {
