@@ -29,8 +29,13 @@ export type SuggestionItem =
  * to avoid duplicating query, rendering, and highlight code.
  */
 export class ZoteroItemSuggest {
+    /**
+     * Collection paths and display titles keyed `${libraryID}:${key}`. Lookups
+     * merge into them rather than replace them: an outdated lookup finishing
+     * late must not take away what the shown results render with.
+     */
     itemPaths: Record<string, string[]> = {};
-    /** Display titles keyed `${libraryID}:${key}`, from the user's template. */
+    /** Display titles, from the user's template. */
     displayTitles: Record<string, string> = {};
     /**
      * Group labels ("Best Match", …), keyed by the first suggestion of their
@@ -78,7 +83,7 @@ export class ZoteroItemSuggest {
                     workerBridge.displayTitle.getTitles(refs),
                 ]);
                 if (paths.status === "fulfilled") {
-                    this.itemPaths = paths.value;
+                    Object.assign(this.itemPaths, paths.value);
                 } else {
                     services.logService.error(
                         "Failed to fetch item paths",
@@ -87,7 +92,7 @@ export class ZoteroItemSuggest {
                     );
                 }
                 if (titles.status === "fulfilled") {
-                    this.displayTitles = titles.value;
+                    Object.assign(this.displayTitles, titles.value);
                 } else {
                     services.logService.error(
                         "Failed to fetch display titles",

@@ -15,6 +15,7 @@ import type {
     SuggestionItemFilter,
 } from "./zotero-item-suggest";
 import { fireAndForgetIn } from "utils/fire-and-forget";
+import { LatestOnly } from "utils/latest-only";
 
 const ff = fireAndForgetIn("SuggestModalBase");
 
@@ -25,6 +26,7 @@ const ff = fireAndForgetIn("SuggestModalBase");
  */
 export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
     protected readonly suggest: ZoteroItemSuggest;
+    private readonly latest = new LatestOnly();
 
     constructor(
         app: App,
@@ -50,7 +52,11 @@ export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
         evt: MouseEvent | KeyboardEvent,
     ): void;
 
-    async getSuggestions(query: string): Promise<SuggestionItem[]> {
+    getSuggestions(query: string): Promise<SuggestionItem[]> {
+        return this.latest.run(this.lookup(query));
+    }
+
+    private async lookup(query: string): Promise<SuggestionItem[]> {
         // When the active token is `field:partial`, show value completions.
         const analysis = analyzeInput(query);
         if (analysis.mode === "value") {

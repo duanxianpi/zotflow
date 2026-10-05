@@ -16,6 +16,7 @@ import {
     type SuggestionItem,
 } from "ui/modals/zotero-item-suggest";
 import { insertCitationResult } from "ui/editor/citation-helper";
+import { LatestOnly } from "utils/latest-only";
 
 const DEFAULT_TRIGGER = "@@";
 
@@ -27,6 +28,7 @@ const DEFAULT_TRIGGER = "@@";
 export class CitationSuggest extends EditorSuggest<SuggestionItem> {
     private manualTriggerStart: EditorPosition | null = null;
     private readonly suggest = new ZoteroItemSuggest();
+    private readonly latest = new LatestOnly();
 
     private resolveInsertionAnchor(
         editor: Editor,
@@ -110,10 +112,8 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
         };
     }
 
-    async getSuggestions(
-        context: EditorSuggestContext,
-    ): Promise<SuggestionItem[]> {
-        return this.suggest.getSuggestions(context.query, 20);
+    getSuggestions(context: EditorSuggestContext): Promise<SuggestionItem[]> {
+        return this.latest.run(this.suggest.getSuggestions(context.query, 20));
     }
 
     renderSuggestion(item: SuggestionItem, el: HTMLElement): void {
