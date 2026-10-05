@@ -173,7 +173,92 @@ npm run dev:reader     # webpack watch mode (reader, separate terminal)
 npm run lint
 ```
 
+### Annotation profiles
+
+Open **Settings → ZotFlow → Annotation Profiles** to create or duplicate a profile,
+rename it, and edit/reorder its colors and optional labels. The protected **Zotero
+default** keeps the original eight colors; duplicate it to customize it. Ink and
+text retain the extra black option. A profile needs at least one color, and colors
+within a profile must be distinct six-digit hex values.
+
+The default profile applies to newly opened readers. The profile chooser inside a
+reader changes only that open reader; reconnecting retains its choice, while
+reopening the document starts with the settings default. Profile edits update
+open readers. Removing their active profile falls back to the default. Existing
+annotations keep their colors and tags, including colors removed from a palette.
+
+Labels are display text. **Automatically tag new annotations** is a separate,
+default-off option that adds a labeled entry's text as an ordinary Zotero annotation
+tag at creation. It preserves other tags and avoids duplicates. It never retags
+annotations when recoloring, editing, importing, or switching profiles.
+
+Source-note labels resolve in this order:
+
+1. An ordinary annotation tag matching a current or remembered category label.
+   Matching is exact and case-sensitive; manually added matching tags count too.
+   If several match, the earliest registered category wins.
+2. The annotation color's label in the **settings default profile**. Temporary
+   reader selections do not change source-note fallback labels.
+3. **Other** if neither resolves.
+
+ZotFlow remembers committed label names in its settings even after a label or
+profile is deleted. This keeps tagged annotations' meaning stable across profile
+changes. Share ZotFlow's settings between devices to retain that registry; Zotero
+stores only ordinary colors and tags. Untagged older annotations use the current
+color fallback, so their inferred display labels may change.
+
+Under **General → Source Notes**, two default-off settings control built-in output:
+
+- **Group annotations by category** creates category sections across attachments.
+  Groups follow default-profile palette order, then historical registry order,
+  with Other last. Within a group, annotations follow attachment key, document
+  position, then annotation key. A category literally named Other shares the final
+  group with uncategorized annotations.
+- **Labeled annotation callout titles** applies when grouping is off. The original
+  type/color callout remains, with its label as title and its attachment/page link
+  in the body. Its preference is retained while grouping is on.
+
+Both layouts preserve annotation links, images, block references, editable comments,
+and user-owned persist regions. Settings apply on the next render; use **Force
+update source note** (or **Force update all library source notes**) to refresh
+unchanged library notes, and the local source-note update action for local files.
+
+Custom templates remain authoritative. The options do not rewrite them. Every
+annotation context adds `paletteLabel`, `categoryTags`, `category`, `resolvedLabel`,
+and `labelSource` (`tag`, `color`, or `none`). `item.annotationGroups` and
+`attachment.annotationGroups` expose `{ label, annotations }` groups; existing
+annotation arrays retain their original order. `annotation.attachmentTitle` is
+available for grouped attachment links. These are template fields only, not
+annotation storage fields.
+
+For example, a custom library template can opt into grouped output with:
+
+```liquid
+{% capture quote_prefix %}{{ newline }}> {% endcapture %}
+{% for group in item.annotationGroups %}
+## {{ group.label | annotation_label }}
+{% for annotation in group.annotations %}
+> [!quote] {{ annotation.resolvedLabel | default: "Other" | annotation_label }}
+> [p.{{ annotation.pageLabel }}]({{ annotation | annotation_link }})
+> {{ annotation.text | replace: newline, " " }}
+>
+> {{ annotation.comment | wrap_editable: "ANNO", annotation.key | replace: newline, quote_prefix }}
+^{{ annotation.key }}
+{% endfor %}
+{% endfor %}
+```
+
+Use the `annotation_label` filter when inserting labels into Markdown headings or
+callout titles: labels are plain text. The snippet illustrates text annotations;
+retain your template's image and persist-region handling, or use the built-in
+layouts for all annotation types. The template preview's built-in template includes
+the selected presentation options and is a complete starting point for customization.
+
 ### Live testing in Obsidian
+
+The local-only annotation profile regression needs no Zotero key. After building
+and launching the isolated app, run `node tests/live/annotation-profiles.live.mjs`.
+It creates named fixtures in the test vault and restores profile settings afterward.
 
 `npm run live:obsidian` drives a separate Obsidian instance over the Chrome
 DevTools Protocol. It runs with its own profile (`--user-data-dir`), so its

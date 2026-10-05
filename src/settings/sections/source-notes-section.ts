@@ -22,6 +22,16 @@ export class SourceNotesSection {
                 heading: "Shared Behavior",
                 items: [
                     {
+                        name: "Group annotations by category",
+                        desc: "Built-in templates only: generate category sections, with uncategorized annotations in Other. Tags take precedence over default-profile color labels. Use force update to refresh existing library notes.",
+                        control: { type: "toggle", key: "groupSourceNoteAnnotations" },
+                    },
+                    {
+                        name: "Labeled annotation callout titles",
+                        desc: "Built-in templates only, when grouping is off: use the resolved category or color label as the callout title. Custom Liquid templates remain in control of their layout.",
+                        control: { type: "toggle", key: "labeledAnnotationCallouts" },
+                    },
+                    {
                         name: "Lock Editable Regions by Default",
                         desc: "When enabled, editable regions in source notes start locked. Click the lock icon on a region to unlock it for editing.",
                         control: {

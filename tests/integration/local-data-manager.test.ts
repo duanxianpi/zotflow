@@ -583,3 +583,12 @@ describe("updateAnnotationCommentFromNote", () => {
         },
     );
 });
+
+it("keeps category tags and off-palette colors in the unchanged sidecar format", async () => {
+    const original = anno("PROFILE1", { color: "#123456", tags: [{ name: "Methodology" }, { name: "todo" }] });
+    await manager.saveAnnotation(original);
+    const loaded = await newManager().loadAnnotations();
+    expect(loaded).toEqual([original]);
+    expect(readSidecar()).toMatchObject({ version: 1, annotations: [original] });
+    expect(Object.keys(readSidecar().annotations[0]).some((key) => /profile|category|palette|resolved/i.test(key))).toBe(false);
+});

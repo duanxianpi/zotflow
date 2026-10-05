@@ -1507,3 +1507,47 @@ describe("settings updates", () => {
         expect(cslCalls[0]!.opts.styleId).toBe("ieee");
     });
 });
+
+describe("annotation profile layouts", () => {
+    const preferences = {
+        annotationProfiles: [{ id: "research", name: "Research", palette: [
+            { id: "a", color: "#ffd400", label: "Methodology" },
+            { id: "b", color: "#2ea8e5", label: "Evidence" },
+        ] }], defaultAnnotationProfileId: "research",
+        annotationCategoryTags: ["Methodology", "Evidence", "Historical"],
+    };
+
+    test("grouped output combines attachments, keeps links, images and editable regions", async () => {
+        await setup({ ...preferences, groupSourceNoteAnnotations: true });
+        const article = await seedArticle();
+        await seedAttachment("ATTACH02");
+        await seedAttachment("ATTACH01");
+        await seedAnnotation("ANNOTAT2", "ATTACH02", { annotationType: "image", tags: [{ tag: "Evidence" }] });
+        await seedAnnotation("ANNOTAT1", "ATTACH01");
+        await seedAnnotation("ANNOTAT3", "ATTACH02", { annotationColor: "#123456" });
+        const out = await service.renderLibrarySourceNote(article, null, {});
+        expect(out).toMatch(/## Methodology[\s\S]*## Evidence[\s\S]*## Other/);
+        expect(out).toContain("paper.pdf, p.5");
+        expect(out).toContain("ANNOTAT1");
+        expect(out).toContain("ZF_ANNO_BEG_ANNOTAT1");
+        expect(out).toContain("ZF_ANNO_END_ANNOTAT1");
+        expect(out).toContain("![[ZotFlow/images/ANNOTAT2.png]]");
+        expect(out.match(/\^ANNOTAT[123]/g)).toHaveLength(3);
+        expect(out).toContain("obsidian://zotflow");
+    });
+
+    test("standalone attachment gets categories and the original callout kind", async () => {
+        await setup({ ...preferences, labeledAnnotationCallouts: true });
+        await seedAttachment("ATTACH01", "");
+        await seedAnnotation("ANNOTAT1", "ATTACH01", { tags: [{ tag: "Evidence" }, { tag: "todo" }] });
+        const attachment = (await db.items.get([LIB, "ATTACH01"]))!;
+        const out = await service.renderLibrarySourceNote(attachment, null, {});
+        expect(out).toContain("> [!zotflow-highlight-#ffd400] Evidence");
+        expect(out).toContain("^ANNOTAT1");
+        expect(out).toContain("#todo");
+        const custom = await service.renderLibrarySourceNote(attachment,
+            "{{ item.annotations[0].category }} / {{ item.annotations[0].paletteLabel }} / {{ item.annotationGroups[0].label }}", {});
+        expect(custom).toContain("Evidence / Methodology / Evidence");
+        expect(custom).not.toContain("[!zotflow-");
+    });
+});

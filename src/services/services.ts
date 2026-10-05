@@ -96,6 +96,7 @@ class ServiceLocator {
     updateSettings(newSettings: ZotFlowSettings) {
         this.assertInitialized();
         this._settings = newSettings;
+        this._eventHub.settingsChanged.emit();
         // Library capabilities depend on the active API key + cached key info,
         // both of which can change after a settings save. Refresh in background.
         void this._libraryCache.refresh();

@@ -8,6 +8,9 @@ import type { ITaskInfo } from "types/tasks";
  * no service; emitters and subscribers find it through the ServiceLocator.
  */
 export class EventHub {
+    /** Main-thread settings changes, including external data.json reloads. */
+    public readonly settingsChanged = new EventBus<[]>();
+
     /** Fires when an annotation is created/updated/deleted (from editor or reader). */
     public readonly annotationChanged = new EventBus<
         [libraryID: number, annotationKey: string, parentItemKey: string]

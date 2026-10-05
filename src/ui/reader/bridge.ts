@@ -1,3 +1,4 @@
+import { readerProfileConfig } from "utils/annotation-profiles";
 import type {
     ChildAPI,
     ParentAPI,
@@ -74,6 +75,8 @@ export class IframeReaderBridge {
     private disconnectPromise: Promise<void> | null = null;
     private permanentlyDisposed = false;
     private readerInitPending = false;
+    private activeProfileId?: string;
+    private unsubscribeSettings?: () => void;
 
     private editorList: EmbeddableMarkdownEditor[] = [];
     private rendererList: Component[] = [];
@@ -210,6 +213,10 @@ export class IframeReaderBridge {
             isLocalReader: () => this.isLocal,
 
             handleEvent: (evt) => {
+                if (evt.type === "annotationProfileChanged" && generation === this.connectGeneration) {
+                    this.activeProfileId = readerProfileConfig(services.settings, evt.profileId).activeProfileId;
+                    this.updateReaderOpts({ annotationProfileConfig: readerProfileConfig(services.settings, this.activeProfileId) });
+                }
                 const ls = this.typedListeners.get(evt.type);
                 if (ls) ls.forEach((l) => l(evt));
             },
@@ -740,6 +747,21 @@ export class IframeReaderBridge {
     }
 
     initReader(opts: CreateReaderOptions) {
+        const config = readerProfileConfig(services.settings, this.activeProfileId);
+        this.activeProfileId = config.activeProfileId;
+        opts = { ...opts, annotationProfileConfig: config };
+        this.unsubscribeSettings ??= services.eventHub.settingsChanged.subscribe(() => {
+            const next = readerProfileConfig(services.settings, this.activeProfileId);
+            if (JSON.stringify(next) === JSON.stringify(this._readerOpts?.annotationProfileConfig)) return;
+            this.activeProfileId = next.activeProfileId;
+            this.updateReaderOpts({ annotationProfileConfig: next });
+            if (this._state === "disposed" || this._state === "disposing") return;
+            void this.runAfterReaderReady(async () => {
+                await this.child!.setAnnotationProfileConfig(next);
+            }).catch((error: unknown) => services.logService.error(
+                "Failed to update annotation profiles", "IframeReaderBridge", error,
+            ));
+        });
         this._readerOpts = opts;
         this.readerInitPending = true;
         return this.runAfterBridgeReady(async () => {
@@ -865,6 +887,8 @@ export class IframeReaderBridge {
 
     async dispose() {
         this.permanentlyDisposed = true;
+        this.unsubscribeSettings?.();
+        this.unsubscribeSettings = undefined;
         await this.disconnect();
 
         // Final close only. A reconnect deliberately keeps these so the new

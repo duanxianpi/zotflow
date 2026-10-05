@@ -1,3 +1,4 @@
+import type { AnnotationProfileConfig } from "utils/annotation-profiles";
 import { ZotFlowSettings } from "settings/types";
 import type {
     MarkdownEditorProps,
@@ -23,6 +24,7 @@ export interface CreateReaderOptions {
     darkTheme?: string;
 
     annotations?: AnnotationJSON[];
+    annotationProfileConfig?: AnnotationProfileConfig;
     authorName?: string;
     sidebarOpen?: boolean;
     sidebarWidth?: number;
@@ -37,6 +39,7 @@ export interface CreateReaderOptions {
 
 /** Discriminated union of all events the reader iframe can emit to the parent. */
 export type ChildEvents =
+    | { type: "annotationProfileChanged"; profileId: string }
     | { type: "error"; code: string; message: string }
     | { type: "addToNote" }
     | { type: "annotationsSaved"; annotations: AnnotationJSON[] }
@@ -140,6 +143,7 @@ export type ReaderSDTPackResult =
 /** Penpal API exposed by the reader iframe to the parent — init, navigate, annotate, destroy. */
 export type ChildAPI = {
     initReader: (opts: CreateReaderOptions) => Promise<boolean>;
+    setAnnotationProfileConfig: (config: AnnotationProfileConfig) => Promise<boolean>;
     setColorScheme: (colorScheme: ColorScheme) => Promise<boolean>;
     addAnnotation: (annotation: AnnotationJSON) => Promise<boolean>;
     refreshAnnotations: (annotations: AnnotationJSON[]) => Promise<boolean>;
