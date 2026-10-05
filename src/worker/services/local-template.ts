@@ -17,7 +17,11 @@ import {
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
-import type { TemplatePreviewResult } from "types/template-preview";
+import { describeTemplateScope } from "./template-variables";
+import type {
+    TemplatePreviewResult,
+    TemplateVariables,
+} from "types/template-preview";
 import {
     mergeTemplateFrontmatter,
     withMandatoryFirst,
@@ -298,6 +302,17 @@ export class LocalTemplateService {
             const hint = mandatoryKeyHint(out.templateFrontmatter, out.mandatory);
             if (hint) hints.push(hint);
             return { output: out.text, frontmatter: out.frontmatter };
+        });
+    }
+
+    /** The variables a local source-note template sees for this file, for the template tester. */
+    async describeLocalNote(
+        file: TFileWithoutParentAndVault,
+    ): Promise<TemplateVariables> {
+        const annotations = await this.loadSidecarAnnotations(file);
+        return describeTemplateScope({
+            scope: { ...(await this.prepareLocalAttachmentContext(file, annotations)) },
+            engine: this.engine,
         });
     }
 

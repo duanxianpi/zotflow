@@ -9,6 +9,7 @@ import { TemplateWriteBackModal } from "ui/modals/template-write-back-modal";
 import { createEmbeddableMarkdownEditor } from "ui/editor/markdown-editor";
 import { ObsidianIcon } from "ui/ObsidianIcon";
 import { MultiSelectDropdown } from "ui/activity-center/MultiSelectDropdown";
+import { TemplateVariablesPanel } from "ui/activity-center/TemplateVariablesPanel";
 import {
     applyWriteBack,
     loadSavedTemplate,
@@ -37,9 +38,11 @@ import type { AnnotationJSON } from "types/zotero-reader";
 import type {
     TemplateError,
     TemplatePreviewResult,
+    TemplateVariables,
 } from "types/template-preview";
 
 type OutputMode = "preview" | "source";
+type RightTab = "output" | "variables";
 
 /** The last render: which template it was, so a later edit can tell it is stale. */
 interface LastRender {
@@ -73,6 +76,19 @@ function propertyValue(value: unknown): string {
     if (typeof value === "string") return value;
     if (Array.isArray(value)) return value.map(propertyValue).join(", ");
     return JSON.stringify(value) ?? "";
+}
+
+/** Replace the editor's selection with `{{ path }}`. */
+function insertVariable(editor: EmbeddableMarkdownEditor, path: string): void {
+    const cm = editor.activeCM;
+    const { from, to } = cm.state.selection.main;
+    const text = `{{ ${path} }}`;
+    cm.dispatch({
+        changes: { from, to, insert: text },
+        selection: { anchor: from + text.length },
+        scrollIntoView: true,
+    });
+    cm.focus();
 }
 
 /** Select line `line` in the template editor, with the cursor's end at `col`. */
@@ -117,6 +133,9 @@ export const TemplateTestView: React.FC = () => {
     const [rendering, setRendering] = useState(false);
     const [notice, setNotice] = useState("");
     const [outputMode, setOutputMode] = useState<OutputMode>("source");
+    const [rightTab, setRightTab] = useState<RightTab>("output");
+    const [variables, setVariables] = useState<TemplateVariables | null>(null);
+    const [variablesMessage, setVariablesMessage] = useState("");
 
     const result = lastRender?.result ?? null;
     const rendered = result?.ok ? result.output : "";
@@ -176,7 +195,7 @@ export const TemplateTestView: React.FC = () => {
 
     // Create / recreate output editor (right panel — source mode)
     useEffect(() => {
-        if (outputMode !== "source") return;
+        if (rightTab !== "output" || outputMode !== "source") return;
 
         const container = outputContainerRef.current;
         if (!container) return;
@@ -191,12 +210,12 @@ export const TemplateTestView: React.FC = () => {
         return () => {
             editor.destroy();
         };
-        // Recreate when switching to source or when rendered output changes
-    }, [outputMode, rendered]);
+        // Recreate when the source view is shown or the output changes
+    }, [rightTab, outputMode, rendered]);
 
     // Render markdown preview (right panel — preview mode)
     useEffect(() => {
-        if (outputMode !== "preview") return;
+        if (rightTab !== "output" || outputMode !== "preview") return;
 
         const container = previewContainerRef.current;
         if (!container) return;
@@ -223,7 +242,7 @@ export const TemplateTestView: React.FC = () => {
         return () => {
             comp.unload();
         };
-    }, [outputMode, rendered, frontmatter]);
+    }, [rightTab, outputMode, rendered, frontmatter]);
 
     const reloadSaved = useCallback(
         async (ctx: TemplateContext) => {
@@ -293,6 +312,61 @@ export const TemplateTestView: React.FC = () => {
             cancelled = true;
         };
     }, [selectedItem]);
+
+    // List the variables for the picked item or file
+    useEffect(() => {
+        let cancelled = false;
+        setVariables(null);
+        const pickFirst = needsLibraryItem(context)
+            ? "Pick a Zotero item to list its variables."
+            : "Pick a local file to list its variables.";
+        if (needsLibraryItem(context) ? !selectedItem : !selectedFile) {
+            setVariablesMessage(pickFirst);
+            return;
+        }
+        setVariablesMessage("Loading…");
+        void (async () => {
+            try {
+                let vars: TemplateVariables;
+                if (selectedItem && needsLibraryItem(context)) {
+                    const { libraryID, key } = selectedItem;
+                    if (context === "library") {
+                        vars = await workerBridge.libraryTemplate.describeLibrarySourceNote(libraryID, key);
+                    } else if (context === "library-path") {
+                        vars = await workerBridge.notePath.describeLibraryNotePath(libraryID, key);
+                    } else if (context === "display-title") {
+                        vars = await workerBridge.displayTitle.describe(libraryID, key);
+                    } else {
+                        const annotations = availableAnnotations.filter((a) =>
+                            selectedAnnotationIds.includes(a.id),
+                        );
+                        vars = await workerBridge.libraryTemplate.describeCitationTemplate({
+                            item: selectedItem,
+                            annotations: annotations.length > 0 ? annotations : undefined,
+                        });
+                    }
+                } else if (selectedFile) {
+                    vars =
+                        context === "local"
+                            ? await workerBridge.localTemplate.describeLocalNote(selectedFile)
+                            : await workerBridge.notePath.describeLocalNotePath(selectedFile);
+                } else {
+                    return;
+                }
+                if (!cancelled) setVariables(vars);
+            } catch (e) {
+                services.logService.error(
+                    "Failed to list template variables",
+                    "TemplateTestView",
+                    e,
+                );
+                if (!cancelled) setVariablesMessage("Could not list the variables. See the log for details.");
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [context, selectedItem, selectedFile, selectedAnnotationIds, availableAnnotations]);
 
     const handlePick = useCallback(() => {
         if (needsLibraryItem(context)) {
@@ -555,16 +629,29 @@ export const TemplateTestView: React.FC = () => {
                 {/* Right: Output with preview/source toggle */}
                 <div className="zotflow-template-test-panel">
                     <div className="zotflow-template-test-panel-header">
-                        <span className="zotflow-template-test-section-header">
-                            Output
-                            {lastRender && !renderIsCurrent && (
-                                <span className="zotflow-template-test-stale">
-                                    {" "}
-                                    · outdated
-                                </span>
-                            )}
-                        </span>
-                        <div className="zotflow-template-test-mode-toggle">
+                        <div className="zotflow-template-test-tabs">
+                            <button
+                                className={`zotflow-template-test-section-header ${rightTab === "output" ? "is-active" : ""}`}
+                                onClick={() => setRightTab("output")}
+                            >
+                                Output
+                                {lastRender && !renderIsCurrent && (
+                                    <span className="zotflow-template-test-stale">
+                                        {" "}
+                                        · outdated
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                className={`zotflow-template-test-section-header ${rightTab === "variables" ? "is-active" : ""}`}
+                                onClick={() => setRightTab("variables")}
+                            >
+                                Variables
+                            </button>
+                        </div>
+                        <div
+                            className={`zotflow-template-test-mode-toggle ${rightTab === "output" ? "" : "is-hidden"}`}
+                        >
                             <button
                                 className={`clickable-icon ${outputMode === "source" ? "is-active" : ""}`}
                                 onClick={() => setOutputMode("source")}
@@ -582,7 +669,21 @@ export const TemplateTestView: React.FC = () => {
                         </div>
                     </div>
 
-                    {hints.length > 0 && (
+                    {rightTab === "variables" && (
+                        <div className="zotflow-template-test-output zotflow-template-test-variables">
+                            <TemplateVariablesPanel
+                                variables={variables}
+                                message={variablesMessage}
+                                onInsert={(path) => {
+                                    if (templateEditorRef.current) {
+                                        insertVariable(templateEditorRef.current, path);
+                                    }
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    {rightTab === "output" && hints.length > 0 && (
                         <ul className="zotflow-template-test-hints">
                             {hints.map((hint) => (
                                 <li key={hint}>
@@ -593,13 +694,13 @@ export const TemplateTestView: React.FC = () => {
                         </ul>
                     )}
 
-                    {outputMode === "source" && (
+                    {rightTab === "output" && outputMode === "source" && (
                         <div
                             ref={outputContainerRef}
                             className="zotflow-template-test-output"
                         />
                     )}
-                    {outputMode === "preview" && (
+                    {rightTab === "output" && outputMode === "preview" && (
                         <div className="zotflow-template-test-output zotflow-template-test-preview">
                             {frontmatter && (
                                 <table className="zotflow-template-test-properties">

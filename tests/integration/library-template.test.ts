@@ -1459,6 +1459,40 @@ describe("preview results", () => {
     });
 });
 
+describe("variable list", () => {
+    beforeEach(() => seedArticle());
+
+    test("a source note lists the item's fields, ZotFlow's variables and filters", async () => {
+        const vars = await service.describeLibrarySourceNote(LIB, "PARENT01");
+        expect(vars.groups.map((g) => g.label)).toEqual([
+            "Zotero fields · Journal Article",
+            "ZotFlow variables",
+            "Fields Journal Article does not have",
+            "Other variables",
+        ]);
+        const fields = vars.groups[0]!.variables;
+        expect(fields.find((v) => v.name === "publicationTitle")).toMatchObject({
+            path: "item.publicationTitle",
+            value: "Journal of Testing",
+        });
+        expect(vars.filters).toEqual(expect.arrayContaining(["html2md", "citation", "wrap_editable"]));
+    });
+
+    test("the API key in the settings is never listed", async () => {
+        const vars = await service.describeLibrarySourceNote(LIB, "PARENT01");
+        expect(JSON.stringify(vars)).not.toContain(API_KEY);
+    });
+
+    test("a citation lists notePath and the picked annotations", async () => {
+        const vars = await service.describeCitationTemplate({
+            item: { libraryID: LIB, key: "PARENT01" },
+            annotations: [{ id: "ANNOTAT1", libraryID: LIB, type: "highlight", pageLabel: "9" }],
+        } as any);
+        const other = vars.groups.at(-1)!.variables.map((v) => v.name);
+        expect(other).toEqual(["notePath", "annotations"]);
+    });
+});
+
 describe("citation templates", () => {
     const input = () => ({ item: { libraryID: LIB, key: "PARENT01" } }) as any;
 

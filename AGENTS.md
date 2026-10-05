@@ -304,7 +304,8 @@ src/
 │   ├── zotero-api-client.d.ts      # zotero-api-client ambient types
 │   ├── zotero-item.d.ts            # Auto-generated Zotero item types (from schema.json)
 │   ├── zotero-item-const.ts        # Zotero item type string array
-│   ├── zotero-base-fields.ts       # Auto-generated base-field map (e.g. case.title → caseName)
+│   ├── zotero-base-fields.ts       # Auto-generated base-field map (e.g. case.title → caseName), each type's fields
+│   ├── template-preview.ts         # Template tester results: preview (output/error/hints) and variable list
 │   ├── zotero.d.ts                 # ZoteroKey, ZoteroGroup, etc.
 │   ├── zotero-reader.d.ts          # Reader event types, AnnotationJSON
 │   ├── zotflow.d.ts                # TFileWithoutParentAndVault
@@ -334,7 +335,10 @@ src/
 │   │   ├── SyncView.tsx            # Sync tab: libraries (↑ push / ↓ pull / conflict counts)
 │   │   ├── ConflictsView.tsx       # Conflicts tab: loads, resolves, moves to the next conflict
 │   │   ├── ConflictPanel.tsx       # Conflict list + resolver (why, Keep Local / Accept Remote with a per-field preview)
-│   │   ├── TemplateTestView.tsx    # Template testing tab
+│   │   ├── TemplateTestView.tsx    # Template tab: preview, errors, hints, save to settings/template file
+│   │   ├── TemplateVariablesPanel.tsx # Template tab: the picked item's variables (click to insert)
+│   │   ├── template-targets.ts     # Template tab: contexts and where each saves (pure)
+│   │   ├── template-store.ts       # Template tab: load the saved template, carry out a save
 │   │   ├── CslStylesView.tsx       # CSL tab: styles (aliases nested under parents) & locales
 │   │   └── CslRows.tsx             # CSL tab row components (status dot, badges, alias rows)
 │   └── modals/
@@ -342,6 +346,7 @@ src/
 │       ├── item-picker.ts          # ItemPickerModal (extends BaseItemSearchModal)
 │       ├── file-picker.ts          # FilePickerModal (local vault file picker)
 │       ├── note-gone-modal.ts      # NoteGoneModal: text of a note deleted in Zotero → "Save as new note"
+│       ├── template-write-back-modal.ts # Confirms saving a tested template (setting or file)
 │       ├── csl-add-modal.ts        # AddCslStyleModal / AddCslLocaleModal (fetch-by-id preview + add)
 │       ├── csl-details-modal.ts    # StyleDetailsModal (state-aware actions for installed styles)
 │       └── csl-style-details.ts    # Shared StyleDetails block (meta table + deps + preview)
@@ -363,6 +368,8 @@ src/
 │   │   ├── local-template.ts       # LocalTemplateService (LiquidJS for local files)
 │   │   ├── tree-view.ts            # TreeViewService (builds flattened topology)
 │   │   ├── display-title.ts        # DisplayTitleService (item title template for tree + search)
+│   │   ├── liquid-support.ts       # Shared Liquid helpers: preview results, error positions, frontmatter render
+│   │   ├── template-variables.ts   # Describes a template scope for the tester's variable list
 │   │   ├── document-worker.ts      # DocumentWorkerService (nested Zotero worker)
 │   │   ├── annotation.ts           # AnnotationService (reader annotation CRUD)
 │   │   ├── key.ts                  # KeyService (API key verify, library metadata)

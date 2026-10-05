@@ -506,6 +506,23 @@ describe("preview results", () => {
     });
 });
 
+describe("variable list", () => {
+    test("item variables sit at the root, as sanitized", async () => {
+        await item({ title: "Yes/No" });
+        const vars = await h.notePath.describeLibraryNotePath(USER_ID, "ARTICLE1");
+        const title = vars.groups[0]!.variables.find((v) => v.name === "title");
+        expect(title).toMatchObject({ path: "title", value: "YesNo" });
+        expect(vars.groups[0]!.note).toMatch(/item\. prefix/);
+    });
+
+    test("a local path lists the file's variables", () => {
+        const vars = h.notePath.describeLocalNotePath(localFile());
+        expect(vars.groups[0]!.variables.map((v) => v.name)).toEqual(
+            expect.arrayContaining(["basename", "directory", "extension"]),
+        );
+    });
+});
+
 describe("settings updates", () => {
     test("updateSettings changes the template a later call reads", async () => {
         h = await createServiceHarness({

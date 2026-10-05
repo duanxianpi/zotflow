@@ -403,6 +403,22 @@ describe("preview", () => {
     });
 });
 
+describe("variable list", () => {
+    beforeEach(async () => {
+        await createServiceHarness();
+    });
+
+    test("lists the item's variables, with no ZotFlow filters", async () => {
+        await article();
+        const vars = await service("").describe(USER_ID, "ARTICLE1");
+        expect(vars.groups[0]!.variables.find((v) => v.name === "title")).toMatchObject({
+            path: "item.title",
+            value: "Attention Is All You Need",
+        });
+        expect(vars.filters).toEqual([]);
+    });
+});
+
 describe("item search", () => {
     let h: ServiceHarness;
 

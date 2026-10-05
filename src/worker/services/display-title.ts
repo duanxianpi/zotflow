@@ -12,7 +12,11 @@ import {
 } from "worker/services/liquid-support";
 
 import type { Template } from "liquidjs";
-import type { TemplatePreviewResult } from "types/template-preview";
+import { describeTemplateScope } from "worker/services/template-variables";
+import type {
+    TemplatePreviewResult,
+    TemplateVariables,
+} from "types/template-preview";
 import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
@@ -197,20 +201,25 @@ export class DisplayTitleService {
     }
 
     private renderRaw(templates: Template[], item: AnyIDBZoteroItem): string {
-        const out: unknown = this.engine.renderSync(templates, {
-            item: {
-                ...buildItemMetadata(item),
-                key: item.key,
-                version: item.version,
-                libraryID: item.libraryID,
-                itemType: item.itemType,
-                dateAdded: item.dateAdded,
-                dateModified: item.dateModified,
-                tags: item.raw?.data?.tags || [],
-                ...attachmentFields(item),
-            },
-        });
+        const out: unknown = this.engine.renderSync(templates, displayTitleScope(item));
         return typeof out === "string" ? out : "";
+    }
+
+    /** The variables a display-title template sees for this item, for the template tester. */
+    async describe(libraryID: number, key: string): Promise<TemplateVariables> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "DisplayTitleService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        return describeTemplateScope({
+            scope: displayTitleScope(item),
+            engine: this.engine,
+            item: { type: item.itemType, under: "item" },
+        });
     }
 
     /**
@@ -273,6 +282,22 @@ export class DisplayTitleService {
             return { output: title };
         });
     }
+}
+
+function displayTitleScope(item: AnyIDBZoteroItem): Record<string, unknown> {
+    return {
+        item: {
+            ...buildItemMetadata(item),
+            key: item.key,
+            version: item.version,
+            libraryID: item.libraryID,
+            itemType: item.itemType,
+            dateAdded: item.dateAdded,
+            dateModified: item.dateModified,
+            tags: item.raw?.data?.tags || [],
+            ...attachmentFields(item),
+        },
+    };
 }
 
 /** Titles are one line; collapse whatever whitespace the template's tags left behind. */

@@ -47,7 +47,11 @@ import {
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
-import type { TemplatePreviewResult } from "types/template-preview";
+import { describeTemplateScope } from "./template-variables";
+import type {
+    TemplatePreviewResult,
+    TemplateVariables,
+} from "types/template-preview";
 import {
     mergeTemplateFrontmatter,
     withMandatoryFirst,
@@ -730,6 +734,51 @@ export class LibraryTemplateService {
         });
     }
 
+    /** The citation scope a preview renders against; the note path is looked up as a real citation would. */
+    private async citationPreviewContext(
+        input: CitationTemplateInput,
+    ): Promise<CitationRenderContext> {
+        const item = await this.getPreviewItem(input.item.libraryID, input.item.key);
+        const notePath =
+            (await this.parentHost.getFileByKey(item.key)) ??
+            (await this.notePathService.resolveLibraryNotePath(item));
+        const context: CitationRenderContext = {
+            item: await this.mapToItemContext(item),
+            notePath,
+        };
+        if (input.annotations?.length) {
+            context.annotations = input.annotations.map((a) =>
+                this.mapToAnnotationContext(a),
+            );
+        }
+        return context;
+    }
+
+    /** The variables a source-note template sees for this item, for the template tester. */
+    async describeLibrarySourceNote(
+        libraryID: number,
+        key: string,
+    ): Promise<TemplateVariables> {
+        const item = await this.getPreviewItem(libraryID, key);
+        return describeTemplateScope({
+            scope: { ...(await this.prepareItemContext(item)) },
+            engine: this.engine,
+            item: { type: item.itemType, under: "item" },
+        });
+    }
+
+    /** The variables a citation template sees, for the template tester. */
+    async describeCitationTemplate(
+        input: CitationTemplateInput,
+    ): Promise<TemplateVariables> {
+        const context = await this.citationPreviewContext(input);
+        return describeTemplateScope({
+            scope: { ...context },
+            engine: this.engine,
+            item: { type: context.item.itemType, under: "item" },
+        });
+    }
+
     private async getPreviewItem(
         libraryID: number,
         key: string,
@@ -791,19 +840,7 @@ export class LibraryTemplateService {
         template: string,
         format: CitationTemplateFormat,
     ): Promise<TemplatePreviewResult> {
-        const item = await this.getPreviewItem(input.item.libraryID, input.item.key);
-        const notePath =
-            (await this.parentHost.getFileByKey(item.key)) ??
-            (await this.notePathService.resolveLibraryNotePath(item));
-        const context: CitationRenderContext = {
-            item: await this.mapToItemContext(item),
-            notePath,
-        };
-        if (input.annotations?.length) {
-            context.annotations = input.annotations.map((a) =>
-                this.mapToAnnotationContext(a),
-            );
-        }
+        const context = await this.citationPreviewContext(input);
         return previewResult(async (hints) => {
             const { source, firstLine, firstCol } = trimmedStart(template);
             if (!source) {

@@ -2566,6 +2566,143 @@
     font-weight: var(--font-normal);
 }
 
+.zotflow-template-test-tabs {
+    display: flex;
+    gap: var(--size-4-3);
+}
+
+.zotflow-template-test-tabs button.zotflow-template-test-section-header {
+    background: none;
+    box-shadow: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    padding: 0;
+    height: auto;
+    cursor: pointer;
+}
+
+.zotflow-template-test-tabs button.zotflow-template-test-section-header {
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+}
+
+.zotflow-template-test-tabs button.zotflow-template-test-section-header.is-active {
+    color: var(--text-accent);
+    border-bottom-color: var(--interactive-accent);
+}
+
+.zotflow-template-test-mode-toggle.is-hidden {
+    visibility: hidden;
+}
+
+.zotflow-template-test-variables {
+    overflow: auto;
+    padding: var(--size-4-2);
+}
+
+.zotflow-template-vars {
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-template-vars-search {
+    width: 100%;
+}
+
+.zotflow-template-vars-group > summary {
+    cursor: pointer;
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    padding: var(--size-2-1) 0;
+}
+
+.zotflow-template-vars-count {
+    margin-left: var(--size-2-3);
+    font-weight: var(--font-normal);
+    color: var(--text-faint);
+}
+
+.zotflow-template-vars-note {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+    margin: 0 0 var(--size-2-2);
+}
+
+.zotflow-template-vars-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--size-4-2);
+    min-width: 0;
+    padding: 1px 0;
+}
+
+.zotflow-template-vars-name {
+    flex-shrink: 0;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-accent);
+    background: none;
+    box-shadow: none;
+    border: none;
+    padding: 0;
+    height: auto;
+    cursor: pointer;
+}
+
+.zotflow-template-vars-name:hover {
+    text-decoration: underline;
+}
+
+.zotflow-template-vars-badge {
+    flex-shrink: 0;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    background: var(--background-modifier-hover);
+    border-radius: var(--radius-s);
+    padding: 0 var(--size-2-2);
+}
+
+.zotflow-template-vars-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-normal);
+}
+
+.zotflow-template-vars-value.is-empty {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+.zotflow-template-vars-nested > summary {
+    cursor: pointer;
+    list-style-position: outside;
+}
+
+.zotflow-template-vars-nested > summary > .zotflow-template-vars-row {
+    display: inline-flex;
+    max-width: calc(100% - 1.2em);
+}
+
+.zotflow-template-vars-children {
+    margin-left: var(--size-4-4);
+    border-left: 1px solid var(--background-modifier-border);
+    padding-left: var(--size-4-2);
+}
+
+.zotflow-template-vars-filters {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--size-2-2);
+    align-items: baseline;
+}
+
 .zotflow-template-test-actions {
     display: flex;
     align-items: center;

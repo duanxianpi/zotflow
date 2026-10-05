@@ -11,7 +11,11 @@ import {
     renderLiquid,
     trimmedStart,
 } from "./liquid-support";
-import type { TemplatePreviewResult } from "types/template-preview";
+import { describeTemplateScope } from "./template-variables";
+import type {
+    TemplatePreviewResult,
+    TemplateVariables,
+} from "types/template-preview";
 import type { DbHelperService } from "./db-helper";
 
 const FALLBACK_ZOTERO_TEMPLATE =
@@ -286,6 +290,34 @@ export class NotePathService {
             localPathContext(file),
             (ctx) => ctx,
         );
+    }
+
+    /** The variables a library path template sees for this item (as sanitized), for the template tester. */
+    async describeLibraryNotePath(
+        libraryID: number,
+        key: string,
+    ): Promise<TemplateVariables> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "NotePathService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        return describeTemplateScope({
+            scope: sanitizeContext(await this.libraryPathContext(item)),
+            engine: this.engine,
+            item: { type: item.itemType },
+        });
+    }
+
+    /** The variables a local path template sees for this file (as sanitized), for the template tester. */
+    describeLocalNotePath(file: TFileWithoutParentAndVault): TemplateVariables {
+        return describeTemplateScope({
+            scope: sanitizeContext(localPathContext(file)),
+            engine: this.engine,
+        });
     }
 
     private previewPath(
