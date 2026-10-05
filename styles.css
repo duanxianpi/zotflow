@@ -2645,9 +2645,10 @@
     color: var(--text-normal);
 }
 
-.zotflow-template-vars-value.is-empty {
+.zotflow-template-vars-value.is-literal {
     color: var(--text-faint);
-    font-style: italic;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
 }
 
 .zotflow-template-vars-nested > summary {

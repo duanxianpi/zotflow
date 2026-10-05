@@ -21,10 +21,21 @@ function matches(v: TemplateVariable, query: string): boolean {
     return v.children?.some((c) => matches(c, query)) ?? false;
 }
 
-function summary(v: TemplateVariable): string {
-    if (v.type === "array") return `${v.count ?? 0} item${v.count === 1 ? "" : "s"}`;
-    if (v.type === "object") return "{…}";
-    return v.value;
+/** What the row shows for the value; `literal` when it is a JS value rather than text. */
+function summary(v: TemplateVariable): { text: string; literal: boolean } {
+    switch (v.type) {
+        case "undefined":
+        case "null":
+            return { text: v.type, literal: true };
+        case "array":
+            return { text: `${v.count ?? 0} item${v.count === 1 ? "" : "s"}`, literal: true };
+        case "object":
+            return { text: "{…}", literal: true };
+        case "string":
+            return v.value === "" ? { text: '""', literal: true } : { text: v.value, literal: false };
+        default:
+            return { text: v.value, literal: false };
+    }
 }
 
 const VariableRow: React.FC<{
@@ -33,6 +44,7 @@ const VariableRow: React.FC<{
     open: boolean;
     onInsert: (path: string) => void;
 }> = ({ v, query, open, onInsert }) => {
+    const shown = summary(v);
     const head = (
         <div className="zotflow-template-vars-row">
             <button
@@ -46,10 +58,10 @@ const VariableRow: React.FC<{
                 {v.name}
             </button>
             <span
-                className={`zotflow-template-vars-value ${v.type === "null" || v.value === "" ? "is-empty" : ""}`}
-                title={v.type === "string" ? v.value : undefined}
+                className={`zotflow-template-vars-value ${shown.literal ? "is-literal" : ""}`}
+                title={shown.literal ? undefined : v.value}
             >
-                {summary(v) || "empty"}
+                {shown.text}
             </span>
         </div>
     );

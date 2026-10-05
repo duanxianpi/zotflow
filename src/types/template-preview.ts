@@ -47,7 +47,18 @@ export interface TemplateVariable {
     path: string;
     /** The last segment, for display. */
     name: string;
-    type: "string" | "number" | "boolean" | "array" | "object" | "null";
+    /**
+     * `undefined`: the key holds no value (a field the item does not have),
+     * or the variable is only element structure, with no element behind it.
+     */
+    type:
+        | "string"
+        | "number"
+        | "boolean"
+        | "array"
+        | "object"
+        | "null"
+        | "undefined";
     /** A one-line preview of the value; empty for objects and arrays. */
     value: string;
     /** For arrays: the number of elements. */

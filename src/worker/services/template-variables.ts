@@ -134,7 +134,7 @@ const ARRAY_ELEMENTS: Readonly<Record<string, ElementShape | "value">> = {
     relatedItems: RELATED_ITEM,
 } satisfies Record<ContextArrayKeys, ElementShape | "value">;
 
-/** Variables for a shape with no value behind it: listed empty. */
+/** Variables for a shape with no value behind it: all `undefined`, arrays with their structure. */
 function describeShape(
     shape: ElementShape,
     prefix: string,
@@ -142,9 +142,10 @@ function describeShape(
 ): TemplateVariable[] {
     return Object.entries(shape).map(([name, field]): TemplateVariable => {
         const path = joinPath(prefix, name);
-        if (field === "value") return { path, name, type: "null", value: "" };
-        if (field === "object") return { path, name, type: "object", value: "" };
-        const variable: TemplateVariable = { path, name, type: "array", value: "", count: 0 };
+        if (field === "value" || field === "object") {
+            return { path, name, type: "undefined", value: "" };
+        }
+        const variable: TemplateVariable = { path, name, type: "undefined", value: "" };
         const children = elementStructure(field.elements, path, depth);
         if (children) variable.children = children;
         return variable;
@@ -160,7 +161,7 @@ function elementStructure(
     if (depth >= MAX_DEPTH) return undefined;
     const first = `${path}[0]`;
     return elements === "value"
-        ? [{ path: first, name: "[0]", type: "null", value: "" }]
+        ? [{ path: first, name: "[0]", type: "undefined", value: "" }]
         : describeShape(elements, first, depth + 1);
 }
 
@@ -187,9 +188,8 @@ function describeValue(
     value: unknown,
     depth: number,
 ): TemplateVariable {
-    if (value === null || value === undefined) {
-        return { path, name, type: "null", value: "" };
-    }
+    if (value === undefined) return { path, name, type: "undefined", value: "" };
+    if (value === null) return { path, name, type: "null", value: "" };
     if (typeof value === "string") {
         return { path, name, type: "string", value: preview(value) };
     }
@@ -218,7 +218,7 @@ function describeValue(
             if (typeof first === "object" && first !== null && !Array.isArray(first)) {
                 const listed = describeObject(first as Record<string, unknown>, `${path}[0]`, depth + 1);
                 // Keys this element lacks (an unresolved related item has no
-                // title) are listed empty, as for an empty array.
+                // title) are listed as undefined, as for an empty array.
                 if (elements && elements !== "value") {
                     const missing = Object.fromEntries(
                         Object.entries(elements).filter(([key]) => !(key in first)),

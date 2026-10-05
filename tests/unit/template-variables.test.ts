@@ -53,9 +53,14 @@ describe("describeTemplateScope", () => {
         ]);
     });
 
-    test("null values are listed empty", () => {
-        const vars = describeTemplateScope({ item: { date: null } }, engine);
+    test("null, undefined and empty strings stay apart", () => {
+        const vars = describeTemplateScope(
+            { item: { date: null, ISBN: undefined, citationKey: "" } },
+            engine,
+        );
         expect(find(vars, "item.date")).toMatchObject({ type: "null", value: "" });
+        expect(find(vars, "item.ISBN")).toMatchObject({ type: "undefined", value: "" });
+        expect(find(vars, "item.citationKey")).toMatchObject({ type: "string", value: "" });
     });
 
     test("credentials and internal keys are never listed", () => {
@@ -94,17 +99,17 @@ describe("describeTemplateScope", () => {
         expect(find(vars, "item.attachments[0].filename")).toEqual({
             path: "item.attachments[0].filename",
             name: "filename",
-            type: "null",
+            type: "undefined",
             value: "",
         });
-        expect(find(vars, "item.attachments[0].annotations[0].pageLabel")).toMatchObject({ type: "null" });
-        expect(find(vars, "item.itemPaths[0]")).toMatchObject({ type: "null" });
+        expect(find(vars, "item.attachments[0].annotations[0].pageLabel")).toMatchObject({ type: "undefined" });
+        expect(find(vars, "item.itemPaths[0]")).toMatchObject({ type: "undefined" });
     });
 
     test("a citation's annotations show their structure with none picked", () => {
         const vars = describeTemplateScope({ annotations: [] }, engine);
         expect(find(vars, "annotations[0].text")).toBeDefined();
-        expect(find(vars, "annotations[0].raw")).toMatchObject({ type: "object" });
+        expect(find(vars, "annotations[0].raw")).toMatchObject({ type: "undefined" });
     });
 
     test("an element missing an optional key lists it empty after its own keys", () => {
@@ -114,7 +119,7 @@ describe("describeTemplateScope", () => {
         );
         const names = find(vars, "item.relatedItems")!.children!.map((v) => v.name);
         expect(names).toEqual(["key", "libraryID", "resolved", "title", "itemType", "citationKey", "notePath"]);
-        expect(find(vars, "item.relatedItems[0].title")).toMatchObject({ type: "null", value: "" });
+        expect(find(vars, "item.relatedItems[0].title")).toMatchObject({ type: "undefined", value: "" });
     });
 
     test("an array the context does not define stays without structure", () => {
@@ -124,7 +129,7 @@ describe("describeTemplateScope", () => {
 
     test("the structure stops at the same depth as values", () => {
         const vars = describeTemplateScope({ item: { attachments: [] } }, engine);
-        expect(find(vars, "item.attachments[0].annotations[0].tags")).toMatchObject({ type: "array" });
+        expect(find(vars, "item.attachments[0].annotations[0].tags")).toMatchObject({ type: "undefined" });
         expect(find(vars, "item.attachments[0].annotations[0].tags")!.children).toBeUndefined();
     });
 
