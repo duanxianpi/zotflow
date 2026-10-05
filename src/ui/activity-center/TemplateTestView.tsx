@@ -46,7 +46,8 @@ type RightTab = "output" | "variables";
 
 /** The last render: which template it was, so a later edit can tell it is stale. */
 interface LastRender {
-    context: TemplateContext;
+    /** What it was rendered against (`renderInputs`). */
+    inputs: string;
     template: string;
     result: TemplatePreviewResult;
 }
@@ -137,6 +138,17 @@ export const TemplateTestView: React.FC = () => {
     const [variables, setVariables] = useState<TemplateVariables | null>(null);
     const [variablesMessage, setVariablesMessage] = useState("");
 
+    // Everything a render depends on besides the template text: a change
+    // leaves the last output outdated, and a render in flight is dropped.
+    const renderInputs = JSON.stringify([
+        context,
+        needsLibraryItem(context) && selectedItem
+            ? [selectedItem.libraryID, selectedItem.key]
+            : null,
+        needsLibraryItem(context) ? null : (selectedFile?.path ?? null),
+        isCitationContext(context) ? [...selectedAnnotationIds].sort() : [],
+    ]);
+
     const result = lastRender?.result ?? null;
     const rendered = result?.ok ? result.output : "";
     const frontmatter = result?.ok ? result.frontmatter : undefined;
@@ -148,6 +160,14 @@ export const TemplateTestView: React.FC = () => {
     const outputContainerRef = useRef<HTMLDivElement>(null);
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const templateEditorRef = useRef<EmbeddableMarkdownEditor | null>(null);
+
+    // Each load and render is numbered; a result that is not the latest is
+    // dropped, so a slow one cannot land after the user moved on.
+    const loadSeq = useRef(0);
+    const renderSeq = useRef(0);
+    useEffect(() => {
+        renderSeq.current++;
+    }, [renderInputs]);
 
     // Stable ref for current template value (avoids stale closures)
     const templateRef = useRef(template);
@@ -248,11 +268,15 @@ export const TemplateTestView: React.FC = () => {
 
     const reloadSaved = useCallback(
         async (ctx: TemplateContext) => {
+            const seq = ++loadSeq.current;
+            renderSeq.current++;
             try {
                 const loaded = await loadSavedTemplate(ctx);
+                if (seq !== loadSeq.current) return;
                 setSaved(loaded);
                 loadIntoEditor(effectiveTemplate(loaded));
             } catch (e) {
+                if (seq !== loadSeq.current) return;
                 services.logService.error(
                     "Failed to load the saved template",
                     "TemplateTestView",
@@ -450,14 +474,17 @@ export const TemplateTestView: React.FC = () => {
     );
 
     const handleRender = useCallback(async () => {
+        const seq = ++renderSeq.current;
         setNotice("");
         setRightTab("output");
         setRendering(true);
         const text = currentTemplate();
         try {
             const result = await preview(text);
-            if (result) setLastRender({ context, template: text, result });
+            if (seq !== renderSeq.current) return;
+            if (result) setLastRender({ inputs: renderInputs, template: text, result });
         } catch (e) {
+            if (seq !== renderSeq.current) return;
             setLastRender(null);
             setNotice("Could not render the template. See the log for details.");
             services.logService.error(
@@ -468,10 +495,11 @@ export const TemplateTestView: React.FC = () => {
         } finally {
             setRendering(false);
         }
-    }, [context, preview, currentTemplate]);
+    }, [renderInputs, preview, currentTemplate]);
 
     const handleSave = useCallback(() => {
-        if (!saved) return;
+        // `saved` must be this context's: a template is saved to its own target.
+        if (!saved || saved.context !== context) return;
         const text = currentTemplate();
         new TemplateWriteBackModal(
             services.app,
@@ -501,17 +529,19 @@ export const TemplateTestView: React.FC = () => {
                 return true;
             },
         ).open();
-    }, [saved, currentTemplate]);
+    }, [saved, context, currentTemplate]);
 
     // The output belongs to the template as it was rendered; after an edit
     // it is stale, and saving needs a fresh successful render.
     const renderIsCurrent =
         lastRender !== null &&
-        lastRender.context === context &&
+        lastRender.inputs === renderInputs &&
         lastRender.template === template;
     const isSaved = saved !== null && matchesSaved(template, saved);
     let saveBlocker = "";
-    if (!saved) saveBlocker = "The saved template could not be loaded.";
+    if (!saved || saved.context !== context) {
+        saveBlocker = "The saved template could not be loaded.";
+    }
     else if (isSaved) saveBlocker = "This is the saved template.";
     else if (!renderIsCurrent || !lastRender.result.ok) {
         saveBlocker = "Render this template without errors first.";

@@ -1,6 +1,7 @@
 import { workerBridge } from "bridge";
 import { services } from "services/services";
 import { readTextFile, saveTextFile } from "utils/file";
+import { templateFilePath } from "utils/utils";
 import {
     citationFormat,
     isCitationContext,
@@ -45,7 +46,7 @@ export async function loadSavedTemplate(
     if (target.kind === "setting") {
         return { context, stored: value, filePath: "", builtIn };
     }
-    const filePath = value.trim();
+    const filePath = templateFilePath(value);
     let stored: string | null = null;
     if (filePath) {
         try {

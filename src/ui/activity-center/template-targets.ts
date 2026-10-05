@@ -3,6 +3,8 @@
  * a setting, or (source notes) a template file named by a setting. Pure, so
  * the write-back rules are testable without Obsidian.
  */
+import { templateFilePath } from "utils/utils";
+
 import type { ZotFlowSettings } from "settings/types";
 import type { CitationTemplateFormat } from "worker/services/library-template";
 
@@ -142,20 +144,38 @@ export interface SavedTemplate {
      * Null when nothing is: no template file set, or the file is missing.
      */
     stored: string | null;
-    /** The template file's path as set ("" when none). File targets only. */
+    /**
+     * The template file real renders read: the path setting with `.md` added
+     * when missing (`templateFilePath`), "" when none is set. File targets only.
+     */
     filePath: string;
     /** Used while nothing is stored ("" for the display title: the Zotero title). */
     builtIn: string;
 }
 
-/** The template in effect: what is stored, or the built-in one while nothing is. */
+/**
+ * The template in effect, as real renders take it: a setting is trimmed and
+ * empty means the built-in one; a template file is used as it is, unless it
+ * is missing or empty.
+ */
 export function effectiveTemplate(saved: SavedTemplate): string {
-    return saved.stored?.trim() ? saved.stored : saved.builtIn;
+    if (TEMPLATE_TARGETS[saved.context].kind === "setting") {
+        return saved.stored?.trim() || saved.builtIn;
+    }
+    return saved.stored || saved.builtIn;
 }
 
-/** Whether `text` is the template in effect (settings are trimmed before use). */
+/**
+ * Whether saving `text` would change nothing. A setting is compared trimmed;
+ * a template file exactly, since its whitespace reaches the note (leading
+ * blank lines keep the frontmatter from being recognized, an indent makes a
+ * code block).
+ */
 export function matchesSaved(text: string, saved: SavedTemplate): boolean {
-    return text.trim() === effectiveTemplate(saved).trim();
+    const effective = effectiveTemplate(saved);
+    return TEMPLATE_TARGETS[saved.context].kind === "setting"
+        ? text.trim() === effective.trim()
+        : text === effective;
 }
 
 export type WriteBackPlan =
@@ -194,7 +214,7 @@ export function planWriteBack(
             clearsToBuiltIn: clearsToBuiltIn && value !== "",
         };
     }
-    const path = saved.filePath || (chosenPath ?? target.defaultPath).trim();
+    const path = saved.filePath || templateFilePath(chosenPath ?? target.defaultPath);
     return {
         kind: "file",
         path,
@@ -215,7 +235,7 @@ export function writeBackWarnings(saved: SavedTemplate, text: string): string[] 
     return warnings;
 }
 
-/** Read a context's stored value from settings (file targets: the path). */
+/** Read a context's stored value from settings (file targets: the path as set). */
 export function settingValue(
     settings: ZotFlowSettings,
     target: TemplateTarget,

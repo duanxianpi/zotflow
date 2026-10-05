@@ -54,10 +54,24 @@ describe("effectiveTemplate / matchesSaved", () => {
         expect(effectiveTemplate(s)).toBe("BUILT-IN");
     });
 
-    test("a stored template is compared trimmed", () => {
+    test("a setting is compared trimmed, as it is trimmed before use", () => {
         const s = saved({ context: "library-path", stored: "P/{{key}}" });
         expect(matchesSaved("  P/{{key}}\n", s)).toBe(true);
         expect(matchesSaved("P/{{title}}", s)).toBe(false);
+    });
+
+    test("a template file is compared exactly: its whitespace reaches the note", () => {
+        const s = saved({ context: "library", stored: "---\na: 1\n---\ntext", filePath: "T.md" });
+        // An indent makes a code block; a blank line first hides the frontmatter.
+        expect(matchesSaved("---\na: 1\n---\n    text", s)).toBe(false);
+        expect(matchesSaved("\n---\na: 1\n---\ntext", s)).toBe(false);
+        expect(matchesSaved("---\na: 1\n---\ntext", s)).toBe(true);
+    });
+
+    test("an empty template file means the built-in template, as for real renders", () => {
+        expect(effectiveTemplate(saved({ context: "local", stored: "", filePath: "T.md" }))).toBe("BUILT-IN");
+        // Whitespace is not empty: the renderer uses it as it is.
+        expect(effectiveTemplate(saved({ context: "local", stored: " ", filePath: "T.md" }))).toBe(" ");
     });
 });
 
@@ -101,6 +115,12 @@ describe("planWriteBack", () => {
             content: "# x",
             setsPath: "localSourceNoteTemplatePath",
         });
+    });
+
+    test("a chosen path without .md gets it, like the path real renders read", () => {
+        expect(
+            planWriteBack(saved({ context: "library", stored: null }), "# x", "Templates/Mine"),
+        ).toMatchObject({ path: "Templates/Mine.md" });
     });
 
     test("without a chosen path the default file is suggested", () => {

@@ -5,6 +5,7 @@ import type { NotePathService } from "./note-path";
 import type { AnnotationJSON } from "types/zotero-reader";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { errorMessage, ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { templateFilePath } from "utils/utils";
 import {
     workerClearTimeout,
     workerSetTimeout,
@@ -42,12 +43,6 @@ export class LocalNoteService {
         this.settings = settings;
         this.templateService.updateSettings(settings);
         this.notePathService.updateSettings(settings);
-    }
-
-    private normalizeTemplatePath(path: string): string {
-        const trimmed = path.trim();
-        if (!trimmed) return trimmed;
-        return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
     }
 
     /**
@@ -419,7 +414,7 @@ export class LocalNoteService {
 
         // Render and Write
         const templateContent = await this.parentHost.readTextFile(
-            this.normalizeTemplatePath(
+            templateFilePath(
                 this.settings.localSourceNoteTemplatePath,
             ),
         );
@@ -478,7 +473,7 @@ export class LocalNoteService {
         }
 
         const templateContent = await this.parentHost.readTextFile(
-            this.normalizeTemplatePath(
+            templateFilePath(
                 this.settings.localSourceNoteTemplatePath,
             ),
         );

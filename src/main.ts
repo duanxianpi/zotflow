@@ -680,9 +680,13 @@ export default class ZotFlow extends Plugin {
         this.zotFlowSettingTab?.refreshFromSettings();
     }
 
-    /** Re-render the settings tab after a setting was changed elsewhere (e.g. the template tester). */
+    /**
+     * Re-render the settings tab after a setting was changed elsewhere (e.g.
+     * the template tester). Only re-renders: `refreshFromSettings()` would
+     * also reset the sections, dropping e.g. an API key being typed in.
+     */
     refreshSettingTab(): void {
-        this.zotFlowSettingTab?.refreshFromSettings();
+        this.zotFlowSettingTab?.update();
     }
 
     async saveSettings() {

@@ -63,3 +63,14 @@ export function getLocalSidecarPath(
     const result = `${folderPart}${dirPart}${basename}.zf.json`;
     return result.replace(/\/+/g, "/");
 }
+
+/**
+ * The vault path of a source-note template file as set in the settings:
+ * `.md` is added when missing, so `Templates/Source` reads
+ * `Templates/Source.md`. Empty when no template file is set.
+ */
+export function templateFilePath(path: string): string {
+    const trimmed = path.trim();
+    if (!trimmed) return trimmed;
+    return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
+}

@@ -10,6 +10,7 @@ import type { AttachmentService } from "./attachment";
 import type { DocumentWorkerService } from "./document-worker";
 import type { NotePathService } from "./note-path";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { templateFilePath } from "utils/utils";
 import {
     workerClearTimeout,
     workerSetTimeout,
@@ -67,12 +68,6 @@ export class LibraryNoteService {
         this.settings = newSettings;
         this.templateService.updateSettings(newSettings);
         this.notePathService.updateSettings(newSettings);
-    }
-
-    private normalizeTemplatePath(path: string): string {
-        const trimmed = path.trim();
-        if (!trimmed) return trimmed;
-        return /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
     }
 
     /**
@@ -535,7 +530,7 @@ export class LibraryNoteService {
 
         // Then write content
         const templateContent = await this.parentHost.readTextFile(
-            this.normalizeTemplatePath(
+            templateFilePath(
                 this.settings.librarySourceNoteTemplatePath,
             ),
         );
@@ -635,7 +630,7 @@ export class LibraryNoteService {
             }
 
             const templateContent = await this.parentHost.readTextFile(
-                this.normalizeTemplatePath(
+                templateFilePath(
                     this.settings.librarySourceNoteTemplatePath,
                 ),
             );
