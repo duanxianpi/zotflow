@@ -433,23 +433,9 @@ describe("preview results", () => {
     });
 });
 
-describe("local template from settings", () => {
-    test("the configured template file is used", async () => {
-        await setup({ localSourceNoteTemplatePath: "Templates/local.md" });
-        host.vault.set("Templates/local.md", "# custom local");
-
-        expect(await templates.getDefaultTemplate()).toBe("# custom local");
-    });
-
-    test("an unreadable path falls back to the built-in default", async () => {
-        await setup({ localSourceNoteTemplatePath: "Templates/gone.md" });
-        host.readTextFile = () => Promise.reject(new Error("ENOENT"));
-
-        expect(await templates.getDefaultTemplate()).toContain("zotflow");
-    });
-
-    test("no configured path means the built-in default", async () => {
-        expect(await templates.getDefaultTemplate()).toBeTruthy();
+describe("built-in template", () => {
+    test("getBuiltInTemplate is the default local template", async () => {
+        expect(templates.getBuiltInTemplate()).toContain("zotflow-local-attachment");
     });
 });
 

@@ -1305,25 +1305,7 @@ describe("CSL-JSON backfill", () => {
     });
 });
 
-describe("templates from settings", () => {
-    test("getDefaultTemplate reads the configured file", async () => {
-        await setup({ librarySourceNoteTemplatePath: "Templates/source.md" });
-        host.vault.set("Templates/source.md", "# custom template");
-
-        expect(await service.getDefaultTemplate()).toBe("# custom template");
-    });
-
-    test("an unreadable template path falls back to the built-in default", async () => {
-        await setup({ librarySourceNoteTemplatePath: "Templates/gone.md" });
-        host.readTextFile = () => Promise.reject(new Error("ENOENT"));
-
-        expect(await service.getDefaultTemplate()).toContain("citationKey:");
-    });
-
-    test("no configured path means the built-in default", async () => {
-        expect(await service.getDefaultTemplate()).toContain("citationKey:");
-    });
-
+describe("built-in templates", () => {
     test("the built-in default renders against a real item", async () => {
         const item = await seedArticle();
         const out = await service.renderLibrarySourceNote(item, null, {});
@@ -1331,6 +1313,16 @@ describe("templates from settings", () => {
         expect(out).toContain("# A Study of Things");
         expect(out).toContain("## Abstract");
         expect(out).toContain("zotero-key: PARENT01");
+    });
+
+    test("getBuiltInTemplate is the default source-note template", async () => {
+        expect(service.getBuiltInTemplate()).toContain("citationKey:");
+    });
+
+    test("getFallbackCitationTemplate is what an empty setting renders", async () => {
+        expect(service.getFallbackCitationTemplate("pandoc")).toBe(
+            service.getDefaultCitationTemplate("pandoc"),
+        );
     });
 });
 

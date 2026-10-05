@@ -95,17 +95,13 @@ describe("template selection", () => {
         );
     });
 
-    test("getDefaultPathTemplate reports what each mode is configured with", async () => {
-        h = await createServiceHarness({
-            settings: {
-                librarySourceNotePathTemplate: "Lib/{{key}}",
-                localSourceNotePathTemplate: "Local/{{basename}}",
-            },
-        });
-        expect(h.notePath.getDefaultPathTemplate("library")).toBe("Lib/{{key}}");
-        expect(h.notePath.getDefaultPathTemplate("local")).toBe(
-            "Local/{{basename}}",
-        );
+    test("getBuiltInPathTemplate is what an empty setting renders", async () => {
+        await item({ title: "A Study" });
+        const stored = (await db.items.get([USER_ID, "ARTICLE1"]))!;
+        expect(
+            await h.notePath.resolveLibraryNotePath(stored, h.notePath.getBuiltInPathTemplate("library")),
+        ).toBe(await h.notePath.resolveLibraryNotePath(stored));
+        expect(h.notePath.getBuiltInPathTemplate("local")).toBe("Source/Local/@{{basename}}");
     });
 });
 

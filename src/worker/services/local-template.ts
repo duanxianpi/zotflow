@@ -326,17 +326,8 @@ export class LocalTemplateService {
         }
     }
 
-    /** Return the user-configured template file content, or the built-in default. */
-    async getDefaultTemplate(): Promise<string> {
-        const path = this.settings.localSourceNoteTemplatePath;
-        if (path) {
-            try {
-                const content = await this.parentHost.readTextFile(path);
-                if (content != null) return content;
-            } catch {
-                // Fall through to default
-            }
-        }
+    /** The built-in local source-note template, used while no template file is set. */
+    getBuiltInTemplate(): string {
         return DEFAULT_LOCAL_NOTE_TEMPLATE;
     }
 }

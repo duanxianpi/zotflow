@@ -2477,9 +2477,128 @@
     background: rgba(var(--color-red-rgb), 0.05);
 }
 
+.zotflow-template-test-error-head {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+}
+
+.zotflow-template-test-error-position {
+    font-size: var(--font-ui-smaller);
+    padding: 0 var(--size-4-2);
+    height: auto;
+    color: var(--text-error);
+    text-decoration: underline;
+    background: none;
+    box-shadow: none;
+}
+
+.zotflow-template-test-error-message {
+    margin-top: var(--size-2-2);
+    font-family: var(--font-monospace);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.zotflow-template-test-error-detail {
+    margin-top: var(--size-2-2);
+    color: var(--text-muted);
+}
+
+.zotflow-template-test-error-detail pre {
+    margin: var(--size-2-2) 0 0;
+    max-height: 160px;
+    overflow: auto;
+    white-space: pre-wrap;
+}
+
+.zotflow-template-test-stale {
+    color: var(--text-warning);
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: var(--font-normal);
+}
+
+.zotflow-template-test-hints {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--size-2-1);
+    flex-shrink: 0;
+}
+
+.zotflow-template-test-hints li {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--size-2-3);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.zotflow-template-test-hints li svg {
+    width: var(--icon-xs);
+    height: var(--icon-xs);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.zotflow-template-test-properties {
+    width: 100%;
+    margin-bottom: var(--size-4-3);
+    border-collapse: collapse;
+    font-size: var(--font-ui-small);
+}
+
+.zotflow-template-test-properties th,
+.zotflow-template-test-properties td {
+    padding: var(--size-2-1) var(--size-4-2);
+    border-bottom: 1px solid var(--background-modifier-border);
+    text-align: left;
+    vertical-align: top;
+    word-break: break-word;
+}
+
+.zotflow-template-test-properties th {
+    width: 30%;
+    color: var(--text-muted);
+    font-weight: var(--font-normal);
+}
+
 .zotflow-template-test-actions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: var(--size-4-2);
+    flex-wrap: wrap;
+}
+
+.zotflow-template-test-status {
+    flex: 1;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.zotflow-template-save-plan p {
+    margin: var(--size-2-2) 0;
+}
+
+.zotflow-template-save-path {
+    width: 100%;
+}
+
+.zotflow-template-save-warning {
+    margin: var(--size-2-2) 0;
+    font-size: var(--font-ui-small);
+    color: var(--text-warning);
+}
+
+.zotflow-template-save-current pre {
+    max-height: 200px;
+    overflow: auto;
+    font-size: var(--font-ui-smaller);
+    white-space: pre-wrap;
 }
 
 /* ============================================================

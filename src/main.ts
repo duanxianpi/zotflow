@@ -680,6 +680,11 @@ export default class ZotFlow extends Plugin {
         this.zotFlowSettingTab?.refreshFromSettings();
     }
 
+    /** Re-render the settings tab after a setting was changed elsewhere (e.g. the template tester). */
+    refreshSettingTab(): void {
+        this.zotFlowSettingTab?.refreshFromSettings();
+    }
+
     async saveSettings() {
         // Store sensitive credentials in SecretStorage (cross-platform safe)
         saveCredentials(this.settings, this.app.secretStorage);

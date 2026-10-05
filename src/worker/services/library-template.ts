@@ -745,17 +745,8 @@ export class LibraryTemplateService {
         return item;
     }
 
-    /** Return the user-configured template file content, or the built-in default. */
-    async getDefaultTemplate(): Promise<string> {
-        const path = this.settings.librarySourceNoteTemplatePath;
-        if (path) {
-            try {
-                const content = await this.parentHost.readTextFile(path);
-                if (content != null) return content;
-            } catch {
-                // Fall through to default
-            }
-        }
+    /** The built-in source-note template, used while no template file is set. */
+    getBuiltInTemplate(): string {
         return DEFAULT_ITEM_TEMPLATE;
     }
 

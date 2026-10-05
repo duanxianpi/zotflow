@@ -333,10 +333,8 @@ export class NotePathService {
         });
     }
 
-    /** Return the current path template string from settings. */
-    getDefaultPathTemplate(mode: "library" | "local"): string {
-        return mode === "library"
-            ? this.settings.librarySourceNotePathTemplate
-            : this.settings.localSourceNotePathTemplate;
+    /** The built-in path template for `mode`, used while its setting is empty. */
+    getBuiltInPathTemplate(mode: "library" | "local"): string {
+        return mode === "library" ? FALLBACK_ZOTERO_TEMPLATE : FALLBACK_LOCAL_TEMPLATE;
     }
 }
