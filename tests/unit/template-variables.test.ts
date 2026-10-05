@@ -47,7 +47,10 @@ describe("describeTemplateScope", () => {
         expect(find(vars, "item.creators")).toMatchObject({ type: "array", count: 2 });
         expect(find(vars, "item.creators[0].name")).toMatchObject({ value: "Burger" });
         expect(find(vars, "item.tags")).toMatchObject({ count: 0 });
-        expect(find(vars, "item.tags")!.children).toBeUndefined();
+        expect(find(vars, "item.tags")!.children!.map((v) => v.path)).toEqual([
+            "item.tags[0].tag",
+            "item.tags[0].type",
+        ]);
     });
 
     test("null values are listed empty", () => {
@@ -83,6 +86,46 @@ describe("describeTemplateScope", () => {
         const vars = describeTemplateScope({ a: { b: { c: { d: { e: 1 } } } } }, engine);
         expect(find(vars, "a.b.c.d")).toMatchObject({ type: "object" });
         expect(find(vars, "a.b.c.d")!.children).toBeUndefined();
+    });
+
+    test("an empty array shows its element structure, empty", () => {
+        const vars = describeTemplateScope({ item: { attachments: [], itemPaths: [] } }, engine);
+        expect(find(vars, "item.attachments")).toMatchObject({ type: "array", count: 0 });
+        expect(find(vars, "item.attachments[0].filename")).toEqual({
+            path: "item.attachments[0].filename",
+            name: "filename",
+            type: "null",
+            value: "",
+        });
+        expect(find(vars, "item.attachments[0].annotations[0].pageLabel")).toMatchObject({ type: "null" });
+        expect(find(vars, "item.itemPaths[0]")).toMatchObject({ type: "null" });
+    });
+
+    test("a citation's annotations show their structure with none picked", () => {
+        const vars = describeTemplateScope({ annotations: [] }, engine);
+        expect(find(vars, "annotations[0].text")).toBeDefined();
+        expect(find(vars, "annotations[0].raw")).toMatchObject({ type: "object" });
+    });
+
+    test("an element missing an optional key lists it empty after its own keys", () => {
+        const vars = describeTemplateScope(
+            { item: { relatedItems: [{ key: "K", libraryID: 1, resolved: false }] } },
+            engine,
+        );
+        const names = find(vars, "item.relatedItems")!.children!.map((v) => v.name);
+        expect(names).toEqual(["key", "libraryID", "resolved", "title", "itemType", "citationKey", "notePath"]);
+        expect(find(vars, "item.relatedItems[0].title")).toMatchObject({ type: "null", value: "" });
+    });
+
+    test("an array the context does not define stays without structure", () => {
+        const vars = describeTemplateScope({ settings: { librariesConfig: [] } }, engine);
+        expect(find(vars, "settings.librariesConfig")!.children).toBeUndefined();
+    });
+
+    test("the structure stops at the same depth as values", () => {
+        const vars = describeTemplateScope({ item: { attachments: [] } }, engine);
+        expect(find(vars, "item.attachments[0].annotations[0].tags")).toMatchObject({ type: "array" });
+        expect(find(vars, "item.attachments[0].annotations[0].tags")!.children).toBeUndefined();
     });
 
     test("ZotFlow's filters are listed without Liquid's built-ins", () => {

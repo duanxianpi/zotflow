@@ -10,7 +10,7 @@ export interface TemplateUtils {
 /**
  * Every Zotero item field, keyed by schema name and resolved like Zotero's
  * `getField()` — a book section has both `bookTitle` and `publicationTitle`.
- * Absent when the item has no value.
+ * `undefined` when the item has no value.
  */
 export type ZoteroFieldValues = Partial<Record<ZoteroFieldName, string>>;
 

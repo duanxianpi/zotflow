@@ -4,7 +4,17 @@
  */
 import { describe, test, expect } from "vitest";
 
-import { getCreators, getField, getFieldValues } from "utils/zotero-fields";
+import { Liquid } from "liquidjs";
+
+import {
+    buildItemMetadata,
+    getCreators,
+    getField,
+    getFieldValues,
+} from "utils/zotero-fields";
+import { ZOTERO_FIELDS } from "types/zotero-base-fields";
+
+import type { AnyIDBZoteroItem } from "types/db-schema";
 
 describe("getField", () => {
     test.each([
@@ -126,5 +136,74 @@ describe("getCreators", () => {
 
     test("an item without creators yields an empty list", () => {
         expect(getCreators({ itemType: "note" })).toEqual([]);
+    });
+});
+
+describe("buildItemMetadata", () => {
+    const item = {
+        libraryID: 1,
+        key: "ARTICLE1",
+        itemType: "journalArticle",
+        title: "A Study",
+        raw: {
+            data: {
+                itemType: "journalArticle",
+                title: "A Study",
+                DOI: "10.1/x",
+                creators: [],
+            },
+        },
+    } as unknown as AnyIDBZoteroItem;
+
+    test("every schema field is a key, undefined when the item has no value", () => {
+        const meta = buildItemMetadata(item) as unknown as Record<string, unknown>;
+        for (const name of ZOTERO_FIELDS) expect(name in meta).toBe(true);
+        expect(meta.DOI).toBe("10.1/x");
+        expect(meta.ISBN).toBeUndefined();
+        expect(meta.caseName).toBeUndefined();
+    });
+
+    test("fields with a value come first", () => {
+        const keys = Object.keys(buildItemMetadata(item));
+        expect(keys.indexOf("DOI")).toBeLessThan(keys.indexOf("ISBN"));
+        expect(keys.indexOf("title")).toBeLessThan(keys.indexOf("abstractNote"));
+    });
+
+    test("the fields ZotFlow always sets keep their values", () => {
+        expect(buildItemMetadata(item)).toMatchObject({
+            title: "A Study",
+            citationKey: "",
+            date: null,
+            accessDate: null,
+            year: "",
+            creators: [],
+            creatorSummary: "",
+        });
+    });
+
+    test("an undefined field renders exactly like a missing one", () => {
+        const engine = new Liquid({ greedy: false });
+        const withKeys = buildItemMetadata(item);
+        const without = Object.fromEntries(
+            Object.entries(withKeys).filter(([, v]) => v !== undefined),
+        );
+        const probes = [
+            "{% if item.ISBN %}T{% else %}F{% endif %}",
+            '{% if item.ISBN != "" %}T{% else %}F{% endif %}',
+            "{% if item.ISBN == nil %}T{% else %}F{% endif %}",
+            "{% if item.ISBN == blank %}T{% else %}F{% endif %}",
+            "{% if item.ISBN == empty %}T{% else %}F{% endif %}",
+            '{{ item.ISBN | default: "D" }}',
+            "[{{ item.ISBN }}]",
+            "[{{ item.ISBN | json }}]",
+            "{{ item | json }}",
+            "{{ item.ISBN | size }}",
+            "{% unless item.ISBN %}U{% endunless %}",
+        ];
+        for (const probe of probes) {
+            expect(engine.parseAndRenderSync(probe, { item: withKeys }), probe).toBe(
+                engine.parseAndRenderSync(probe, { item: without }),
+            );
+        }
     });
 });

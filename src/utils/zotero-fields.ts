@@ -66,13 +66,22 @@ export function getCreators<T extends ZoteroFieldSource>(
 /**
  * The bibliographic part of a template context, shared by source-note and
  * note-path templates so both expose the same variables.
+ *
+ * Every schema field is a key, `undefined` when the item has no value (after
+ * the fields that have one): templates see no difference from a missing key
+ * (`{% if %}` is false, `| json` prints nothing, `{{ item | json }}` leaves
+ * it out), and the template tester can list every field.
  */
 export function buildItemMetadata(item: AnyIDBZoteroItem): ItemMetadataContext {
     const raw = item.raw;
     const data = { ...(raw?.data ?? {}), itemType: item.itemType };
     const values = getFieldValues(data);
+    const fields: ZoteroFieldValues = { ...values };
+    for (const name of ZOTERO_FIELDS) {
+        if (!(name in fields)) fields[name] = undefined;
+    }
     return {
-        ...values,
+        ...fields,
         // The stored title, which is what the tree view and search show.
         title: item.title || "",
         // Also covers keys parsed out of `extra` (e.g. Better BibTeX).
