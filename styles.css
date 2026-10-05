@@ -64,26 +64,36 @@
 .zotflow-paths {
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 4px;
     flex-shrink: 0;
+    /* On a narrow (phone) screen the pills wrap and end in "…" rather than
+       running off the edge; the author and year keep the rest of the row. */
+    max-width: 60%;
     align-items: center;
 }
 
 /* Individual path pill */
 .zotflow-path-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
+    /* Inline-block, not flex, so a path too long for the row ends in "…". */
+    display: inline-block;
     font-size: var(--font-ui-smaller);
     padding: var(--size-2-1) var(--size-4-1);
     border-radius: var(--radius-s);
     white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     background-color: var(--tag-background);
     border: var(--tag-border-width) solid var(--tag-border-color);
     color: var(--tag-color);
 }
 
 /* The "/" separator inside a pill */
+.zotflow-path-pill .path-sep {
+    margin: 0 2px;
+}
+
 /* .zotflow-path-pill .path-sep {
     opacity: 0.4;
     font-size: 0.85em;
@@ -2568,6 +2578,9 @@
     width: 30%;
     color: var(--text-muted);
     font-weight: var(--font-normal);
+    /* A key breaks at its hyphens, never mid-word (narrow screens). */
+    word-break: normal;
+    overflow-wrap: normal;
 }
 
 .zotflow-template-test-tabs {
@@ -3002,14 +3015,27 @@ button.zotflow-conflict-back:hover {
         min-height: 25%;
     }
 
-    /* Template: stack the editor and output panels vertically */
+    /*
+     * Template: stack the editor and output panels vertically. Two panels do
+     * not fit one phone screen, so the tab scrolls as a whole and each panel
+     * gets a height of its own; left to flex, CodeMirror grows to its full
+     * content and runs under the actions.
+     */
+    .zotflow-template-test {
+        height: auto;
+        flex-shrink: 0;
+    }
+
     .zotflow-template-test-panels {
         flex-direction: column;
+        flex: none;
     }
 
     .zotflow-template-test-editor,
     .zotflow-template-test-output {
-        min-height: 140px;
+        flex: none;
+        height: max(240px, 55vh);
+        min-height: 0;
     }
 
     .zotflow-template-test-env {
@@ -3038,6 +3064,22 @@ button.zotflow-conflict-back:hover {
     .zotflow-telemetry-filter {
         width: auto;
         flex: 1 1 120px;
+    }
+}
+
+/*
+ * Template actions stay in view while the tab scrolls, unless the screen is
+ * short (a phone in landscape, or the soft keyboard open): then they would
+ * cover most of the editor being typed in.
+ */
+@media (max-width: 600px) and (min-height: 601px) {
+    .zotflow-template-test-actions {
+        position: sticky;
+        bottom: calc(-1 * var(--size-4-3));
+        z-index: 2;
+        padding: var(--size-4-2) 0 var(--size-4-3);
+        background-color: var(--modal-background, var(--background-primary));
+        border-top: 1px solid var(--background-modifier-border);
     }
 }
 
