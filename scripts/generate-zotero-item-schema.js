@@ -70,8 +70,6 @@ interface BaseZoteroItemData {
     // Every field name any item type uses, plus base names (e.g. `authority`)
     // that only exist as a mapping target.
     const allFields = new Set();
-    // itemType → its fields, in schema order (type-specific names, not base names)
-    const itemTypeFields = {};
 
     // Iterate over schema.itemTypes
     for (const typeDef of schema.itemTypes) {
@@ -83,7 +81,6 @@ interface BaseZoteroItemData {
         console.log(`Generating ${interfaceName}...`);
 
         let fieldsStr = "";
-        itemTypeFields[itemType] = typeDef.fields.map((f) => f.field);
 
         // Process unique fields for this type
         for (const fieldObj of typeDef.fields) {
@@ -190,12 +187,6 @@ export const BASE_FIELD_MAP: Readonly<
 export const ZOTERO_FIELDS = ${JSON.stringify([...allFields].sort())} as const;
 
 export type ZoteroFieldName = (typeof ZOTERO_FIELDS)[number];
-
-/**
- * Each item type's own fields, in Zotero's order: type-specific names
- * (a case has \`caseName\`, not \`title\`).
- */
-export const ITEM_TYPE_FIELDS: Readonly<Record<string, readonly string[]>> = ${JSON.stringify(itemTypeFields)};
 `,
             prettierOptions,
         ),

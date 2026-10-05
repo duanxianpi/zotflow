@@ -767,11 +767,10 @@ export class LibraryTemplateService {
         key: string,
     ): Promise<TemplateVariables> {
         const item = await this.getPreviewItem(libraryID, key);
-        return describeTemplateScope({
-            scope: { ...(await this.prepareItemContext(item)) },
-            engine: this.engine,
-            item: { type: item.itemType, under: "item" },
-        });
+        return describeTemplateScope(
+            { ...(await this.prepareItemContext(item)) },
+            this.engine,
+        );
     }
 
     /** The variables a citation template sees, for the template tester. */
@@ -779,11 +778,7 @@ export class LibraryTemplateService {
         input: CitationTemplateInput,
     ): Promise<TemplateVariables> {
         const context = await this.citationPreviewContext(input);
-        return describeTemplateScope({
-            scope: { ...context },
-            engine: this.engine,
-            item: { type: context.item.itemType, under: "item" },
-        });
+        return describeTemplateScope({ ...context }, this.engine);
     }
 
     private async getPreviewItem(

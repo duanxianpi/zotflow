@@ -2612,25 +2612,6 @@
     width: 100%;
 }
 
-.zotflow-template-vars-group > summary {
-    cursor: pointer;
-    font-weight: var(--font-semibold);
-    color: var(--text-muted);
-    padding: var(--size-2-1) 0;
-}
-
-.zotflow-template-vars-count {
-    margin-left: var(--size-2-3);
-    font-weight: var(--font-normal);
-    color: var(--text-faint);
-}
-
-.zotflow-template-vars-note {
-    color: var(--text-faint);
-    font-size: var(--font-ui-smaller);
-    margin: 0 0 var(--size-2-2);
-}
-
 .zotflow-template-vars-row {
     display: flex;
     align-items: baseline;
@@ -2656,15 +2637,6 @@
     text-decoration: underline;
 }
 
-.zotflow-template-vars-badge {
-    flex-shrink: 0;
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-    background: var(--background-modifier-hover);
-    border-radius: var(--radius-s);
-    padding: 0 var(--size-2-2);
-}
-
 .zotflow-template-vars-value {
     min-width: 0;
     overflow: hidden;
@@ -2680,7 +2652,7 @@
 
 .zotflow-template-vars-nested > summary {
     cursor: pointer;
-    list-style-position: outside;
+    list-style-position: inside;
 }
 
 .zotflow-template-vars-nested > summary > .zotflow-template-vars-row {

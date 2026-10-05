@@ -311,19 +311,18 @@ export class NotePathService {
                 `Item not found: ${libraryID}/${key}`,
             );
         }
-        return describeTemplateScope({
-            scope: sanitizeContext(await this.libraryPathContext(item)),
-            engine: this.engine,
-            item: { type: item.itemType },
-        });
+        return describeTemplateScope(
+            libraryScope(sanitizeContext(await this.libraryPathContext(item))),
+            this.engine,
+        );
     }
 
     /** The variables a local path template sees for this file (as sanitized), for the template tester. */
     describeLocalNotePath(file: TFileWithoutParentAndVault): TemplateVariables {
-        return describeTemplateScope({
-            scope: sanitizeContext(localPathContext(file)),
-            engine: this.engine,
-        });
+        return describeTemplateScope(
+            sanitizeContext(localPathContext(file)),
+            this.engine,
+        );
     }
 
     private previewPath(

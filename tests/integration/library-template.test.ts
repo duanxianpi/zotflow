@@ -1494,16 +1494,11 @@ describe("preview results", () => {
 describe("variable list", () => {
     beforeEach(() => seedArticle());
 
-    test("a source note lists the item's fields, ZotFlow's variables and filters", async () => {
+    test("a source note lists item and settings, and ZotFlow's filters", async () => {
         const vars = await service.describeLibrarySourceNote(LIB, "PARENT01");
-        expect(vars.groups.map((g) => g.label)).toEqual([
-            "Zotero fields · Journal Article",
-            "ZotFlow variables",
-            "Fields Journal Article does not have",
-            "Other variables",
-        ]);
-        const fields = vars.groups[0]!.variables;
-        expect(fields.find((v) => v.name === "publicationTitle")).toMatchObject({
+        expect(vars.variables.map((v) => v.name)).toEqual(["item", "settings"]);
+        const item = vars.variables[0]!.children!;
+        expect(item.find((v) => v.name === "publicationTitle")).toMatchObject({
             path: "item.publicationTitle",
             value: "Journal of Testing",
         });
@@ -1520,8 +1515,7 @@ describe("variable list", () => {
             item: { libraryID: LIB, key: "PARENT01" },
             annotations: [{ id: "ANNOTAT1", libraryID: LIB, type: "highlight", pageLabel: "9" }],
         } as any);
-        const other = vars.groups.at(-1)!.variables.map((v) => v.name);
-        expect(other).toEqual(["notePath", "annotations"]);
+        expect(vars.variables.map((v) => v.name)).toEqual(["item", "notePath", "annotations"]);
     });
 });
 

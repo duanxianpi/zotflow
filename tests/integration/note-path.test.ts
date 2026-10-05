@@ -517,17 +517,17 @@ describe("preview results", () => {
 });
 
 describe("variable list", () => {
-    test("item variables sit at the root, as sanitized", async () => {
+    test("item variables sit at the root and under item, as sanitized", async () => {
         await item({ title: "Yes/No" });
         const vars = await h.notePath.describeLibraryNotePath(USER_ID, "ARTICLE1");
-        const title = vars.groups[0]!.variables.find((v) => v.name === "title");
-        expect(title).toMatchObject({ path: "title", value: "YesNo" });
-        expect(vars.groups[0]!.note).toMatch(/item\. prefix/);
+        expect(vars.variables.find((v) => v.name === "title")).toMatchObject({ path: "title", value: "YesNo" });
+        const under = vars.variables.find((v) => v.name === "item")!;
+        expect(under.children!.find((v) => v.name === "title")).toMatchObject({ path: "item.title", value: "YesNo" });
     });
 
     test("a local path lists the file's variables", () => {
         const vars = h.notePath.describeLocalNotePath(localFile());
-        expect(vars.groups[0]!.variables.map((v) => v.name)).toEqual(
+        expect(vars.variables.map((v) => v.name)).toEqual(
             expect.arrayContaining(["basename", "directory", "extension"]),
         );
     });

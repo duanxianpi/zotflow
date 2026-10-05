@@ -9,6 +9,8 @@ interface Props {
     variables: TemplateVariables | null;
     /** Shown instead of the list: nothing picked yet, loading, or a failure. */
     message: string;
+    /** Show `item`'s variables unfolded (not where they are at the root already). */
+    openItem: boolean;
     onInsert: (path: string) => void;
 }
 
@@ -17,12 +19,6 @@ function matches(v: TemplateVariable, query: string): boolean {
     if (v.path.toLowerCase().includes(query)) return true;
     if (v.value.toLowerCase().includes(query)) return true;
     return v.children?.some((c) => matches(c, query)) ?? false;
-}
-
-function badge(v: TemplateVariable): string | null {
-    if (v.kind === "type-specific") return "type field";
-    if (v.kind === "base-mapped" && v.mappedFrom) return `← ${v.mappedFrom}`;
-    return null;
 }
 
 function summary(v: TemplateVariable): string {
@@ -34,9 +30,9 @@ function summary(v: TemplateVariable): string {
 const VariableRow: React.FC<{
     v: TemplateVariable;
     query: string;
+    open: boolean;
     onInsert: (path: string) => void;
-}> = ({ v, query, onInsert }) => {
-    const label = badge(v);
+}> = ({ v, query, open, onInsert }) => {
     const head = (
         <div className="zotflow-template-vars-row">
             <button
@@ -49,7 +45,6 @@ const VariableRow: React.FC<{
             >
                 {v.name}
             </button>
-            {label && <span className="zotflow-template-vars-badge">{label}</span>}
             <span
                 className={`zotflow-template-vars-value ${v.type === "null" || v.value === "" ? "is-empty" : ""}`}
                 title={v.type === "string" ? v.value : undefined}
@@ -61,34 +56,29 @@ const VariableRow: React.FC<{
     const children = v.children?.filter((c) => !query || matches(c, query));
     if (!children?.length) return head;
     return (
-        <details className="zotflow-template-vars-nested" open={query !== ""}>
+        <details className="zotflow-template-vars-nested" open={open || query !== ""}>
             <summary>{head}</summary>
             <div className="zotflow-template-vars-children">
                 {children.map((c) => (
-                    <VariableRow key={c.path} v={c} query={query} onInsert={onInsert} />
+                    <VariableRow key={c.path} v={c} query={query} open={false} onInsert={onInsert} />
                 ))}
             </div>
         </details>
     );
 };
 
-/** The variables a template can use for the picked item or file; click one to insert it. */
+/** The variables a template sees for the picked item or file; click one to insert it. */
 export const TemplateVariablesPanel: React.FC<Props> = ({
     variables,
     message,
+    openItem,
     onInsert,
 }) => {
     const [query, setQuery] = useState("");
     const q = query.trim().toLowerCase();
 
-    const groups = useMemo(
-        () =>
-            (variables?.groups ?? [])
-                .map((g) => ({
-                    ...g,
-                    variables: q ? g.variables.filter((v) => matches(v, q)) : g.variables,
-                }))
-                .filter((g) => g.variables.length > 0),
+    const shown = useMemo(
+        () => (variables?.variables ?? []).filter((v) => !q || matches(v, q)),
         [variables, q],
     );
 
@@ -105,24 +95,17 @@ export const TemplateVariablesPanel: React.FC<Props> = ({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
             />
-            {groups.map((g) => (
-                <details
-                    key={g.label}
-                    className="zotflow-template-vars-group"
-                    open={q !== "" || !g.collapsed}
-                >
-                    <summary>
-                        {g.label}
-                        <span className="zotflow-template-vars-count">
-                            {g.variables.length}
-                        </span>
-                    </summary>
-                    {g.note && <div className="zotflow-template-vars-note">{g.note}</div>}
-                    {g.variables.map((v) => (
-                        <VariableRow key={v.path} v={v} query={q} onInsert={onInsert} />
-                    ))}
-                </details>
-            ))}
+            <div>
+                {shown.map((v) => (
+                    <VariableRow
+                        key={v.path}
+                        v={v}
+                        query={q}
+                        open={openItem && v.path === "item"}
+                        onInsert={onInsert}
+                    />
+                ))}
+            </div>
             {variables.filters.length > 0 && (
                 <div className="zotflow-template-vars-filters">
                     <span>ZotFlow filters:</span>{" "}

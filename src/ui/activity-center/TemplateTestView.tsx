@@ -674,6 +674,8 @@ export const TemplateTestView: React.FC = () => {
                             <TemplateVariablesPanel
                                 variables={variables}
                                 message={variablesMessage}
+                                // A path template has the item's variables at the root too.
+                                openItem={context !== "library-path"}
                                 onInsert={(path) => {
                                     if (templateEditorRef.current) {
                                         insertVariable(templateEditorRef.current, path);

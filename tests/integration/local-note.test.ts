@@ -449,7 +449,7 @@ describe("variable list", () => {
             JSON.stringify({ annotations: [annotation({ id: "FROMSIDE" })] }),
         );
         const vars = await templates.describeLocalNote(pdf());
-        const item = vars.groups[0]!.variables.find((v) => v.name === "item")!;
+        const item = vars.variables.find((v) => v.name === "item")!;
         const annotations = item.children!.find((v) => v.name === "annotations");
         expect(annotations).toMatchObject({ count: 1 });
     });

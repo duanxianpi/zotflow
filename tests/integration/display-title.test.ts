@@ -420,7 +420,7 @@ describe("variable list", () => {
     test("lists the item's variables, with no ZotFlow filters", async () => {
         await article();
         const vars = await service("").describe(USER_ID, "ARTICLE1");
-        expect(vars.groups[0]!.variables.find((v) => v.name === "title")).toMatchObject({
+        expect(vars.variables[0]!.children!.find((v) => v.name === "title")).toMatchObject({
             path: "item.title",
             value: "Attention Is All You Need",
         });

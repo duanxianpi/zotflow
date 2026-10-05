@@ -304,7 +304,7 @@ src/
 │   ├── zotero-api-client.d.ts      # zotero-api-client ambient types
 │   ├── zotero-item.d.ts            # Auto-generated Zotero item types (from schema.json)
 │   ├── zotero-item-const.ts        # Zotero item type string array
-│   ├── zotero-base-fields.ts       # Auto-generated base-field map (e.g. case.title → caseName), each type's fields
+│   ├── zotero-base-fields.ts       # Auto-generated base-field map (e.g. case.title → caseName)
 │   ├── template-preview.ts         # Template tester results: preview (output/error/hints) and variable list
 │   ├── zotero.d.ts                 # ZoteroKey, ZoteroGroup, etc.
 │   ├── zotero-reader.d.ts          # Reader event types, AnnotationJSON

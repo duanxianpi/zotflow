@@ -224,11 +224,7 @@ export class DisplayTitleService {
                 `Item not found: ${libraryID}/${key}`,
             );
         }
-        return describeTemplateScope({
-            scope: displayTitleScope(item),
-            engine: this.engine,
-            item: { type: item.itemType, under: "item" },
-        });
+        return describeTemplateScope(displayTitleScope(item), this.engine);
     }
 
     /**

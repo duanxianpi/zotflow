@@ -317,10 +317,10 @@ export class LocalTemplateService {
         file: TFileWithoutParentAndVault,
     ): Promise<TemplateVariables> {
         const annotations = await this.loadSidecarAnnotations(file);
-        return describeTemplateScope({
-            scope: { ...(await this.prepareLocalAttachmentContext(file, annotations)) },
-            engine: this.engine,
-        });
+        return describeTemplateScope(
+            { ...(await this.prepareLocalAttachmentContext(file, annotations)) },
+            this.engine,
+        );
     }
 
     /** Load annotations from the co-located `.zf.json` sidecar file, if it exists. */
