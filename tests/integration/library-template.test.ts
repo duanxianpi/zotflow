@@ -1347,6 +1347,38 @@ describe("preview results", () => {
 
     beforeEach(() => seedArticle());
 
+    test("an unknown filter is an error in a preview, not in a real render", async () => {
+        expect(await preview("---\na: 1\n---\n\n{{ item.title | titel }}")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", message: expect.stringMatching(/titel/), line: 5 },
+        });
+        const item = (await db.items.get([LIB, "PARENT01"]))!;
+        expect(await service.renderLibrarySourceNote(item, "{{ item.title | titel }}")).toContain(
+            "A Study of Things",
+        );
+    });
+
+    test("an unknown filter in the frontmatter is an error too", async () => {
+        expect(await preview("---\na: {{ item.title | titel }}\n---\nbody")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 2 },
+        });
+    });
+
+    test("ZotFlow's own filters are known in a preview", async () => {
+        expect(await preview("{{ item | item_link }} {{ item.abstractNote | html2md }}")).toMatchObject({ ok: true });
+    });
+
+    test("an unknown filter in a citation preview is an error", async () => {
+        expect(
+            await service.previewCitationTemplate(
+                { item: { libraryID: LIB, key: "PARENT01" } } as any,
+                "{{ item.title | titel }}",
+                "pandoc",
+            ),
+        ).toMatchObject({ ok: false, error: { phase: "parse" } });
+    });
+
     test("an error in the body is positioned in the whole template", async () => {
         const template = "---\ntitle: x\n---\n# Title\n{{ item.title";
         expect(await preview(template)).toMatchObject({

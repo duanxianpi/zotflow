@@ -14,6 +14,7 @@ import {
     renderLiquid,
     renderTemplateFrontmatter,
     splitFrontmatter,
+    strictFilterEngine,
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
@@ -71,8 +72,19 @@ interface LocalRenderContext {
     __zfReadOnlyKeys: Set<string>;
 }
 
+/** Options of the local source-note engine. */
+const ENGINE_OPTIONS = {
+    extname: ".md",
+    greedy: false,
+    globals: {
+        newline: "\n",
+    },
+};
+
 export class LocalTemplateService {
     private engine: Liquid;
+    /** The engine for previews: unknown filters are errors there (`strictFilterEngine`). */
+    private previewEngine: Liquid;
 
     constructor(
         private settings: ZotFlowSettings,
@@ -82,13 +94,7 @@ export class LocalTemplateService {
     }
 
     initialize() {
-        this.engine = new Liquid({
-            extname: ".md",
-            greedy: false,
-            globals: {
-                newline: "\n",
-            },
-        });
+        this.engine = new Liquid(ENGINE_OPTIONS);
 
         this.engine.registerFilter("process_nav_info", (input: string) => {
             const navInfo = {
@@ -125,6 +131,7 @@ export class LocalTemplateService {
                 return `<!-- ZF_${type}_BEG_${key} -->\n${input}\n<!-- ZF_${type}_END_${key} -->`;
             },
         );
+        this.previewEngine = strictFilterEngine(this.engine, ENGINE_OPTIONS);
     }
 
     updateSettings(newSettings: ZotFlowSettings) {
@@ -183,7 +190,7 @@ export class LocalTemplateService {
         const { frontmatter, body, bodyLine } = splitFrontmatter(template);
 
         const templateFrontmatter = await renderTemplateFrontmatter({
-            engine: this.engine,
+            engine: strict ? this.previewEngine : this.engine,
             source: frontmatter,
             scope: context,
             parentHost: this.parentHost,
@@ -208,7 +215,7 @@ export class LocalTemplateService {
             await this.parentHost.stringifyYaml(finalFrontmatter);
 
         const renderedBody = strict
-            ? await renderFragment(this.engine, body, context, bodyLine)
+            ? await renderFragment(this.previewEngine, body, context, bodyLine)
             : await renderLiquid(this.engine, body, context);
 
         return {

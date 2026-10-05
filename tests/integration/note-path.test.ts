@@ -458,6 +458,16 @@ describe("preview results", () => {
     const preview = (template: string) =>
         h.notePath.previewLibraryNotePath(USER_ID, "ARTICLE1", template);
 
+    test("an unknown filter is an error in a preview, not when resolving", async () => {
+        await item({ title: "A Study" });
+        expect(await preview("P/{{ title | titel }}")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 1 },
+        });
+        const stored = (await db.items.get([USER_ID, "ARTICLE1"]))!;
+        expect(await h.notePath.resolveLibraryNotePath(stored, "P/{{ title | titel }}")).toBe("P/A Study.md");
+    });
+
     test("an error is positioned where the user typed it, before trimming", async () => {
         await item({ title: "A Study" });
         expect(await preview("\n  P/{{ title")).toMatchObject({

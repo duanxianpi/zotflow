@@ -322,6 +322,15 @@ describe("preview", () => {
     const preview = (template: string, key = "ARTICLE1") =>
         service("").preview(USER_ID, key, template);
 
+    test("an unknown filter is an error in a preview, not in the tree", async () => {
+        const item = await article();
+        expect(await preview("{{ item.title | citation }}")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", message: expect.stringMatching(/citation/) },
+        });
+        expect(service("{{ item.title | citation }}").get(item)).toBe("Attention Is All You Need");
+    });
+
     test("renders like the tree does", async () => {
         const item = await article();
         expect(await preview(TEMPLATE)).toEqual({

@@ -409,6 +409,15 @@ describe("sidecar annotations", () => {
 });
 
 describe("preview results", () => {
+    test("an unknown filter is an error in a preview", async () => {
+        expect(
+            await templates.previewLocalNote(pdf(), "{{ item.name | titel }}"),
+        ).toMatchObject({ ok: false, error: { phase: "parse", line: 1 } });
+        expect(
+            await templates.previewLocalNote(pdf(), "{{ item.annotations | size }} {{ item.name | process_nav_info }}"),
+        ).toMatchObject({ ok: true });
+    });
+
     test("an error in the body is positioned in the whole template", async () => {
         expect(
             await templates.previewLocalNote(pdf(), "---\na: 1\n---\n\n{% if %}"),

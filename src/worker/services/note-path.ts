@@ -9,6 +9,7 @@ import {
     previewResult,
     renderFragment,
     renderLiquid,
+    strictFilterEngine,
     trimmedStart,
 } from "./liquid-support";
 import { describeTemplateScope } from "./template-variables";
@@ -167,15 +168,20 @@ function localPathContext(
     };
 }
 
+const ENGINE_OPTIONS = { greedy: false };
+
 /** Resolves configurable note file paths via LiquidJS templates. */
 export class NotePathService {
     private engine: Liquid;
+    /** The engine for previews: unknown filters are errors there (`strictFilterEngine`). */
+    private previewEngine: Liquid;
 
     constructor(
         private settings: ZotFlowSettings,
         private dbHelper: DbHelperService,
     ) {
-        this.engine = new Liquid({ greedy: false });
+        this.engine = new Liquid(ENGINE_OPTIONS);
+        this.previewEngine = strictFilterEngine(this.engine, ENGINE_OPTIONS);
     }
 
     updateSettings(settings: ZotFlowSettings) {
@@ -333,7 +339,7 @@ export class NotePathService {
                 hints.push("The template is empty; this is the built-in default template.");
             }
             const rendered = await renderFragment(
-                this.engine,
+                this.previewEngine,
                 source,
                 toScope(sanitizeContext(context)),
                 firstLine,
@@ -343,7 +349,7 @@ export class NotePathService {
             // The same template over the values as they are tells whether
             // sanitizing changed anything this template uses.
             const unsanitized = await renderLiquid(
-                this.engine,
+                this.previewEngine,
                 source,
                 toScope(context),
             );

@@ -8,6 +8,7 @@ import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import {
     liquidErrorInfo,
     previewResult,
+    strictFilterEngine,
     TemplatePreviewError,
 } from "worker/services/liquid-support";
 
@@ -21,6 +22,8 @@ import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { WorkerTimeout } from "worker/timers";
+
+const ENGINE_OPTIONS = { greedy: false };
 
 /** Types that keep their own names (a note's first line, an annotation's text). */
 const UNTEMPLATED_TYPES = new Set(["note", "annotation"]);
@@ -52,7 +55,9 @@ export const DISPLAY_TITLE_APPLY_DELAY = 1000;
  * each search keystroke title every item in the active libraries.
  */
 export class DisplayTitleService {
-    private readonly engine = new Liquid({ greedy: false });
+    private readonly engine = new Liquid(ENGINE_OPTIONS);
+    /** The engine for previews: unknown filters are errors there (`strictFilterEngine`). */
+    private readonly previewEngine = strictFilterEngine(this.engine, ENGINE_OPTIONS);
     /** The template in effect. */
     private source = "";
     /** The template waiting out the apply delay. */
@@ -200,8 +205,12 @@ export class DisplayTitleService {
         }
     }
 
-    private renderRaw(templates: Template[], item: AnyIDBZoteroItem): string {
-        const out: unknown = this.engine.renderSync(templates, displayTitleScope(item));
+    private renderRaw(
+        templates: Template[],
+        item: AnyIDBZoteroItem,
+        engine = this.engine,
+    ): string {
+        const out: unknown = engine.renderSync(templates, displayTitleScope(item));
         return typeof out === "string" ? out : "";
     }
 
@@ -249,7 +258,7 @@ export class DisplayTitleService {
             // the surrounding whitespace is collapsed away either way.
             let templates: Template[];
             try {
-                templates = this.engine.parse(source);
+                templates = this.previewEngine.parse(source);
             } catch (e) {
                 throw new TemplatePreviewError(liquidErrorInfo(e));
             }
@@ -267,7 +276,7 @@ export class DisplayTitleService {
             }
             let raw: string;
             try {
-                raw = this.renderRaw(templates, item);
+                raw = this.renderRaw(templates, item, this.previewEngine);
             } catch (e) {
                 throw new TemplatePreviewError(liquidErrorInfo(e));
             }

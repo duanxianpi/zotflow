@@ -43,6 +43,7 @@ import {
     renderLiquid,
     renderTemplateFrontmatter,
     splitFrontmatter,
+    strictFilterEngine,
     trimmedStart,
     zfEnv,
     type LiquidFilterScope,
@@ -199,8 +200,19 @@ interface LinkableItem {
 }
 
 /** LiquidJS template engine for rendering library (Zotero) item source notes. */
+/** Options of the source-note and citation engine. */
+const ENGINE_OPTIONS = {
+    extname: ".md",
+    greedy: false,
+    globals: {
+        newline: "\n",
+    },
+};
+
 export class LibraryTemplateService {
     private engine: Liquid;
+    /** The engine for previews: unknown filters are errors there (`strictFilterEngine`). */
+    private previewEngine: Liquid;
 
     constructor(
         private settings: ZotFlowSettings,
@@ -220,13 +232,7 @@ export class LibraryTemplateService {
     }
 
     initialize() {
-        this.engine = new Liquid({
-            extname: ".md",
-            greedy: false,
-            globals: {
-                newline: "\n",
-            },
-        });
+        this.engine = new Liquid(ENGINE_OPTIONS);
         this.engine.registerFilter("process_nav_info", (input: string) => {
             const navInfo = {
                 annotationID: input,
@@ -406,6 +412,7 @@ export class LibraryTemplateService {
                 return entries.join(join);
             },
         );
+        this.previewEngine = strictFilterEngine(this.engine, ENGINE_OPTIONS);
     }
 
     /** Annotation contexts carry `type` (highlight/ink/...) but no itemType. */
@@ -661,7 +668,7 @@ export class LibraryTemplateService {
         const { frontmatter, body, bodyLine } = splitFrontmatter(template);
 
         const templateFrontmatter = await renderTemplateFrontmatter({
-            engine: this.engine,
+            engine: strict ? this.previewEngine : this.engine,
             source: frontmatter,
             scope: context,
             parentHost: this.parentHost,
@@ -699,7 +706,7 @@ export class LibraryTemplateService {
             await this.parentHost.stringifyYaml(finalFrontmatter);
 
         const renderedBody = strict
-            ? await renderFragment(this.engine, body, context, bodyLine)
+            ? await renderFragment(this.previewEngine, body, context, bodyLine)
             : await this.render(body, context);
 
         return {
@@ -847,14 +854,14 @@ export class LibraryTemplateService {
                 hints.push("The template is empty; this is the built-in default template.");
                 return {
                     output: await renderFragment(
-                        this.engine,
+                        this.previewEngine,
                         FALLBACK_CITATION_TEMPLATES[format],
                         context,
                     ),
                 };
             }
             return {
-                output: await renderFragment(this.engine, source, context, firstLine, firstCol),
+                output: await renderFragment(this.previewEngine, source, context, firstLine, firstCol),
             };
         });
     }

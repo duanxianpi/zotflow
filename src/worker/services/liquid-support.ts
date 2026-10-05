@@ -1,6 +1,6 @@
-import { LiquidError } from "liquidjs";
+import { Liquid, LiquidError } from "liquidjs";
 
-import type { Liquid } from "liquidjs";
+import type { Liquid as LiquidEngine, LiquidOptions } from "liquidjs";
 import type { IParentProxy } from "bridge/types";
 import type {
     TemplateError,
@@ -34,11 +34,28 @@ export function zfEnv(scope: LiquidFilterScope): ZfEnvironments {
 
 /** `Liquid.parseAndRender` is typed `any`; every template here renders text. */
 export async function renderLiquid(
-    engine: Liquid,
+    engine: LiquidEngine,
     template: string,
     scope: object,
 ): Promise<string> {
     return (await engine.parseAndRender(template, scope)) as string;
+}
+
+/**
+ * A copy of `engine` for previews that rejects unknown filters
+ * (`strictFilters`): a real render passes `{{ x | typo }}` through unchanged,
+ * a preview reports it. Call it once `engine`'s own filters are registered;
+ * the copy shares them.
+ */
+export function strictFilterEngine(
+    engine: LiquidEngine,
+    options: LiquidOptions,
+): LiquidEngine {
+    const strict = new Liquid({ ...options, strictFilters: true });
+    for (const [name, impl] of Object.entries(engine.filters)) {
+        strict.registerFilter(name, impl);
+    }
+    return strict;
 }
 
 /** A template problem, positioned in the template the user typed. */
@@ -84,7 +101,7 @@ export function liquidErrorInfo(
 
 /** Render one fragment of a template, positioning any Liquid error in the whole template. */
 export async function renderFragment(
-    engine: Liquid,
+    engine: LiquidEngine,
     source: string,
     scope: object,
     firstLine = 1,
@@ -175,7 +192,7 @@ export async function previewResult(
  * reports it, positioned in the template where Liquid can tell.
  */
 export async function renderTemplateFrontmatter(opts: {
-    engine: Liquid;
+    engine: LiquidEngine;
     source: string;
     scope: object;
     parentHost: IParentProxy;
