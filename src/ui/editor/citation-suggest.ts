@@ -125,7 +125,6 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
         evt: MouseEvent | KeyboardEvent,
     ): void {
         if (!this.context) return;
-        if ("isHeader" in suggestion) return;
         if ("isEmpty" in suggestion) return;
 
         let format: CitationFormat = services.settings.defaultCitationFormat;
@@ -171,7 +170,6 @@ export class CitationSuggest extends EditorSuggest<SuggestionItem> {
         if (
             !suggestion ||
             !this.context ||
-            "isHeader" in suggestion ||
             "isEmpty" in suggestion
         ) {
             return;

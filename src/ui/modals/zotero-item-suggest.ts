@@ -7,11 +7,6 @@ import type { SearchFilterField } from "utils/search-query";
 
 export type SuggestionItemFilter = (item: AnyIDBZoteroItem) => boolean;
 
-interface SearchHeader {
-    isHeader: true;
-    label: string;
-}
-
 interface SearchEmptyState {
     isEmpty: true;
     message: string;
@@ -26,7 +21,7 @@ export interface SearchValueCompletion {
 }
 
 export type SuggestionItem =
-    AnyIDBZoteroItem | SearchHeader | SearchEmptyState | SearchValueCompletion;
+    AnyIDBZoteroItem | SearchEmptyState | SearchValueCompletion;
 
 /**
  * Shared Zotero item search + rendering logic.
@@ -37,6 +32,13 @@ export class ZoteroItemSuggest {
     itemPaths: Record<string, string[]> = {};
     /** Display titles keyed `${libraryID}:${key}`, from the user's template. */
     displayTitles: Record<string, string> = {};
+    /**
+     * Group labels ("Best Match", …), keyed by the first suggestion of their
+     * group. A label is drawn above that suggestion, not as a row of its own:
+     * a row would be one the list can select (the first row starts selected,
+     * so Enter would pick the label).
+     */
+    private groupLabels = new WeakMap<object, string>();
 
     constructor(private readonly itemFilter?: SuggestionItemFilter) {}
 
@@ -45,55 +47,25 @@ export class ZoteroItemSuggest {
         limit: number,
     ): Promise<SuggestionItem[]> {
         try {
-            let items: SuggestionItem[] = [];
+            let found: AnyIDBZoteroItem[] = [];
+            let label = "";
 
             if (!query) {
-                const recentItems =
-                    await workerBridge.search.getRecentItems(limit);
-
-                if (recentItems.length > 0) {
-                    items = [
-                        { isHeader: true, label: "Recent Viewed" },
-                        ...recentItems,
-                    ];
-                } else {
-                    const fallbackItems =
-                        await workerBridge.search.getRecentlyAddedItems(
-                            limit,
-                        );
-
-                    if (fallbackItems.length > 0) {
-                        items = [
-                            { isHeader: true, label: "Recently Added" },
-                            ...fallbackItems,
-                        ];
-                    }
+                found = await workerBridge.search.getRecentItems(limit);
+                label = "Recent Viewed";
+                if (found.length === 0) {
+                    found =
+                        await workerBridge.search.getRecentlyAddedItems(limit);
+                    label = "Recently Added";
                 }
             } else {
-                const searchResults = await workerBridge.search.searchItems(
-                    query,
-                    limit,
-                );
-
-                if (searchResults.length > 0) {
-                    items = [
-                        { isHeader: true, label: "Best Match" },
-                        ...searchResults,
-                    ];
-                }
+                found = await workerBridge.search.searchItems(query, limit);
+                label = "Best Match";
             }
 
-            const zItems = items
-                .filter((i) => !("isHeader" in i) && !("isEmpty" in i))
-                .map((i) => i as AnyIDBZoteroItem)
-                .filter((item) => this.shouldIncludeItem(item));
-
-            if (zItems.length > 0) {
-                const firstHeader = items.find((i) => "isHeader" in i);
-                items = [...(firstHeader ? [firstHeader] : []), ...zItems];
-            } else {
-                items = [];
-            }
+            const zItems = found.filter((item) => this.shouldIncludeItem(item));
+            const items: SuggestionItem[] = zItems;
+            if (zItems[0]) this.setGroupLabel(zItems[0], label);
 
             if (zItems.length > 0) {
                 const refs = zItems.map((i) => ({
@@ -152,17 +124,34 @@ export class ZoteroItemSuggest {
         return this.itemFilter ? this.itemFilter(item) : true;
     }
 
+    /** Show `label` above `item`, the first suggestion of its group. */
+    setGroupLabel(item: SuggestionItem, label: string): void {
+        this.groupLabels.set(item, label);
+    }
+
+    /**
+     * Draw the group label of `item`, if it starts a group, just before its
+     * row. Call it from every `renderSuggestion`, before the row's content.
+     */
+    renderGroupLabel(item: SuggestionItem, el: HTMLElement): void {
+        const label = this.groupLabels.get(item);
+        if (!label) return;
+        const labelEl = createDiv({
+            cls: "zotflow-suggestion-group-label",
+            text: label,
+        });
+        // Outside the row, so the row's selection highlight leaves it out.
+        // The list clears its container on every update, labels included.
+        if (el.parentElement) el.before(labelEl);
+        else el.prepend(labelEl);
+    }
+
     renderSuggestion(
         item: SuggestionItem,
         el: HTMLElement,
         query: string,
     ): void {
-        // Header
-        if ("isHeader" in item && item.isHeader) {
-            el.addClass("zotflow-suggestion-header");
-            el.setText(item.label);
-            return;
-        }
+        this.renderGroupLabel(item, el);
 
         // Empty state
         if ("isEmpty" in item && item.isEmpty) {

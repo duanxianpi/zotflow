@@ -100,21 +100,17 @@
     margin: 0 1px;
 } */
 
-/* Suggestion Header */
-.suggestion-container .suggestion-item.zotflow-suggestion-header,
-.prompt-results .suggestion-item.zotflow-suggestion-header {
-    background-color: transparent;
+/* Group label ("Best Match", …): drawn above a group's first row, not a row */
+.zotflow-suggestion-group-label {
     padding: var(--size-2-2) var(--size-4-3);
     font-size: var(--font-ui-smaller);
     font-weight: var(--font-semibold);
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    pointer-events: none;
-    border-bottom: none;
 }
 
-.prompt-results > .zotflow-suggestion-header:first-child {
+.prompt-results > .zotflow-suggestion-group-label:first-child {
     padding-top: 0;
 }
 
@@ -125,11 +121,6 @@
     pointer-events: none;
     border-bottom: none;
     text-align: center;
-}
-
-/* Reset Padding */
-.suggestion-item.zotflow-suggestion-header .zotflow-search-item {
-    padding: 0;
 }
 
 /* Down-Right: Tags (kept for future use) */

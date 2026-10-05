@@ -59,15 +59,16 @@ export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
                 analysis.partial,
             );
             if (values.length > 0) {
-                return [
-                    { isHeader: true, label: analysis.field },
-                    ...values.map((suggestion): SuggestionItem => ({
+                const completions = values.map(
+                    (suggestion): SuggestionItem => ({
                         isValueCompletion: true,
                         field: analysis.field,
                         value: suggestion.value,
                         match: suggestion.match,
-                    })),
-                ];
+                    }),
+                );
+                this.suggest.setGroupLabel(completions[0]!, analysis.field);
+                return completions;
             }
         }
         return this.suggest.getSuggestions(query, 50);
@@ -75,6 +76,7 @@ export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
 
     renderSuggestion(item: SuggestionItem, el: HTMLElement) {
         if ("isValueCompletion" in item) {
+            this.suggest.renderGroupLabel(item, el);
             el.addClass("zotflow-search-value");
             if (item.match) {
                 renderResults(el, item.value, item.match);
@@ -95,7 +97,6 @@ export abstract class BaseItemSearchModal extends SuggestModal<SuggestionItem> {
         item: SuggestionItem,
         evt: MouseEvent | KeyboardEvent,
     ): void {
-        if ("isHeader" in item) return;
         if ("isEmpty" in item) return;
 
         // Value-completion rows rewrite the input and re-query in place.
