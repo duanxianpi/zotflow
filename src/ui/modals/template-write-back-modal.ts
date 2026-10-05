@@ -33,7 +33,7 @@ export class TemplateWriteBackModal extends Modal {
     onOpen(): void {
         const target = TEMPLATE_TARGETS[this.saved.context];
         this.setTitle("Save template");
-        this.modalEl.addClass("zotflow-template-save-modal");
+        this.modalEl.addClass("zotflow-modal", "zotflow-template-save-modal");
         const { contentEl } = this;
 
         if (target.kind === "file" && !this.saved.filePath) {

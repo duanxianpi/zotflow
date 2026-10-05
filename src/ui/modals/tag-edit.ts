@@ -135,7 +135,7 @@ export class TagEditModal extends Modal {
         this.options = options;
         // Clone so we never mutate the caller's array.
         this.tags = options.initialTags.map((t) => ({ ...t }));
-        this.modalEl.addClass("zotflow-tag-edit-modal");
+        this.modalEl.addClass("zotflow-modal", "zotflow-tag-edit-modal");
     }
 
     onOpen(): void {

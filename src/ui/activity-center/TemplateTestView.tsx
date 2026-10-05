@@ -140,6 +140,8 @@ export const TemplateTestView: React.FC = () => {
     const result = lastRender?.result ?? null;
     const rendered = result?.ok ? result.output : "";
     const frontmatter = result?.ok ? result.frontmatter : undefined;
+    // An error or a notice takes the output's place in the Output tab.
+    const showsProblem = (result !== null && !result.ok) || notice !== "";
 
     // Refs for imperative editor instances
     const templateContainerRef = useRef<HTMLDivElement>(null);
@@ -195,7 +197,7 @@ export const TemplateTestView: React.FC = () => {
 
     // Create / recreate output editor (right panel — source mode)
     useEffect(() => {
-        if (rightTab !== "output" || outputMode !== "source") return;
+        if (rightTab !== "output" || outputMode !== "source" || showsProblem) return;
 
         const container = outputContainerRef.current;
         if (!container) return;
@@ -211,11 +213,11 @@ export const TemplateTestView: React.FC = () => {
             editor.destroy();
         };
         // Recreate when the source view is shown or the output changes
-    }, [rightTab, outputMode, rendered]);
+    }, [rightTab, outputMode, rendered, showsProblem]);
 
     // Render markdown preview (right panel — preview mode)
     useEffect(() => {
-        if (rightTab !== "output" || outputMode !== "preview") return;
+        if (rightTab !== "output" || outputMode !== "preview" || showsProblem) return;
 
         const container = previewContainerRef.current;
         if (!container) return;
@@ -242,7 +244,7 @@ export const TemplateTestView: React.FC = () => {
         return () => {
             comp.unload();
         };
-    }, [rightTab, outputMode, rendered, frontmatter]);
+    }, [rightTab, outputMode, rendered, frontmatter, showsProblem]);
 
     const reloadSaved = useCallback(
         async (ctx: TemplateContext) => {
@@ -449,6 +451,7 @@ export const TemplateTestView: React.FC = () => {
 
     const handleRender = useCallback(async () => {
         setNotice("");
+        setRightTab("output");
         setRendering(true);
         const text = currentTemplate();
         try {
@@ -685,7 +688,51 @@ export const TemplateTestView: React.FC = () => {
                         </div>
                     )}
 
-                    {rightTab === "output" && hints.length > 0 && (
+                    {rightTab === "output" && (error || notice) && (
+                        <div className="zotflow-template-test-output zotflow-template-test-error-view">
+                            {error ? (
+                                <>
+                                    <div className="zotflow-template-test-error-head">
+                                        <ObsidianIcon icon="alert-octagon" />
+                                        <strong>{PHASE_LABELS[error.phase]}</strong>
+                                        {error.line !== undefined && (
+                                            <button
+                                                className="zotflow-template-test-error-position"
+                                                onClick={() => {
+                                                    if (templateEditorRef.current && error.line !== undefined) {
+                                                        revealPosition(
+                                                            templateEditorRef.current,
+                                                            error.line,
+                                                            error.col,
+                                                        );
+                                                    }
+                                                }}
+                                            >
+                                                Line {error.line}
+                                                {error.col !== undefined && `, column ${error.col}`}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <pre className="zotflow-template-test-error-message">
+                                        {error.message}
+                                    </pre>
+                                    {error.renderedFrontmatter !== undefined && (
+                                        <details className="zotflow-template-test-error-detail" open>
+                                            <summary>Rendered frontmatter</summary>
+                                            <pre>{error.renderedFrontmatter}</pre>
+                                        </details>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="zotflow-template-test-error-head">
+                                    <ObsidianIcon icon="info" />
+                                    <span>{notice}</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {rightTab === "output" && !error && !notice && hints.length > 0 && (
                         <ul className="zotflow-template-test-hints">
                             {hints.map((hint) => (
                                 <li key={hint}>
@@ -696,13 +743,13 @@ export const TemplateTestView: React.FC = () => {
                         </ul>
                     )}
 
-                    {rightTab === "output" && outputMode === "source" && (
+                    {rightTab === "output" && !error && !notice && outputMode === "source" && (
                         <div
                             ref={outputContainerRef}
                             className="zotflow-template-test-output"
                         />
                     )}
-                    {rightTab === "output" && outputMode === "preview" && (
+                    {rightTab === "output" && !error && !notice && outputMode === "preview" && (
                         <div className="zotflow-template-test-output zotflow-template-test-preview">
                             {frontmatter && (
                                 <table className="zotflow-template-test-properties">
@@ -723,44 +770,6 @@ export const TemplateTestView: React.FC = () => {
                     )}
                 </div>
             </div>
-
-            {error && (
-                <div className="zotflow-template-test-error">
-                    <div className="zotflow-template-test-error-head">
-                        <strong>{PHASE_LABELS[error.phase]}</strong>
-                        {error.line !== undefined && (
-                            <button
-                                className="zotflow-template-test-error-position"
-                                onClick={() => {
-                                    if (templateEditorRef.current && error.line !== undefined) {
-                                        revealPosition(
-                                            templateEditorRef.current,
-                                            error.line,
-                                            error.col,
-                                        );
-                                    }
-                                }}
-                            >
-                                Line {error.line}
-                                {error.col !== undefined && `, column ${error.col}`}
-                            </button>
-                        )}
-                    </div>
-                    <div className="zotflow-template-test-error-message">
-                        {error.message}
-                    </div>
-                    {error.renderedFrontmatter !== undefined && (
-                        <details className="zotflow-template-test-error-detail">
-                            <summary>Rendered frontmatter</summary>
-                            <pre>{error.renderedFrontmatter}</pre>
-                        </details>
-                    )}
-                </div>
-            )}
-
-            {notice && (
-                <div className="zotflow-template-test-error">{notice}</div>
-            )}
 
             {/* ── Actions ── */}
             <div className="zotflow-template-test-actions">

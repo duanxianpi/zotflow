@@ -99,6 +99,7 @@ export class ConflictDetailsModal extends Modal {
         private entry: ConflictItemInfo,
     ) {
         super(app);
+        this.modalEl.addClass("zotflow-modal");
         this.setTitle("Why is this a conflict?");
     }
 

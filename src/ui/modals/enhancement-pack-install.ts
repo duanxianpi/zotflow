@@ -14,6 +14,7 @@ export class EnhancementPackInstallModal extends Modal {
     }
 
     onOpen(): void {
+        this.modalEl.addClass("zotflow-modal");
         this.setTitle("Install ZotFlow Enhancement Pack");
         this.contentEl.createEl("p", {
             text: "This feature needs the offline resources in ZotFlow Enhancement Pack.",

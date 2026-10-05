@@ -29,7 +29,7 @@ export class AddCslStyleModal extends Modal {
 
     onOpen(): void {
         const { contentEl } = this;
-        this.modalEl.addClass("zotflow-csl-modal");
+        this.modalEl.addClass("zotflow-modal", "zotflow-csl-modal");
         contentEl.addClass("zotflow-csl-add-modal");
 
         let input = "";
@@ -227,7 +227,7 @@ export class AddCslLocaleModal extends Modal {
 
     onOpen(): void {
         const { contentEl } = this;
-        this.modalEl.addClass("zotflow-csl-modal");
+        this.modalEl.addClass("zotflow-modal", "zotflow-csl-modal");
         contentEl.addClass("zotflow-csl-add-modal");
 
         let input = "";

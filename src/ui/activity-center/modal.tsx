@@ -19,7 +19,7 @@ export class ActivityCenterModal extends Modal {
     onOpen() {
         const { contentEl, modalEl } = this;
 
-        modalEl.addClass("mod-zotflow-ac");
+        modalEl.addClass("zotflow-modal", "mod-zotflow-ac");
         contentEl.empty();
 
         this.root = createRoot(contentEl);

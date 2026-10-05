@@ -149,17 +149,16 @@
 }
 
 /* ============================================================
-   Tag Edit Modal
+   Modals: every ZotFlow modal carries .zotflow-modal
    ============================================================ */
 
-.zotflow-tag-edit-modal,
-.zotflow-note-gone-modal {
-    & .modal-header {
-        & .modal-title {
-            font-size: var(--font-ui-medium);
-        }
-    }
+.zotflow-modal .modal-header .modal-title {
+    font-size: var(--font-ui-medium);
 }
+
+/* ============================================================
+   Tag Edit Modal
+   ============================================================ */
 
 .zotflow-tag-edit-subtitle {
     color: var(--text-muted);
@@ -637,12 +636,6 @@
     --zotflow-side-combined: var(--color-cyan);
     width: 90vw;
     height: 80vh;
-
-    & .modal-header {
-        & .modal-title {
-            font-size: var(--font-ui-medium);
-        }
-    }
 
     & .modal-content {
         display: flex;
@@ -2468,48 +2461,59 @@
     color: var(--text-accent);
 }
 
-.zotflow-template-test-error {
+/* An error or a notice in the Output tab, in place of the output */
+.zotflow-template-test-error-view {
+    overflow: auto;
+    padding: var(--size-4-3);
+    border-color: rgba(var(--color-red-rgb), 0.4);
+    background: rgba(var(--color-red-rgb), 0.04);
     font-size: var(--font-ui-small);
-    color: var(--text-error);
-    padding: var(--size-4-2);
-    border: 1px solid var(--text-error);
-    border-radius: var(--radius-s);
-    background: rgba(var(--color-red-rgb), 0.05);
 }
 
 .zotflow-template-test-error-head {
     display: flex;
     align-items: center;
-    gap: var(--size-4-2);
+    gap: var(--size-2-3);
+    color: var(--text-error);
+}
+
+.zotflow-template-test-error-head svg {
+    width: var(--icon-s);
+    height: var(--icon-s);
+    flex-shrink: 0;
 }
 
 .zotflow-template-test-error-position {
+    margin-left: auto;
     font-size: var(--font-ui-smaller);
-    padding: 0 var(--size-4-2);
-    height: auto;
-    color: var(--text-error);
-    text-decoration: underline;
-    background: none;
-    box-shadow: none;
 }
 
 .zotflow-template-test-error-message {
-    margin-top: var(--size-2-2);
+    margin: var(--size-4-2) 0 0;
     font-family: var(--font-monospace);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-normal);
     white-space: pre-wrap;
     word-break: break-word;
 }
 
 .zotflow-template-test-error-detail {
-    margin-top: var(--size-2-2);
+    margin-top: var(--size-4-3);
     color: var(--text-muted);
+}
+
+.zotflow-template-test-error-detail summary {
+    cursor: pointer;
 }
 
 .zotflow-template-test-error-detail pre {
     margin: var(--size-2-2) 0 0;
-    max-height: 160px;
-    overflow: auto;
+    padding: var(--size-4-2);
+    border-radius: var(--radius-s);
+    background: var(--background-secondary);
+    font-size: var(--font-ui-smaller);
     white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .zotflow-template-test-stale {
@@ -2614,22 +2618,52 @@
 
 .zotflow-template-vars-row {
     display: flex;
-    align-items: baseline;
-    gap: var(--size-4-2);
+    align-items: center;
+    gap: var(--size-2-3);
     min-width: 0;
-    padding: 1px 0;
+    padding: 1px var(--size-2-2);
+    border-radius: var(--radius-s);
+    line-height: 1.6;
+}
+
+.zotflow-template-vars-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+/* Room of the chevron, so leaf names line up with folding ones. */
+.zotflow-template-vars-row.is-leaf::before {
+    content: "";
+    width: 14px;
+    flex-shrink: 0;
+}
+
+.zotflow-template-vars-chevron {
+    display: flex;
+    width: 14px;
+    flex-shrink: 0;
+    color: var(--text-faint);
+    transition: transform 100ms ease;
+}
+
+.zotflow-template-vars-chevron svg {
+    width: 14px;
+    height: 14px;
+}
+
+.zotflow-template-vars-nested[open] > summary .zotflow-template-vars-chevron {
+    transform: rotate(90deg);
 }
 
 .zotflow-template-vars-name {
-    flex-shrink: 0;
+    flex: 0 1 auto;
+    max-width: 50%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-family: var(--font-monospace);
     font-size: var(--font-ui-smaller);
     color: var(--text-accent);
-    background: none;
-    box-shadow: none;
-    border: none;
-    padding: 0;
-    height: auto;
     cursor: pointer;
 }
 
@@ -2637,7 +2671,13 @@
     text-decoration: underline;
 }
 
+.zotflow-template-vars-name::after {
+    content: ":";
+    color: var(--text-faint);
+}
+
 .zotflow-template-vars-value {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2652,28 +2692,37 @@
 }
 
 .zotflow-template-vars-nested > summary {
+    display: block;
+    list-style: none;
     cursor: pointer;
-    list-style-position: inside;
 }
 
-.zotflow-template-vars-nested > summary > .zotflow-template-vars-row {
-    display: inline-flex;
-    max-width: calc(100% - 1.2em);
+.zotflow-template-vars-nested > summary::-webkit-details-marker {
+    display: none;
 }
 
 .zotflow-template-vars-children {
-    margin-left: var(--size-4-4);
+    margin-left: 13px;
+    padding-left: var(--size-2-2);
     border-left: 1px solid var(--background-modifier-border);
-    padding-left: var(--size-4-2);
 }
 
 .zotflow-template-vars-filters {
-    color: var(--text-muted);
-    font-size: var(--font-ui-smaller);
     display: flex;
     flex-wrap: wrap;
-    gap: var(--size-2-2);
     align-items: baseline;
+    gap: var(--size-2-2) var(--size-4-2);
+    padding-top: var(--size-4-2);
+    border-top: 1px solid var(--background-modifier-border);
+    font-size: var(--font-ui-smaller);
+}
+
+.zotflow-template-vars-filters-label {
+    color: var(--text-muted);
+}
+
+.zotflow-template-vars-filters code {
+    color: var(--text-muted);
 }
 
 .zotflow-template-test-actions {
@@ -3457,15 +3506,6 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
 }
 
 /* -- Modals (Add / Details) -- */
-
-/* Same title treatment as the tag edit modal. */
-.zotflow-csl-modal {
-    & .modal-header {
-        & .modal-title {
-            font-size: var(--font-ui-medium);
-        }
-    }
-}
 
 .zotflow-csl-add-modal .zotflow-csl-modal-card {
     margin: var(--size-4-2) 0;

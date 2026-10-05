@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { ObsidianIcon } from "ui/ObsidianIcon";
 
 import type {
     TemplateVariable,
@@ -45,18 +46,35 @@ const VariableRow: React.FC<{
     onInsert: (path: string) => void;
 }> = ({ v, query, open, onInsert }) => {
     const shown = summary(v);
-    const head = (
-        <div className="zotflow-template-vars-row">
-            <button
+    const children = v.children?.filter((c) => !query || matches(c, query));
+    const nested = (children?.length ?? 0) > 0;
+    const row = (
+        <div className={`zotflow-template-vars-row ${nested ? "" : "is-leaf"}`}>
+            {nested && (
+                <span className="zotflow-template-vars-chevron">
+                    <ObsidianIcon icon="chevron-right" />
+                </span>
+            )}
+            <span
                 className="zotflow-template-vars-name"
-                aria-label={`Insert {{ ${v.path} }}`}
+                role="button"
+                tabIndex={0}
+                title={`Insert {{ ${v.path} }}`}
                 onClick={(e) => {
+                    // A click on the name inserts; the rest of the row folds.
                     e.preventDefault();
+                    e.stopPropagation();
                     onInsert(v.path);
+                }}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onInsert(v.path);
+                    }
                 }}
             >
                 {v.name}
-            </button>
+            </span>
             <span
                 className={`zotflow-template-vars-value ${shown.literal ? "is-literal" : ""}`}
                 title={shown.literal ? undefined : v.value}
@@ -65,13 +83,12 @@ const VariableRow: React.FC<{
             </span>
         </div>
     );
-    const children = v.children?.filter((c) => !query || matches(c, query));
-    if (!children?.length) return head;
+    if (!nested) return row;
     return (
         <details className="zotflow-template-vars-nested" open={open || query !== ""}>
-            <summary>{head}</summary>
+            <summary>{row}</summary>
             <div className="zotflow-template-vars-children">
-                {children.map((c) => (
+                {children?.map((c) => (
                     <VariableRow key={c.path} v={c} query={query} open={false} onInsert={onInsert} />
                 ))}
             </div>
@@ -107,7 +124,7 @@ export const TemplateVariablesPanel: React.FC<Props> = ({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
             />
-            <div>
+            <div className="zotflow-template-vars-tree">
                 {shown.map((v) => (
                     <VariableRow
                         key={v.path}
@@ -120,7 +137,7 @@ export const TemplateVariablesPanel: React.FC<Props> = ({
             </div>
             {variables.filters.length > 0 && (
                 <div className="zotflow-template-vars-filters">
-                    <span>ZotFlow filters:</span>{" "}
+                    <span className="zotflow-template-vars-filters-label">ZotFlow filters</span>
                     {variables.filters.map((f) => (
                         <code key={f}>{f}</code>
                     ))}

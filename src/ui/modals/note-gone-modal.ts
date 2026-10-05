@@ -105,7 +105,7 @@ export class NoteGoneModal extends Modal {
         private onSaved?: (newKey: string) => void,
     ) {
         super(app);
-        this.modalEl.addClass("zotflow-note-gone-modal");
+        this.modalEl.addClass("zotflow-modal", "zotflow-note-gone-modal");
     }
 
     /** Shows the prompt for `noteKey`, unless it is already showing. */
