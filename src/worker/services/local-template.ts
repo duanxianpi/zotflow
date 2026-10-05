@@ -8,10 +8,16 @@ import { getLocalSidecarPath } from "utils/utils";
 import { annoHtml2md } from "worker/convert";
 import type { AnnotationTemplateContext } from "types/template-context";
 import {
+    mandatoryKeyHint,
+    previewResult,
+    renderFragment,
     renderLiquid,
+    renderTemplateFrontmatter,
+    splitFrontmatter,
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
+import type { TemplatePreviewResult } from "types/template-preview";
 import {
     mergeTemplateFrontmatter,
     withMandatoryFirst,
@@ -131,78 +137,14 @@ export class LocalTemplateService {
         originalFrontmatter: Record<string, unknown> = {},
     ): Promise<string> {
         try {
-            const context = await this.prepareLocalAttachmentContext(
+            const { text } = await this.renderSourceNote(
                 localAttachment,
                 annotations,
+                templateContent || DEFAULT_LOCAL_NOTE_TEMPLATE,
+                originalFrontmatter,
+                false,
             );
-
-            const template = templateContent || DEFAULT_LOCAL_NOTE_TEMPLATE;
-
-            // Separate Frontmatter and Body
-            const frontmatterRegex = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-            const match = template.match(frontmatterRegex);
-
-            let templateFrontmatterRaw = "";
-            let body = template;
-
-            if (match) {
-                templateFrontmatterRaw = match[1] || "";
-                body = template.substring(match[0].length);
-            }
-
-            // Parse Template Frontmatter
-            let templateFrontmatter: Record<string, unknown> = {};
-            if (templateFrontmatterRaw.trim()) {
-                try {
-                    // Render the frontmatter raw string first (allow liquid tags in frontmatter)
-                    const renderedFrontmatterRaw =
-                        await renderLiquid(
-                            this.engine,
-                            templateFrontmatterRaw,
-                            context,
-                        );
-
-                    // Then parse the rendered string as YAML via Main Thread
-                    templateFrontmatter = await this.parentHost.parseYaml(
-                        renderedFrontmatterRaw,
-                    );
-                } catch (e) {
-                    this.parentHost.log(
-                        "error",
-                        "Failed to parse template frontmatter",
-                        "LocalTemplateService",
-                        e,
-                    );
-                    // Continue execution, just without template frontmatter
-                }
-            }
-
-            // `??key` supplies a default without overwriting a value the user
-            // already has; bare keys retain overwrite-on-render semantics.
-            // Mandatory fields, always overwritten and written first.
-            const finalFrontmatter = withMandatoryFirst(
-                {
-                    "zotflow-locked": true,
-                    "zotflow-local-attachment": `[[${localAttachment.path}]]`,
-                },
-                mergeTemplateFrontmatter(
-                    originalFrontmatter,
-                    templateFrontmatter,
-                ),
-            );
-
-            // Stringify Frontmatter via Main Thread
-            const frontmatterString =
-                await this.parentHost.stringifyYaml(finalFrontmatter);
-
-            // Render Body
-            const renderedBody = await renderLiquid(
-                this.engine,
-                body,
-                context,
-            );
-
-            return `---\n${frontmatterString}---\n${renderedBody}`;
+            return text;
         } catch (err) {
             throw ZotFlowError.wrap(
                 err,
@@ -211,6 +153,66 @@ export class LocalTemplateService {
                 `Failed to render note template: ${(err as Error).message}`,
             );
         }
+    }
+
+    /**
+     * The source-note render. `strict` (previews) reports frontmatter
+     * problems and positions Liquid errors in the whole template; a real
+     * render goes on without the template's frontmatter instead.
+     */
+    private async renderSourceNote(
+        localAttachment: TFileWithoutParentAndVault,
+        annotations: AnnotationJSON[],
+        template: string,
+        originalFrontmatter: Record<string, unknown>,
+        strict: boolean,
+    ): Promise<{
+        text: string;
+        frontmatter: Record<string, unknown>;
+        templateFrontmatter: Record<string, unknown>;
+        mandatory: Record<string, unknown>;
+    }> {
+        const context = await this.prepareLocalAttachmentContext(
+            localAttachment,
+            annotations,
+        );
+        const { frontmatter, body, bodyLine } = splitFrontmatter(template);
+
+        const templateFrontmatter = await renderTemplateFrontmatter({
+            engine: this.engine,
+            source: frontmatter,
+            scope: context,
+            parentHost: this.parentHost,
+            strict,
+            logContext: "LocalTemplateService",
+        });
+
+        // `??key` supplies a default without overwriting a value the user
+        // already has; bare keys retain overwrite-on-render semantics.
+        // Mandatory fields, always overwritten and written first.
+        const mandatory: Record<string, unknown> = {
+            "zotflow-locked": true,
+            "zotflow-local-attachment": `[[${localAttachment.path}]]`,
+        };
+        const finalFrontmatter = withMandatoryFirst(
+            mandatory,
+            mergeTemplateFrontmatter(originalFrontmatter, templateFrontmatter),
+        );
+
+        // Stringify Frontmatter via Main Thread
+        const frontmatterString =
+            await this.parentHost.stringifyYaml(finalFrontmatter);
+
+        const renderedBody = strict
+            ? await renderFragment(this.engine, body, context, bodyLine)
+            : await renderLiquid(this.engine, body, context);
+
+        return {
+            text: `---\n${frontmatterString}---\n${renderedBody}`,
+            frontmatter: finalFrontmatter,
+            templateFrontmatter,
+            mandatory,
+        };
     }
 
     public async prepareLocalAttachmentContext(
@@ -276,13 +278,27 @@ export class LocalTemplateService {
         };
     }
 
-    /** Preview-render a local vault file with the given template content. */
+    /**
+     * Preview a local source note for the template tester, as a new note. An
+     * empty template previews the built-in default, which is what an empty
+     * template path renders.
+     */
     async previewLocalNote(
         file: TFileWithoutParentAndVault,
         templateContent: string,
-    ): Promise<string> {
+    ): Promise<TemplatePreviewResult> {
         const annotations = await this.loadSidecarAnnotations(file);
-        return this.renderLocalNote(file, annotations, templateContent, {});
+        return previewResult(async (hints) => {
+            let template = templateContent;
+            if (!template.trim()) {
+                template = DEFAULT_LOCAL_NOTE_TEMPLATE;
+                hints.push("The template is empty; this is the built-in default template.");
+            }
+            const out = await this.renderSourceNote(file, annotations, template, {}, true);
+            const hint = mandatoryKeyHint(out.templateFrontmatter, out.mandatory);
+            if (hint) hints.push(hint);
+            return { output: out.text, frontmatter: out.frontmatter };
+        });
     }
 
     /** Load annotations from the co-located `.zf.json` sidecar file, if it exists. */

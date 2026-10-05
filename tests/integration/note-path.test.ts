@@ -14,6 +14,7 @@ import { createServiceHarness, USER_ID } from "../fakes/services";
 import type { ServiceHarness } from "../fakes/services";
 import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
+import { previewOutput } from "../fakes/preview";
 
 let h: ServiceHarness;
 
@@ -435,7 +436,7 @@ describe("local attachment notes", () => {
 
     test("previewLocalNotePath is the same resolution with a caller's template", async () => {
         expect(
-            await h.notePath.previewLocalNotePath(localFile(), "P/{{basename}}"),
+            await previewOutput(h.notePath.previewLocalNotePath(localFile(), "P/{{basename}}")),
         ).toBe("P/Some Paper.md");
     });
 });
@@ -444,10 +445,8 @@ describe("preview by key", () => {
     test("resolves a stored item", async () => {
         await item({ title: "A Study" });
         expect(
-            await h.notePath.previewLibraryNotePath(
-                USER_ID,
-                "ARTICLE1",
-                "P/{{title}}",
+            await previewOutput(
+                h.notePath.previewLibraryNotePath(USER_ID, "ARTICLE1", "P/{{title}}"),
             ),
         ).toBe("P/A Study.md");
     });
@@ -456,6 +455,58 @@ describe("preview by key", () => {
         await expect(
             h.notePath.previewLibraryNotePath(USER_ID, "MISSING1", "P/{{key}}"),
         ).rejects.toThrow(/Item not found: 1\/MISSING1/);
+    });
+});
+
+describe("preview results", () => {
+    const preview = (template: string) =>
+        h.notePath.previewLibraryNotePath(USER_ID, "ARTICLE1", template);
+
+    test("an error is positioned where the user typed it, before trimming", async () => {
+        await item({ title: "A Study" });
+        expect(await preview("\n  P/{{ title")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 2, col: 5 },
+        });
+    });
+
+    test("an empty template previews the built-in default, not the saved setting", async () => {
+        h.notePath.updateSettings({ ...h.settings, librarySourceNotePathTemplate: "Saved/{{key}}" });
+        await item({ title: "A Study" });
+        const result = await preview("");
+        expect(result).toMatchObject({ ok: true, output: "Source/My Library/@A Study.md" });
+        expect(result.hints[0]).toMatch(/built-in default/);
+    });
+
+    test("values changed into valid file names are pointed out", async () => {
+        await item({ title: "Yes/No: A Study?" });
+        const result = await preview("P/{{ title }}");
+        expect(result).toMatchObject({ ok: true, output: "P/YesNo A Study.md" });
+        expect(result.hints).toEqual([expect.stringMatching(/valid file names/)]);
+    });
+
+    test("a template that does not use the changed value has no hint", async () => {
+        await item({ title: "Yes/No" });
+        expect((await preview("P/{{ key }}")).hints).toEqual([]);
+    });
+
+    test("a shortened name is pointed out", async () => {
+        await item({ title: "x".repeat(300) });
+        const result = await preview("P/{{ title }}");
+        expect(result.hints).toEqual([expect.stringMatching(/was shortened/)]);
+    });
+
+    test("an empty path is pointed out", async () => {
+        await item({ title: "A Study" });
+        expect((await preview("{{ nothing }}")).hints).toEqual([
+            expect.stringMatching(/empty path/),
+        ]);
+    });
+
+    test("local paths report errors too", async () => {
+        expect(
+            await h.notePath.previewLocalNotePath(localFile(), "{% if %}"),
+        ).toMatchObject({ ok: false, error: { phase: "parse", line: 1 } });
     });
 });
 

@@ -5,7 +5,13 @@ import type { TFileWithoutParentAndVault } from "types/zotflow";
 import { db } from "db/db";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { buildItemMetadata } from "utils/zotero-fields";
-import { renderLiquid } from "./liquid-support";
+import {
+    previewResult,
+    renderFragment,
+    renderLiquid,
+    trimmedStart,
+} from "./liquid-support";
+import type { TemplatePreviewResult } from "types/template-preview";
 import type { DbHelperService } from "./db-helper";
 
 const FALLBACK_ZOTERO_TEMPLATE =
@@ -121,17 +127,40 @@ function capSegment(segment: string): string {
     return out.replace(/[\s.]+$/u, "") || "_";
 }
 
+/** A rendered path's non-empty segments, slashes normalized. */
+function pathSegments(rawPath: string): string[] {
+    return rawPath
+        .replace(/\\/g, "/")
+        .split("/")
+        .filter((s) => s.trim().length > 0);
+}
+
 /**
  * Normalize a rendered path: collapse slashes, strip empties, cap each
  * segment's length, append `.md`.
  */
 function sanitizePath(rawPath: string): string {
-    const normalized = rawPath.replace(/\\/g, "/").replace(/\/+/g, "/");
-    const segments = normalized
-        .split("/")
-        .filter((s) => s.trim().length > 0)
-        .map(capSegment);
-    return `${segments.join("/")}.md`;
+    return `${pathSegments(rawPath).map(capSegment).join("/")}.md`;
+}
+
+/** Library path templates see every variable both bare and under `item`. */
+function libraryScope(ctx: Record<string, unknown>): Record<string, unknown> {
+    return { ...ctx, item: ctx };
+}
+
+/** The variables of a local path template. */
+function localPathContext(
+    localAttachment: TFileWithoutParentAndVault,
+): Record<string, unknown> {
+    const lastSlash = localAttachment.path.lastIndexOf("/");
+    return {
+        basename: localAttachment.basename,
+        name: localAttachment.name,
+        path: localAttachment.path,
+        directory:
+            lastSlash !== -1 ? localAttachment.path.substring(0, lastSlash) : "",
+        extension: localAttachment.extension,
+    };
 }
 
 /** Resolves configurable note file paths via LiquidJS templates. */
@@ -158,7 +187,20 @@ export class NotePathService {
             templateOverride?.trim() ||
             this.settings.librarySourceNotePathTemplate.trim() ||
             FALLBACK_ZOTERO_TEMPLATE;
+        const context = await this.libraryPathContext(item);
+        // The same variables also sit under `item`, so `{{ item.title }}`
+        // works here as it does in source-note and citation templates.
+        const rendered = await renderLiquid(
+            this.engine,
+            template,
+            libraryScope(sanitizeContext(context)),
+        );
+        return sanitizePath(rendered);
+    }
 
+    private async libraryPathContext(
+        item: AnyIDBZoteroItem,
+    ): Promise<Record<string, unknown>> {
         const library = await db.libraries.get(item.libraryID);
         const libraryName = library?.name || "Unknown";
 
@@ -172,7 +214,7 @@ export class NotePathService {
             ])
             .then((paths) => paths[`${item.libraryID}:${item.key}`] || []);
 
-        const context = {
+        return {
             ...buildItemMetadata(item),
 
             // Identity
@@ -189,15 +231,6 @@ export class NotePathService {
             // Derived
             libraryName,
         };
-
-        // The same variables also sit under `item`, so `{{ item.title }}`
-        // works here as it does in source-note and citation templates.
-        const scope = sanitizeContext(context);
-        const rendered = await renderLiquid(this.engine, template, {
-            ...scope,
-            item: scope,
-        });
-        return sanitizePath(rendered);
     }
 
     /** Resolve the vault path for a local attachment source note. */
@@ -209,35 +242,23 @@ export class NotePathService {
             templateOverride?.trim() ||
             this.settings.localSourceNotePathTemplate.trim() ||
             FALLBACK_LOCAL_TEMPLATE;
-
-        const lastSlash = localAttachment.path.lastIndexOf("/");
-        const directory =
-            lastSlash !== -1
-                ? localAttachment.path.substring(0, lastSlash)
-                : "";
-
-        const context = {
-            basename: localAttachment.basename,
-            name: localAttachment.name,
-            path: localAttachment.path,
-            directory,
-            extension: localAttachment.extension,
-        };
-
         const rendered = await renderLiquid(
             this.engine,
             template,
-            sanitizeContext(context),
+            sanitizeContext(localPathContext(localAttachment)),
         );
         return sanitizePath(rendered);
     }
 
-    /** Preview the resolved path for a library item with a custom path template. */
+    /**
+     * Preview a library note path for the template tester. An empty template
+     * previews the built-in default, which is what an empty setting renders.
+     */
     async previewLibraryNotePath(
         libraryID: number,
         key: string,
         pathTemplate: string,
-    ): Promise<string> {
+    ): Promise<TemplatePreviewResult> {
         const item = await db.items.get([libraryID, key]);
         if (!item) {
             throw new ZotFlowError(
@@ -246,15 +267,70 @@ export class NotePathService {
                 `Item not found: ${libraryID}/${key}`,
             );
         }
-        return this.resolveLibraryNotePath(item, pathTemplate);
+        return this.previewPath(
+            pathTemplate,
+            FALLBACK_ZOTERO_TEMPLATE,
+            await this.libraryPathContext(item),
+            libraryScope,
+        );
     }
 
-    /** Preview the resolved path for a local file with a custom path template. */
+    /** Preview a local note path for the template tester; see `previewLibraryNotePath`. */
     async previewLocalNotePath(
         file: TFileWithoutParentAndVault,
         pathTemplate: string,
-    ): Promise<string> {
-        return this.resolveLocalNotePath(file, pathTemplate);
+    ): Promise<TemplatePreviewResult> {
+        return this.previewPath(
+            pathTemplate,
+            FALLBACK_LOCAL_TEMPLATE,
+            localPathContext(file),
+            (ctx) => ctx,
+        );
+    }
+
+    private previewPath(
+        template: string,
+        fallback: string,
+        context: Record<string, unknown>,
+        toScope: (ctx: Record<string, unknown>) => Record<string, unknown>,
+    ): Promise<TemplatePreviewResult> {
+        return previewResult(async (hints) => {
+            let { source, firstLine, firstCol } = trimmedStart(template);
+            if (!source) {
+                ({ source, firstLine, firstCol } = trimmedStart(fallback));
+                hints.push("The template is empty; this is the built-in default template.");
+            }
+            const rendered = await renderFragment(
+                this.engine,
+                source,
+                toScope(sanitizeContext(context)),
+                firstLine,
+                firstCol,
+            );
+
+            // The same template over the values as they are tells whether
+            // sanitizing changed anything this template uses.
+            const unsanitized = await renderLiquid(
+                this.engine,
+                source,
+                toScope(context),
+            );
+            if (unsanitized !== rendered) {
+                hints.push(
+                    'Some values were changed to be valid file names: characters such as / \\ : * ? " < > | are removed.',
+                );
+            }
+
+            const segments = pathSegments(rendered);
+            if (segments.length === 0) {
+                hints.push("The template renders an empty path.");
+            } else if (segments.some((s) => capSegment(s) !== s)) {
+                hints.push(
+                    `A folder or file name longer than ${MAX_SEGMENT_BYTES} bytes was shortened.`,
+                );
+            }
+            return { output: sanitizePath(rendered) };
+        });
     }
 
     /** Return the current path template string from settings. */

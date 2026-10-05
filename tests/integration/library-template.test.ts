@@ -22,6 +22,7 @@ import { itemTreeFingerprint } from "db/sync/commit";
 import { DEFAULT_SETTINGS } from "settings/types";
 import { db, resetDb, seedItem, seedLibrary } from "../fakes/db";
 import { createFakeParentHost } from "../fakes/parent-host";
+import { previewOutput } from "../fakes/preview";
 
 import type { FakeParentHost } from "../fakes/parent-host";
 import type { CslRenderWorkerService } from "worker/services/csl-render";
@@ -1148,8 +1149,12 @@ describe("citing an annotation", () => {
                     ],
                 } as any,
                 "{{ annotations[0] | citation }}",
+                "pandoc",
             ),
-        ).rejects.toThrow(/no parent attachment/);
+        ).resolves.toMatchObject({
+            ok: false,
+            error: { phase: "render", message: expect.stringMatching(/no parent attachment/), line: 1 },
+        });
     });
 
     test("an annotation whose attachment row is gone is a resource error", async () => {
@@ -1169,8 +1174,12 @@ describe("citing an annotation", () => {
                     ],
                 } as any,
                 "{{ annotations[0] | citation }}",
+                "pandoc",
             ),
-        ).rejects.toThrow(/Attachment not found: 1\/GHOSTATT/);
+        ).resolves.toMatchObject({
+            ok: false,
+            error: { phase: "render", message: expect.stringMatching(/Attachment not found: 1\/GHOSTATT/) },
+        });
     });
 
     test("an annotation on a standalone attachment has nothing to cite", async () => {
@@ -1329,7 +1338,7 @@ describe("preview", () => {
     test("renders a stored item with a caller's template", async () => {
         await seedArticle();
         expect(
-            await service.previewLibrarySourceNote(LIB, "PARENT01", "{{ item.title }}"),
+            await previewOutput(service.previewLibrarySourceNote(LIB, "PARENT01", "{{ item.title }}")),
         ).toContain("A Study of Things");
     });
 
@@ -1337,6 +1346,124 @@ describe("preview", () => {
         await expect(
             service.previewLibrarySourceNote(LIB, "MISSING1", "x"),
         ).rejects.toThrow(/Item not found: 1\/MISSING1/);
+    });
+});
+
+describe("preview results", () => {
+    const preview = (template: string) =>
+        service.previewLibrarySourceNote(LIB, "PARENT01", template);
+
+    beforeEach(() => seedArticle());
+
+    test("an error in the body is positioned in the whole template", async () => {
+        const template = "---\ntitle: x\n---\n# Title\n{{ item.title";
+        expect(await preview(template)).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 5, col: 1 },
+        });
+    });
+
+    test("an error in the frontmatter is positioned in the whole template", async () => {
+        const template = "---\na: 1\nb: {{ item.title\n---\nbody";
+        expect(await preview(template)).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 3, col: 4 },
+        });
+    });
+
+    test("frontmatter that is not valid YAML is reported with what it rendered", async () => {
+        host.parseYaml = async () => {
+            throw new Error("bad indentation of a mapping entry");
+        };
+        expect(await preview("---\ntitle: {{ item.title }}\n---\nbody")).toEqual({
+            ok: false,
+            error: {
+                phase: "frontmatter",
+                message: "bad indentation of a mapping entry",
+                renderedFrontmatter: "title: A Study of Things",
+            },
+            hints: [],
+        });
+    });
+
+    test("frontmatter that is not key/value pairs is an error", async () => {
+        host.parseYaml = async () => ["a", "b"] as unknown as Record<string, unknown>;
+        expect(await preview("---\n- a\n- b\n---\nbody")).toMatchObject({
+            ok: false,
+            error: { phase: "frontmatter" },
+        });
+    });
+
+    test("frontmatter that renders empty is no frontmatter, not an error", async () => {
+        host.parseYaml = async () => null as unknown as Record<string, unknown>;
+        const result = await preview("---\n{% if false %}a: 1{% endif %}\n---\nbody");
+        expect(result).toMatchObject({ ok: true });
+        expect(result.ok && result.frontmatter).toMatchObject({ "zotero-key": "PARENT01" });
+    });
+
+    test("the frontmatter comes back as written to the note", async () => {
+        const result = await preview("---\ntitle: {{ item.title }}\n---\nbody");
+        expect(result.ok && result.frontmatter).toMatchObject({
+            "zotflow-locked": true,
+            "zotero-key": "PARENT01",
+            title: "A Study of Things",
+        });
+    });
+
+    test("a mandatory key in the template is pointed out", async () => {
+        const result = await preview("---\nzotero-key: mine\n??item-version: 1\n---\nbody");
+        expect(result.hints).toEqual([
+            'ZotFlow writes "zotero-key", "item-version" itself; the template\'s value is not used.',
+        ]);
+        expect(result.ok && result.frontmatter?.["zotero-key"]).toBe("PARENT01");
+    });
+
+    test("an empty template previews the built-in default", async () => {
+        const result = await preview("  \n");
+        expect(result).toMatchObject({ ok: true });
+        expect(result.ok && result.output).toContain("# A Study of Things");
+        expect(result.hints[0]).toMatch(/built-in default/);
+    });
+
+    test("a real render still goes on without a broken frontmatter", async () => {
+        const item = (await db.items.get([LIB, "PARENT01"]))!;
+        const out = await service.renderLibrarySourceNote(
+            item,
+            "---\na: {{ item.title\n---\n# {{ item.title }}",
+        );
+        expect(out).toContain("# A Study of Things");
+        expect(host.logs.some((l) => l.message === "Failed to parse template frontmatter")).toBe(true);
+    });
+
+    test("a real render takes a frontmatter that renders empty", async () => {
+        // Obsidian's parseYaml gives null for an empty string.
+        host.parseYaml = async () => null as unknown as Record<string, unknown>;
+        const item = (await db.items.get([LIB, "PARENT01"]))!;
+        const out = await service.renderLibrarySourceNote(
+            item,
+            "---\n{% if false %}a: 1{% endif %}\n---\n# {{ item.title }}",
+        );
+        expect(out).toContain("# A Study of Things");
+    });
+
+    test("a citation template's position counts the whitespace trimmed off", async () => {
+        expect(
+            await service.previewCitationTemplate(
+                { item: { libraryID: LIB, key: "PARENT01" } } as any,
+                "\n  {{ item.title",
+                "pandoc",
+            ),
+        ).toMatchObject({ ok: false, error: { phase: "parse", line: 2, col: 3 } });
+    });
+
+    test("an empty citation template previews the format's built-in default", async () => {
+        const result = await service.previewCitationTemplate(
+            { item: { libraryID: LIB, key: "PARENT01" } } as any,
+            "",
+            "pandoc",
+        );
+        expect(result).toMatchObject({ ok: true, output: "[@doe2020]" });
+        expect(result.hints[0]).toMatch(/built-in default/);
     });
 });
 
@@ -1464,23 +1591,22 @@ describe("citation templates", () => {
                 ],
             } as any,
             "{{ annotations[0].pageLabel }}",
+            "pandoc",
         );
-        expect(out).toBe("9");
+        expect(out).toMatchObject({ ok: true, output: "9" });
     });
 
     test("previewCitationTemplate resolves the note path itself", async () => {
-        const out = await service.previewCitationTemplate(
-            input(),
-            "{{ notePath }}",
+        const out = await previewOutput(
+            service.previewCitationTemplate(input(), "{{ notePath }}", "pandoc"),
         );
         expect(out).toContain(".md");
     });
 
     test("previewCitationTemplate prefers the indexed note path", async () => {
         host.keyIndex.set("PARENT01", "Source/Moved/@elsewhere.md");
-        const out = await service.previewCitationTemplate(
-            input(),
-            "{{ notePath }}",
+        const out = await previewOutput(
+            service.previewCitationTemplate(input(), "{{ notePath }}", "pandoc"),
         );
         expect(out).toBe("Source/Moved/@elsewhere.md");
     });
@@ -1490,6 +1616,7 @@ describe("citation templates", () => {
             service.previewCitationTemplate(
                 { item: { libraryID: LIB, key: "MISSING1" } } as any,
                 "x",
+                "pandoc",
             ),
         ).rejects.toThrow(/Item not found/);
     });

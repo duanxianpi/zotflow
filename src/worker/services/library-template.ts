@@ -37,10 +37,17 @@ import type {
 } from "worker/csl";
 import { buildItemMetadata } from "utils/zotero-fields";
 import {
+    mandatoryKeyHint,
+    previewResult,
+    renderFragment,
     renderLiquid,
+    renderTemplateFrontmatter,
+    splitFrontmatter,
+    trimmedStart,
     zfEnv,
     type LiquidFilterScope,
 } from "./liquid-support";
+import type { TemplatePreviewResult } from "types/template-preview";
 import {
     mergeTemplateFrontmatter,
     withMandatoryFirst,
@@ -133,6 +140,25 @@ const FALLBACK_FOOTNOTE_TEMPLATE = `[^{{ item.citationKey | default: item.key }}
 {{ item.creators[0].name }} et al. {%- elsif item.creators.length == 1 -%}
  {{ item.creators[0].name }} {%- else -%}
 Unknown Author {%- endif -%}, *{{ item.title }}* ({{ item.year }}).`;
+
+/** The citation formats, each with its own template setting. */
+export type CitationTemplateFormat = "pandoc" | "wikilink" | "footnote" | "footnote-ref";
+
+/** Built-in templates, used while a citation template setting is empty. */
+const FALLBACK_CITATION_TEMPLATES: Record<CitationTemplateFormat, string> = {
+    pandoc: FALLBACK_PANDOC_TEMPLATE,
+    wikilink: FALLBACK_WIKILINK_TEMPLATE,
+    "footnote-ref": FALLBACK_FOOTNOTE_REF_TEMPLATE,
+    footnote: FALLBACK_FOOTNOTE_TEMPLATE,
+};
+
+/** The setting that holds each format's template. */
+const CITATION_TEMPLATE_SETTINGS = {
+    pandoc: "citationPandocTemplate",
+    wikilink: "citationWikilinkTemplate",
+    "footnote-ref": "citationFootnoteRefTemplate",
+    footnote: "citationFootnoteTemplate",
+} as const satisfies Record<CitationTemplateFormat, keyof ZotFlowSettings>;
 
 // Matches http(s)://zotero.org/{users|groups}/<id>/items/<KEY>
 const ZOTERO_URI_RE =
@@ -591,86 +617,14 @@ export class LibraryTemplateService {
         snapshot?: SourceNoteSnapshot,
     ): Promise<string> {
         try {
-            const marks = snapshot ?? (await takeSourceNoteSnapshot(item.libraryID, item.key));
-            const context = await this.prepareItemContext(item);
-            const template = templateContent || DEFAULT_ITEM_TEMPLATE;
-
-            // Separate Frontmatter and Body
-            const frontmatterRegex = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-            const match = template.match(frontmatterRegex);
-
-            let templateFrontmatterRaw = "";
-            let body = template;
-
-            if (match) {
-                templateFrontmatterRaw = match[1] || "";
-                body = template.substring(match[0].length);
-            } else {
-                body = template;
-            }
-
-            // Parse Template Frontmatter
-            let templateFrontmatter: Record<string, unknown> = {};
-            if (templateFrontmatterRaw.trim()) {
-                try {
-                    // Render the frontmatter raw string first (as it may contain liquid tags)
-                    const renderedFrontmatterRaw =
-                        await this.render(
-                            templateFrontmatterRaw,
-                            context,
-                        );
-
-                    // Then parse the rendered string as YAML
-                    templateFrontmatter = await this.parentHost.parseYaml(
-                        renderedFrontmatterRaw,
-                    );
-                } catch {
-                    // We don't throw here, just proceed with empty frontmatter from template
-                    this.parentHost.log(
-                        "error",
-                        "Failed to parse template frontmatter",
-                        "LibraryTemplateService",
-                    );
-                }
-            }
-
-            // Merge Frontmatter using the prefix protocol:
-            //   `??key` in template => preserve; only written if key absent
-            //                          in the existing note's frontmatter
-            //   bare `key`          => overwrite (default; refreshed each
-            //                          update from the rendered template)
-            // The `??` prefix is stripped from the final key.
-            // Mandatory fields, always overwritten and written first.
-            const mandatory: Record<string, unknown> = {
-                "zotflow-locked": true,
-                "zotero-key": item.key,
-                "library-id": item.libraryID,
-                "item-version": item.version,
-            };
-            // The subtree fingerprint: Zotero does not bump an item's version
-            // when a child (attachment, annotation, note) changes.
-            if (marks.tree) mandatory["item-tree"] = marks.tree;
-            // How far this device had synced the library: a device that is
-            // behind leaves the note alone (see LibraryNoteService).
-            if (marks.libraryVersion) {
-                mandatory["library-version"] = marks.libraryVersion;
-            }
-            const finalFrontmatter = withMandatoryFirst(
-                mandatory,
-                mergeTemplateFrontmatter(
-                    originalFrontmatter,
-                    templateFrontmatter,
-                ),
+            const { text } = await this.renderSourceNote(
+                item,
+                templateContent || DEFAULT_ITEM_TEMPLATE,
+                originalFrontmatter,
+                snapshot,
+                false,
             );
-
-            // Stringify Frontmatter
-            const frontmatterString =
-                await this.parentHost.stringifyYaml(finalFrontmatter);
-
-            // Render Body
-            const renderedBody = await this.render(body, context);
-
-            return `---\n${frontmatterString}---\n${renderedBody}`;
+            return text;
         } catch (e) {
             throw ZotFlowError.wrap(
                 e,
@@ -681,12 +635,105 @@ export class LibraryTemplateService {
         }
     }
 
-    /** Preview-render a library item with the given template content. */
+    /**
+     * The source-note render. `strict` (previews) reports frontmatter
+     * problems and positions Liquid errors in the whole template; a real
+     * render goes on without the template's frontmatter instead.
+     */
+    private async renderSourceNote(
+        item: AnyIDBZoteroItem,
+        template: string,
+        originalFrontmatter: Record<string, unknown>,
+        snapshot: SourceNoteSnapshot | undefined,
+        strict: boolean,
+    ): Promise<{
+        text: string;
+        frontmatter: Record<string, unknown>;
+        templateFrontmatter: Record<string, unknown>;
+        mandatory: Record<string, unknown>;
+    }> {
+        const marks = snapshot ?? (await takeSourceNoteSnapshot(item.libraryID, item.key));
+        const context = await this.prepareItemContext(item);
+        const { frontmatter, body, bodyLine } = splitFrontmatter(template);
+
+        const templateFrontmatter = await renderTemplateFrontmatter({
+            engine: this.engine,
+            source: frontmatter,
+            scope: context,
+            parentHost: this.parentHost,
+            strict,
+            logContext: "LibraryTemplateService",
+        });
+
+        // Merge Frontmatter using the prefix protocol:
+        //   `??key` in template => preserve; only written if key absent
+        //                          in the existing note's frontmatter
+        //   bare `key`          => overwrite (default; refreshed each
+        //                          update from the rendered template)
+        // The `??` prefix is stripped from the final key.
+        // Mandatory fields, always overwritten and written first.
+        const mandatory: Record<string, unknown> = {
+            "zotflow-locked": true,
+            "zotero-key": item.key,
+            "library-id": item.libraryID,
+            "item-version": item.version,
+        };
+        // The subtree fingerprint: Zotero does not bump an item's version
+        // when a child (attachment, annotation, note) changes.
+        if (marks.tree) mandatory["item-tree"] = marks.tree;
+        // How far this device had synced the library: a device that is
+        // behind leaves the note alone (see LibraryNoteService).
+        if (marks.libraryVersion) {
+            mandatory["library-version"] = marks.libraryVersion;
+        }
+        const finalFrontmatter = withMandatoryFirst(
+            mandatory,
+            mergeTemplateFrontmatter(originalFrontmatter, templateFrontmatter),
+        );
+
+        const frontmatterString =
+            await this.parentHost.stringifyYaml(finalFrontmatter);
+
+        const renderedBody = strict
+            ? await renderFragment(this.engine, body, context, bodyLine)
+            : await this.render(body, context);
+
+        return {
+            text: `---\n${frontmatterString}---\n${renderedBody}`,
+            frontmatter: finalFrontmatter,
+            templateFrontmatter,
+            mandatory,
+        };
+    }
+
+    /**
+     * Preview a source note for the template tester, as a new note (no
+     * existing frontmatter to merge into). An empty template previews the
+     * built-in default, which is what an empty template path renders.
+     */
     async previewLibrarySourceNote(
         libraryID: number,
         key: string,
         templateContent: string,
-    ): Promise<string> {
+    ): Promise<TemplatePreviewResult> {
+        const item = await this.getPreviewItem(libraryID, key);
+        return previewResult(async (hints) => {
+            let template = templateContent;
+            if (!template.trim()) {
+                template = DEFAULT_ITEM_TEMPLATE;
+                hints.push("The template is empty; this is the built-in default template.");
+            }
+            const out = await this.renderSourceNote(item, template, {}, undefined, true);
+            const hint = mandatoryKeyHint(out.templateFrontmatter, out.mandatory);
+            if (hint) hints.push(hint);
+            return { output: out.text, frontmatter: out.frontmatter };
+        });
+    }
+
+    private async getPreviewItem(
+        libraryID: number,
+        key: string,
+    ): Promise<AnyIDBZoteroItem> {
         const item = await db.items.get([libraryID, key]);
         if (!item) {
             throw new ZotFlowError(
@@ -695,7 +742,7 @@ export class LibraryTemplateService {
                 `Item not found: ${libraryID}/${key}`,
             );
         }
-        return this.renderLibrarySourceNote(item, templateContent, {});
+        return item;
     }
 
     /** Return the user-configured template file content, or the built-in default. */
@@ -716,31 +763,9 @@ export class LibraryTemplateService {
     async renderCitationTemplate(
         input: CitationTemplateInput,
         notePath: string,
-        format: "pandoc" | "wikilink" | "footnote" | "footnote-ref",
+        format: CitationTemplateFormat,
     ): Promise<string> {
-        let template: string;
-        if (format === "pandoc") {
-            template =
-                this.settings.citationPandocTemplate.trim() === ""
-                    ? FALLBACK_PANDOC_TEMPLATE
-                    : this.settings.citationPandocTemplate.trim();
-        } else if (format === "wikilink") {
-            template =
-                this.settings.citationWikilinkTemplate.trim() === ""
-                    ? FALLBACK_WIKILINK_TEMPLATE
-                    : this.settings.citationWikilinkTemplate.trim();
-        } else if (format === "footnote-ref") {
-            template =
-                this.settings.citationFootnoteRefTemplate.trim() === ""
-                    ? FALLBACK_FOOTNOTE_REF_TEMPLATE
-                    : this.settings.citationFootnoteRefTemplate.trim();
-        } else {
-            template =
-                this.settings.citationFootnoteTemplate.trim() === ""
-                    ? FALLBACK_FOOTNOTE_TEMPLATE
-                    : this.settings.citationFootnoteTemplate.trim();
-        }
-
+        const template = this.getDefaultCitationTemplate(format);
         if (!template) return "";
 
         const item = await db.items.get([input.item.libraryID, input.item.key]);
@@ -765,19 +790,17 @@ export class LibraryTemplateService {
         return this.render(template, context);
     }
 
-    /** Preview a citation template for a library item (no file creation). */
+    /**
+     * Preview a citation template for the template tester. An empty template
+     * previews the built-in fallback for `format`, which is what an empty
+     * setting renders.
+     */
     async previewCitationTemplate(
         input: CitationTemplateInput,
         template: string,
-    ): Promise<string> {
-        const item = await db.items.get([input.item.libraryID, input.item.key]);
-        if (!item) {
-            throw new ZotFlowError(
-                ZotFlowErrorCode.RESOURCE_MISSING,
-                "LibraryTemplateService",
-                `Item not found: ${input.item.libraryID}/${input.item.key}`,
-            );
-        }
+        format: CitationTemplateFormat,
+    ): Promise<TemplatePreviewResult> {
+        const item = await this.getPreviewItem(input.item.libraryID, input.item.key);
         const notePath =
             (await this.parentHost.getFileByKey(item.key)) ??
             (await this.notePathService.resolveLibraryNotePath(item));
@@ -790,31 +813,33 @@ export class LibraryTemplateService {
                 this.mapToAnnotationContext(a),
             );
         }
-        return this.render(template, context);
+        return previewResult(async (hints) => {
+            const { source, firstLine, firstCol } = trimmedStart(template);
+            if (!source) {
+                hints.push("The template is empty; this is the built-in default template.");
+                return {
+                    output: await renderFragment(
+                        this.engine,
+                        FALLBACK_CITATION_TEMPLATES[format],
+                        context,
+                    ),
+                };
+            }
+            return {
+                output: await renderFragment(this.engine, source, context, firstLine, firstCol),
+            };
+        });
     }
 
     /** Return the current citation template from settings. */
-    getDefaultCitationTemplate(
-        format: "pandoc" | "wikilink" | "footnote" | "footnote-ref",
-    ): string {
-        if (format === "pandoc") {
-            return this.settings.citationPandocTemplate.trim() === ""
-                ? FALLBACK_PANDOC_TEMPLATE
-                : this.settings.citationPandocTemplate.trim();
-        }
-        if (format === "wikilink") {
-            return this.settings.citationWikilinkTemplate.trim() === ""
-                ? FALLBACK_WIKILINK_TEMPLATE
-                : this.settings.citationWikilinkTemplate.trim();
-        }
-        if (format === "footnote-ref") {
-            return this.settings.citationFootnoteRefTemplate.trim() === ""
-                ? FALLBACK_FOOTNOTE_REF_TEMPLATE
-                : this.settings.citationFootnoteRefTemplate.trim();
-        }
-        return this.settings.citationFootnoteTemplate.trim() === ""
-            ? FALLBACK_FOOTNOTE_TEMPLATE
-            : this.settings.citationFootnoteTemplate.trim();
+    getDefaultCitationTemplate(format: CitationTemplateFormat): string {
+        const saved = this.settings[CITATION_TEMPLATE_SETTINGS[format]].trim();
+        return saved || FALLBACK_CITATION_TEMPLATES[format];
+    }
+
+    /** The built-in template for `format`, used while its setting is empty. */
+    getFallbackCitationTemplate(format: CitationTemplateFormat): string {
+        return FALLBACK_CITATION_TEMPLATES[format];
     }
 
     private async prepareItemContext(

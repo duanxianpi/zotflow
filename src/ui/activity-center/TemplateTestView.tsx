@@ -14,6 +14,11 @@ import type { AnyIDBZoteroItem } from "types/db-schema";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { TFile } from "obsidian";
 import type { AnnotationJSON } from "types/zotero-reader";
+import type {
+    TemplateError,
+    TemplatePreviewResult,
+} from "types/template-preview";
+import type { CitationTemplateFormat } from "worker/services/library-template";
 
 type TemplateContext =
     | "library"
@@ -25,6 +30,7 @@ type TemplateContext =
     | "citation-footnote-ref"
     | "citation-footnote";
 type OutputMode = "preview" | "source";
+type CitationContext = Extract<TemplateContext, `citation-${string}`>;
 
 const CONTEXT_LABELS: Record<TemplateContext, string> = {
     library: "Library Source Note",
@@ -48,13 +54,26 @@ function needsLibraryItem(ctx: TemplateContext): boolean {
     );
 }
 
-function isCitationContext(ctx: TemplateContext): boolean {
+function isCitationContext(ctx: TemplateContext): ctx is CitationContext {
     return (
         ctx === "citation-pandoc" ||
         ctx === "citation-wikilink" ||
         ctx === "citation-footnote-ref" ||
         ctx === "citation-footnote"
     );
+}
+
+/** `citation-pandoc` → `pandoc`, and so on. */
+function citationFormat(ctx: CitationContext): CitationTemplateFormat {
+    return ctx.slice("citation-".length) as CitationTemplateFormat;
+}
+
+function formatTemplateError(error: TemplateError): string {
+    const where =
+        error.line !== undefined
+            ? `Line ${error.line}${error.col !== undefined ? `, column ${error.col}` : ""}: `
+            : "";
+    return `${where}${error.message}`;
 }
 
 const MAX_ANNOTATION_LABEL_LENGTH = 30;
@@ -321,7 +340,7 @@ export const TemplateTestView: React.FC = () => {
         setError("");
         setRendering(true);
         try {
-            let result: string;
+            let result: TemplatePreviewResult;
             const currentTemplate = templateEditorRef.current
                 ? templateEditorRef.current.value
                 : template;
@@ -363,6 +382,9 @@ export const TemplateTestView: React.FC = () => {
                                         : undefined,
                             },
                             currentTemplate,
+                            isCitationContext(context)
+                                ? citationFormat(context)
+                                : "pandoc",
                         );
                 }
             } else {
@@ -384,7 +406,12 @@ export const TemplateTestView: React.FC = () => {
                 }
             }
 
-            setRendered(result);
+            if (result.ok) {
+                setRendered(result.output);
+            } else {
+                setRendered("");
+                setError(formatTemplateError(result.error));
+            }
         } catch (e) {
             const msg =
                 e instanceof Error ? e.message : "Template rendering failed";

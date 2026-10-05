@@ -4,7 +4,15 @@ import { db } from "db/db";
 import { buildItemMetadata } from "utils/zotero-fields";
 import { workerClearTimeout, workerSetTimeout } from "worker/timers";
 
+import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import {
+    liquidErrorInfo,
+    previewResult,
+    TemplatePreviewError,
+} from "worker/services/liquid-support";
+
 import type { Template } from "liquidjs";
+import type { TemplatePreviewResult } from "types/template-preview";
 import type { IParentProxy } from "bridge/types";
 import type { ZotFlowSettings } from "settings/types";
 import type { AnyIDBZoteroItem } from "types/db-schema";
@@ -173,24 +181,7 @@ export class DisplayTitleService {
 
     private render(templates: Template[], item: AnyIDBZoteroItem): string {
         try {
-            const out: unknown = this.engine.renderSync(templates, {
-                item: {
-                    ...buildItemMetadata(item),
-                    key: item.key,
-                    version: item.version,
-                    libraryID: item.libraryID,
-                    itemType: item.itemType,
-                    dateAdded: item.dateAdded,
-                    dateModified: item.dateModified,
-                    tags: item.raw?.data?.tags || [],
-                    ...attachmentFields(item),
-                },
-            });
-            // Titles are one line; collapse whatever whitespace the
-            // template's tags left behind.
-            return typeof out === "string"
-                ? out.replace(/\s+/g, " ").trim()
-                : "";
+            return collapseTitle(this.renderRaw(templates, item));
         } catch (e) {
             if (!this.reportedRenderError) {
                 this.reportedRenderError = true;
@@ -204,6 +195,89 @@ export class DisplayTitleService {
             return "";
         }
     }
+
+    private renderRaw(templates: Template[], item: AnyIDBZoteroItem): string {
+        const out: unknown = this.engine.renderSync(templates, {
+            item: {
+                ...buildItemMetadata(item),
+                key: item.key,
+                version: item.version,
+                libraryID: item.libraryID,
+                itemType: item.itemType,
+                dateAdded: item.dateAdded,
+                dateModified: item.dateModified,
+                tags: item.raw?.data?.tags || [],
+                ...attachmentFields(item),
+            },
+        });
+        return typeof out === "string" ? out : "";
+    }
+
+    /**
+     * Preview `source` on one item for the template tester, following the
+     * same rules as `get()`; the hints say which rule decided the title.
+     */
+    async preview(
+        libraryID: number,
+        key: string,
+        source: string,
+    ): Promise<TemplatePreviewResult> {
+        const item = await db.items.get([libraryID, key]);
+        if (!item) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.RESOURCE_MISSING,
+                "DisplayTitleService",
+                `Item not found: ${libraryID}/${key}`,
+            );
+        }
+        const fallback = item.title || "";
+        return previewResult(async (hints) => {
+            if (!source.trim()) {
+                hints.push("The template is empty; the Zotero title is shown.");
+                return { output: fallback };
+            }
+            // Parsed untrimmed so errors point where the user typed them;
+            // the surrounding whitespace is collapsed away either way.
+            let templates: Template[];
+            try {
+                templates = this.engine.parse(source);
+            } catch (e) {
+                throw new TemplatePreviewError(liquidErrorInfo(e));
+            }
+            if (UNTEMPLATED_TYPES.has(item.itemType)) {
+                hints.push(
+                    "Notes and annotations keep their own names; the template does not apply to them.",
+                );
+                return { output: fallback };
+            }
+            if (item.itemType === "attachment" && !templatesAttachments(source)) {
+                hints.push(
+                    'Attachments keep their file names unless the template checks item.itemType == "attachment".',
+                );
+                return { output: fallback };
+            }
+            let raw: string;
+            try {
+                raw = this.renderRaw(templates, item);
+            } catch (e) {
+                throw new TemplatePreviewError(liquidErrorInfo(e));
+            }
+            const title = collapseTitle(raw);
+            if (!title) {
+                hints.push("The template renders empty; the Zotero title is shown.");
+                return { output: fallback };
+            }
+            if (/\n/.test(raw.trim())) {
+                hints.push("Line breaks are collapsed: a display title is one line.");
+            }
+            return { output: title };
+        });
+    }
+}
+
+/** Titles are one line; collapse whatever whitespace the template's tags left behind. */
+function collapseTitle(out: string): string {
+    return out.replace(/\s+/g, " ").trim();
 }
 
 /** An attachment's file properties (not Zotero schema fields); {} otherwise. */

@@ -314,6 +314,95 @@ describe("DisplayTitleService", () => {
     });
 });
 
+describe("preview", () => {
+    beforeEach(async () => {
+        await createServiceHarness();
+    });
+
+    const preview = (template: string, key = "ARTICLE1") =>
+        service("").preview(USER_ID, key, template);
+
+    test("renders like the tree does", async () => {
+        const item = await article();
+        expect(await preview(TEMPLATE)).toEqual({
+            ok: true,
+            output: service(TEMPLATE).get(item),
+            hints: [],
+        });
+    });
+
+    test("an empty template shows the Zotero title", async () => {
+        await article();
+        const result = await preview("  ");
+        expect(result).toMatchObject({ ok: true, output: "Attention Is All You Need" });
+        expect(result.hints).toEqual([expect.stringMatching(/template is empty/)]);
+    });
+
+    test("a syntax error is positioned, leading whitespace included", async () => {
+        await article();
+        expect(await preview("\n{{ item.title")).toMatchObject({
+            ok: false,
+            error: { phase: "parse", line: 2, col: 1 },
+        });
+    });
+
+    test("a render error is reported instead of the fallback", async () => {
+        await article();
+        expect(await preview("{{ item.title }} {% render 'missing' %}")).toMatchObject({
+            ok: false,
+            error: { phase: "render", line: 1 },
+        });
+    });
+
+    test("a note keeps its own name, and says so", async () => {
+        await article("NOTE0001", { itemType: "note", title: "Reading notes" }, { itemType: "note" });
+        const result = await preview(TEMPLATE, "NOTE0001");
+        expect(result).toMatchObject({ ok: true, output: "Reading notes" });
+        expect(result.hints).toEqual([expect.stringMatching(/Notes and annotations/)]);
+    });
+
+    test("a syntax error is reported even where the template does not apply", async () => {
+        await article("NOTE0001", { itemType: "note", title: "Reading notes" }, { itemType: "note" });
+        expect(await preview("{{ item.title", "NOTE0001")).toMatchObject({ ok: false });
+    });
+
+    test("an attachment keeps its file name unless the template handles attachments", async () => {
+        await article("ATTACH01", { itemType: "attachment", title: "Full Text PDF" }, { itemType: "attachment" });
+        const result = await preview(TEMPLATE, "ATTACH01");
+        expect(result).toMatchObject({ ok: true, output: "Full Text PDF" });
+        expect(result.hints).toEqual([expect.stringMatching(/Attachments keep/)]);
+
+        const handled = await preview(
+            '{% if item.itemType == "attachment" %}File{% else %}{{ item.title }}{% endif %}',
+            "ATTACH01",
+        );
+        expect(handled).toEqual({ ok: true, output: "File", hints: [] });
+    });
+
+    test("an empty render shows the Zotero title, and says so", async () => {
+        await article();
+        const result = await preview("{{ item.doesNotExist }}");
+        expect(result).toMatchObject({ ok: true, output: "Attention Is All You Need" });
+        expect(result.hints).toEqual([expect.stringMatching(/renders empty/)]);
+    });
+
+    test("line breaks inside the title are pointed out", async () => {
+        await article();
+        const result = await preview("{{ item.year }}\n{{ item.title }}");
+        expect(result).toMatchObject({ ok: true, output: "2017 Attention Is All You Need" });
+        expect(result.hints).toEqual([expect.stringMatching(/Line breaks/)]);
+    });
+
+    test("whitespace only around the title is not a line break", async () => {
+        await article();
+        expect((await preview("\n{{ item.title }}\n")).hints).toEqual([]);
+    });
+
+    test("an unknown item is a resource error", async () => {
+        await expect(preview(TEMPLATE, "MISSING1")).rejects.toThrow(/Item not found/);
+    });
+});
+
 describe("item search", () => {
     let h: ServiceHarness;
 

@@ -25,6 +25,7 @@ import type { FakeParentHost } from "../fakes/parent-host";
 import type { ZotFlowSettings } from "settings/types";
 import type { TFileWithoutParentAndVault } from "types/zotflow";
 import type { AnnotationJSON } from "types/zotero-reader";
+import { previewOutput } from "../fakes/preview";
 
 const DEBOUNCE_DELAY = 2000;
 
@@ -355,9 +356,11 @@ describe("sidecar annotations", () => {
             JSON.stringify({ annotations: [annotation({ id: "FROMSIDE" })] }),
         );
 
-        const out = await templates.previewLocalNote(
-            pdf(),
-            "{% for a in item.annotations %}{{ a.key }}{% endfor %}",
+        const out = await previewOutput(
+            templates.previewLocalNote(
+                pdf(),
+                "{% for a in item.annotations %}{{ a.key }}{% endfor %}",
+            ),
         );
         expect(out).toContain("FROMSIDE");
     });
@@ -369,16 +372,18 @@ describe("sidecar annotations", () => {
             JSON.stringify({ annotations: [annotation({ id: "FROMSIDE" })] }),
         );
 
-        const out = await templates.previewLocalNote(
-            pdf(),
-            "{% for a in item.annotations %}{{ a.key }}{% endfor %}",
+        const out = await previewOutput(
+            templates.previewLocalNote(
+                pdf(),
+                "{% for a in item.annotations %}{{ a.key }}{% endfor %}",
+            ),
         );
         expect(out).toContain("FROMSIDE");
     });
 
     test("no sidecar means no annotations, not an error", async () => {
         await expect(
-            templates.previewLocalNote(pdf(), "{{ item.annotations.size }}"),
+            previewOutput(templates.previewLocalNote(pdf(), "{{ item.annotations.size }}")),
         ).resolves.toContain("0");
     });
 
@@ -387,7 +392,7 @@ describe("sidecar annotations", () => {
         host.vault.set("Attachments/Some Paper.zf.json", "{ not json");
 
         await expect(
-            templates.previewLocalNote(pdf(), "{{ item.annotations.size }}"),
+            previewOutput(templates.previewLocalNote(pdf(), "{{ item.annotations.size }}")),
         ).resolves.toContain("0");
     });
 
@@ -398,8 +403,33 @@ describe("sidecar annotations", () => {
         );
 
         await expect(
-            templates.previewLocalNote(pdf(), "{{ item.annotations.size }}"),
+            previewOutput(templates.previewLocalNote(pdf(), "{{ item.annotations.size }}")),
         ).resolves.toContain("0");
+    });
+});
+
+describe("preview results", () => {
+    test("an error in the body is positioned in the whole template", async () => {
+        expect(
+            await templates.previewLocalNote(pdf(), "---\na: 1\n---\n\n{% if %}"),
+        ).toMatchObject({ ok: false, error: { phase: "parse", line: 5 } });
+    });
+
+    test("a mandatory key in the template is pointed out", async () => {
+        const result = await templates.previewLocalNote(
+            pdf(),
+            "---\nzotflow-locked: false\n---\nbody",
+        );
+        expect(result).toMatchObject({ ok: true });
+        expect(result.hints).toEqual([
+            'ZotFlow writes "zotflow-locked" itself; the template\'s value is not used.',
+        ]);
+    });
+
+    test("an empty template previews the built-in default", async () => {
+        const result = await templates.previewLocalNote(pdf(), "");
+        expect(result.ok && result.output).toContain("# Some Paper");
+        expect(result.hints[0]).toMatch(/built-in default/);
     });
 });
 
