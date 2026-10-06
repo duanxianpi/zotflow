@@ -18,7 +18,6 @@ export default defineConfig(
         "docs/**",
         "reader/reader/**",
         "note-editor/note-editor/**",
-        "zotflow-enhancement-pack/**",
         "versions.json",
         "main.js",
         "src/main.js",
