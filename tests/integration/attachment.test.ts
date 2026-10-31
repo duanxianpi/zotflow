@@ -12,9 +12,11 @@
  * and what is injected.
  *
  * Scope note: this covers local Zotero storage, the cache decision, the
- * download lock, the MD5 integrity/repair rules and the LRU. The WebDAV
- * zip-unpacking path and the Android size guard are not covered yet.
+ * download lock, the MD5 integrity/repair rules, the LRU and which file of a
+ * WebDAV storage ZIP is served. The Android size guard is not covered yet.
  */
+import { zipSync } from "fflate";
+import SparkMD5 from "spark-md5";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -420,6 +422,116 @@ describe("MD5 integrity", () => {
         expect(
             h.host.logs.some((l) =>
                 l.message.includes("WebDAV file might be outdated"),
+            ),
+        ).toBe(true);
+    });
+});
+
+/* ================================================================ */
+/*  WebDAV storage ZIP                                              */
+/* ================================================================ */
+
+describe("WebDAV storage ZIP", () => {
+    const PDF = [0x25, 0x50, 0x44, 0x46, 0x2d, 1, 2, 3];
+    const SIDECAR = [...new TextEncoder().encode('{"info":{"itemID":1}}')];
+
+    /** A storage ZIP whose entries are in the given order. */
+    function storageZip(files: Record<string, number[]>): ArrayBuffer {
+        const entries: Record<string, Uint8Array> = {};
+        for (const [name, content] of Object.entries(files)) {
+            entries[name] = new Uint8Array(content);
+        }
+        return zipSync(entries).slice().buffer;
+    }
+
+    beforeEach(async () => {
+        h = await createAttachmentHarness({ settings: { useWebDav: true } });
+    });
+
+    it("serves the attachment, not a sidecar listed before it (#134)", async () => {
+        const item = await h.seedAttachment("ATTACH01", {
+            filename: "paper.pdf",
+        });
+        h.webdav.payload = storageZip({
+            "jasminum-outline.json": SIDECAR,
+            "paper.pdf": PDF,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual(PDF);
+        expect(h.fetches).toEqual([]);
+    });
+
+    it("matches the filename across Unicode normalization", async () => {
+        const item = await h.seedAttachment("ATTACH01", {
+            filename: "caf\u00e9.pdf",
+        });
+        h.webdav.payload = storageZip({
+            "other.pdf": [9, 9],
+            "cafe\u0301.pdf": PDF,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual(PDF);
+    });
+
+    it("falls back to the MD5 when no name matches", async () => {
+        const item = await h.seedAttachment("ATTACH01", {
+            filename: "\u8bba\u6587.pdf",
+            md5: SparkMD5.ArrayBuffer.hash(new Uint8Array(PDF).buffer),
+        });
+        h.webdav.payload = storageZip({
+            "other.pdf": [9, 9],
+            "garbled.pdf": PDF,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual(PDF);
+    });
+
+    it("takes the only file with the attachment's extension", async () => {
+        const item = await h.seedAttachment("ATTACH01", {
+            filename: "renamed.pdf",
+        });
+        h.webdav.payload = storageZip({
+            "jasminum-outline.json": SIDECAR,
+            "paper.pdf": PDF,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual(PDF);
+    });
+
+    it("serves a snapshot's main page among its resources", async () => {
+        const page = [...new TextEncoder().encode("<html>main</html>")];
+        const item = await h.seedAttachment("ATTACH01", {
+            linkMode: "imported_url",
+            contentType: "text/html",
+            filename: "index.html",
+        });
+        h.webdav.payload = storageZip({
+            "frame.html": [1],
+            "style.css": [2],
+            "index.html": page,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual(page);
+    });
+
+    it("does not guess between candidates; it tries the Zotero API instead", async () => {
+        const item = await h.seedAttachment("ATTACH01", {
+            filename: "paper.pdf",
+        });
+        h.webdav.payload = storageZip({
+            "a.pdf": [9, 9],
+            "b.pdf": PDF,
+        });
+
+        expect(await readBlob(await h.service.getFileBlob(item))).toEqual([
+            1, 2, 3,
+        ]);
+        expect(h.fetches).toEqual([
+            expect.stringContaining("/items/ATTACH01/file"),
+        ]);
+        expect(
+            h.host.logs.some((l) =>
+                String(l.message).includes("WebDAV failed for ATTACH01"),
             ),
         ).toBe(true);
     });

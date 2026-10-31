@@ -435,7 +435,7 @@ export class AttachmentService {
                                 zipPath: `${item.key}.zip`,
                             },
                         );
-                        buffer = await this.downloadFromWebDAV(item.key);
+                        buffer = await this.downloadFromWebDAV(item);
                         this.parentHost.log(
                             "debug",
                             "WebDAV attachment download succeeded.",
@@ -766,7 +766,10 @@ export class AttachmentService {
     /**
      * Download from WebDAV
      */
-    private async downloadFromWebDAV(key: string): Promise<ArrayBuffer> {
+    private async downloadFromWebDAV(
+        item: IDBZoteroItem<AttachmentData>,
+    ): Promise<ArrayBuffer> {
+        const key = item.key;
         const startedAt = Date.now();
         try {
             const zipPath = `${key}.zip`;
@@ -811,81 +814,22 @@ export class AttachmentService {
                 },
             );
 
-            // Wrap unzip in a promise to handle async callback errors
-            return await new Promise<ArrayBuffer>((resolve, reject) => {
-                unzip(
-                    uint8Input,
-                    {
-                        filter: (file) =>
-                            !file.name.endsWith("/") &&
-                            !file.name.startsWith(".") &&
-                            !file.name.endsWith(".prop"),
-                    },
-                    (err, unzipped) => {
-                        if (err) {
-                            this.parentHost.log(
-                                "debug",
-                                "WebDAV unzip failed.",
-                                "AttachmentService",
-                                {
-                                    itemKey: key,
-                                    zipPath,
-                                    errorMessage: err.message,
-                                },
-                            );
-                            reject(
-                                new ZotFlowError(
-                                    ZotFlowErrorCode.PARSE_ERROR,
-                                    "AttachmentService",
-                                    `Unzip failed: ${err.message}`,
-                                ),
-                            );
-                            return;
-                        }
-
-                        const targetFileName = Object.keys(unzipped)[0];
-                        if (!targetFileName || !unzipped[targetFileName]) {
-                            this.parentHost.log(
-                                "debug",
-                                "WebDAV unzip returned no valid payload file.",
-                                "AttachmentService",
-                                {
-                                    itemKey: key,
-                                    zipPath,
-                                    entryCount: Object.keys(unzipped).length,
-                                },
-                            );
-                            reject(
-                                new ZotFlowError(
-                                    ZotFlowErrorCode.PARSE_ERROR,
-                                    "AttachmentService",
-                                    "Empty ZIP or only .prop found",
-                                ),
-                            );
-                            return;
-                        }
-
-                        this.parentHost.log(
-                            "debug",
-                            "WebDAV unzip selected payload entry.",
-                            "AttachmentService",
-                            {
-                                itemKey: key,
-                                zipPath,
-                                entryCount: Object.keys(unzipped).length,
-                                targetFileName,
-                                payloadBytes:
-                                    unzipped[targetFileName].byteLength,
-                                elapsedMs: Date.now() - startedAt,
-                            },
-                        );
-
-                        resolve(
-                            unzipped[targetFileName].buffer,
-                        );
-                    },
-                );
-            });
+            const payload = await this.extractAttachmentFromZip(
+                uint8Input,
+                item,
+                "WebDAV",
+            );
+            this.parentHost.log(
+                "debug",
+                "WebDAV unzip selected payload entry.",
+                "AttachmentService",
+                {
+                    itemKey: key,
+                    zipPath,
+                    elapsedMs: Date.now() - startedAt,
+                },
+            );
+            return payload;
         } catch (e) {
             throw ZotFlowError.wrap(
                 e,
@@ -894,6 +838,78 @@ export class AttachmentService {
                 `WebDAV Download Error:`,
             );
         }
+    }
+
+    /**
+     * Unzip a Zotero storage ZIP and return the attachment's own file.
+     *
+     * The ZIP holds the whole storage folder, so it can carry more than the
+     * attachment: other plugins' sidecars (Jasminum writes
+     * `jasminum-outline.json`), or a web snapshot's resources. Entry order says
+     * nothing about which one is the attachment.
+     */
+    private async extractAttachmentFromZip(
+        input: Uint8Array,
+        item: IDBZoteroItem<AttachmentData>,
+        source: "WebDAV" | "API",
+    ): Promise<ArrayBuffer> {
+        const entries = await new Promise<Record<string, Uint8Array>>(
+            (resolve, reject) => {
+                unzip(
+                    input,
+                    {
+                        filter: (file) =>
+                            !file.name.endsWith("/") &&
+                            !file.name.startsWith(".") &&
+                            !file.name.endsWith(".prop"),
+                    },
+                    (err, unzipped) => {
+                        if (err) {
+                            reject(
+                                new ZotFlowError(
+                                    ZotFlowErrorCode.PARSE_ERROR,
+                                    "AttachmentService",
+                                    `${source} unzip failed: ${err.message}`,
+                                ),
+                            );
+                            return;
+                        }
+                        resolve(unzipped);
+                    },
+                );
+            },
+        );
+
+        const names = Object.keys(entries);
+        const picked = pickAttachmentEntry(entries, item.raw.data);
+        this.parentHost.log(
+            "debug",
+            `${source} ZIP entry selection.`,
+            "AttachmentService",
+            {
+                itemKey: item.key,
+                expectedFileName: item.raw.data.filename,
+                entryNames: names,
+                picked: picked?.name,
+                matchedBy: picked?.matchedBy,
+            },
+        );
+
+        if (!picked) {
+            throw new ZotFlowError(
+                ZotFlowErrorCode.PARSE_ERROR,
+                "AttachmentService",
+                names.length === 0
+                    ? `${source} ZIP for ${item.key} has no files.`
+                    : `${source} ZIP for ${item.key} does not contain "${item.raw.data.filename ?? item.key}" (found: ${names.join(", ")}).`,
+            );
+        }
+
+        const bytes = picked.bytes;
+        return bytes.byteOffset === 0 &&
+            bytes.byteLength === bytes.buffer.byteLength
+            ? (bytes.buffer as ArrayBuffer)
+            : bytes.slice().buffer;
     }
 
     /**
@@ -947,44 +963,11 @@ export class AttachmentService {
 
             // Handle ZIP response from API (rare but possible for some storage modes)
             if (response.headers.get("content-type") === "application/zip") {
-                const uint8Input = new Uint8Array(buffer);
-                return await new Promise<ArrayBuffer>((resolve, reject) => {
-                    unzip(
-                        uint8Input,
-                        {
-                            filter: (file) =>
-                                !file.name.endsWith("/") &&
-                                !file.name.startsWith(".") &&
-                                !file.name.endsWith(".prop"),
-                        },
-                        (err, unzipped) => {
-                            if (err) {
-                                reject(
-                                    new ZotFlowError(
-                                        ZotFlowErrorCode.PARSE_ERROR,
-                                        "AttachmentService",
-                                        `API Zip Unzip failed: ${err.message}`,
-                                    ),
-                                );
-                                return;
-                            }
-                            const targetFileName = Object.keys(unzipped)[0];
-                            if (!targetFileName) {
-                                reject(
-                                    new ZotFlowError(
-                                        ZotFlowErrorCode.PARSE_ERROR,
-                                        "AttachmentService",
-                                        "API ZIP Empty",
-                                    ),
-                                );
-                                return;
-                            }
-                            resolve(
-                                unzipped[targetFileName]!.buffer,
-                            );
-                        },
-                    );
-                });
+                return await this.extractAttachmentFromZip(
+                    new Uint8Array(buffer),
+                    item,
+                    "API",
+                );
             }
 
             return buffer;
@@ -1155,4 +1138,77 @@ export class AttachmentService {
             );
         }
     }
+}
+
+/** Content types whose files Zotero names with a known extension. */
+const CONTENT_TYPE_EXTENSIONS: Record<string, string[]> = {
+    "application/pdf": ["pdf"],
+    "application/epub+zip": ["epub"],
+    "text/html": ["html", "htm"],
+    "application/xhtml+xml": ["xhtml", "html", "htm"],
+};
+
+interface PickedEntry {
+    name: string;
+    bytes: Uint8Array;
+    matchedBy: "filename" | "md5" | "only-entry" | "extension";
+}
+
+function extensionOf(name: string): string {
+    const dot = name.lastIndexOf(".");
+    return dot < 0 ? "" : name.slice(dot + 1).toLowerCase();
+}
+
+/**
+ * Find the attachment's own file among the entries of its storage ZIP: by
+ * filename, else the only entry, else by MD5, else the only entry with the
+ * attachment's extension. `undefined` when the choice would be a guess.
+ */
+export function pickAttachmentEntry(
+    entries: Record<string, Uint8Array>,
+    expected: { filename?: string; md5?: string; contentType?: string },
+): PickedEntry | undefined {
+    const names = Object.keys(entries);
+    const pick = (
+        name: string | undefined,
+        matchedBy: PickedEntry["matchedBy"],
+    ): PickedEntry | undefined => {
+        const bytes = name === undefined ? undefined : entries[name];
+        return name === undefined || !bytes
+            ? undefined
+            : { name, bytes, matchedBy };
+    };
+
+    const wanted = expected.filename?.normalize("NFC");
+    if (wanted) {
+        const exact = names.find((n) => n.normalize("NFC") === wanted);
+        if (exact !== undefined) return pick(exact, "filename");
+        const lower = wanted.toLowerCase();
+        const loose = names.filter(
+            (n) => n.normalize("NFC").toLowerCase() === lower,
+        );
+        if (loose.length === 1) return pick(loose[0], "filename");
+    }
+
+    if (names.length === 1) return pick(names[0], "only-entry");
+
+    // Names can come out of the ZIP mangled (a non-UTF-8 filename); the
+    // content still identifies the file.
+    if (expected.md5) {
+        const md5 = expected.md5.toLowerCase();
+        const byHash = names.find(
+            (n) =>
+                SparkMD5.ArrayBuffer.hash(entries[n]!.slice().buffer) === md5,
+        );
+        if (byHash !== undefined) return pick(byHash, "md5");
+    }
+
+    const extensions = new Set<string>(
+        CONTENT_TYPE_EXTENSIONS[expected.contentType ?? ""] ?? [],
+    );
+    if (wanted && extensionOf(wanted)) extensions.add(extensionOf(wanted));
+    const byExtension = names.filter((n) => extensions.has(extensionOf(n)));
+    if (byExtension.length === 1) return pick(byExtension[0], "extension");
+
+    return undefined;
 }
