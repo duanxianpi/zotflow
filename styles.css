@@ -3934,6 +3934,26 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
     margin: 0;
 }
 
+.zotflow-citation-bibliography [data-csl-variable="title"] {
+    font-weight: var(--font-bold, 700);
+    font-style: italic;
+}
+
+.zotflow-citation-reference-link {
+    color: var(--link-color);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+.zotflow-citation-reference-link:hover {
+    color: var(--link-color-hover);
+}
+
+.zotflow-citation-links {
+    margin-top: var(--size-4-2);
+    font-size: var(--font-ui-small);
+}
+
 @media (pointer: coarse) {
     .zotflow-citation-header .zotflow-citation-action {
         width: 36px;

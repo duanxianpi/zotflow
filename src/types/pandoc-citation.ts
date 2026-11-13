@@ -20,6 +20,8 @@ export interface CitationReference {
     bibliography: string;
     /** Native Zotero item target, including the personal/group library path. */
     zoteroUri: string;
+    doi?: string;
+    url?: string;
     /** CSL formatting, sanitized before inserting into the hover card. */
     bibliographyHtml?: string;
     /** Page label, not a zero-based PDF index. */

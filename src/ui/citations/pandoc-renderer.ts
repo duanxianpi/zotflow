@@ -190,6 +190,7 @@ export class PandocCitationRenderer extends Component {
                         ff(this.open(ref, pdf), "Could not open citation"),
                     copyKey: (ref) => this.copyKey(ref, anchor.doc),
                     openInZotero: (ref) => this.openInZotero(ref, anchor.doc),
+                    openUrl: (url) => this.openUrl(url, anchor.doc),
                     dismiss: (restore) => this.dismissPopover(restore),
                 },
             );
@@ -264,6 +265,22 @@ export class PandocCitationRenderer extends Component {
                 "Could not copy the citation key.",
             );
             return false;
+        }
+    }
+
+    private openUrl(url: string, doc: Document): void {
+        try {
+            doc.win.open(url, "_blank", "noopener,noreferrer");
+        } catch (error) {
+            services.logService.error(
+                "Could not open reference link",
+                "PandocCitationRenderer",
+                error,
+            );
+            services.notificationService.notify(
+                "error",
+                "Could not open this reference link.",
+            );
         }
     }
 

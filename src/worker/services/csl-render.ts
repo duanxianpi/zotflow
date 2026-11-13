@@ -10,6 +10,7 @@ import { proxiedFetch } from "worker/proxied-fetch";
 import { CslRenderService } from "worker/csl";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
 import { zoteroLibraryPrefix, zoteroSelectItemUri } from "utils/zotero-uri";
+import { getField } from "utils/zotero-fields";
 
 import type {
     BibliographyContext,
@@ -199,7 +200,12 @@ export class CslRenderWorkerService {
                     );
                     const bibliographyHtml = await this.core.renderBibliography(
                         [items.get(id)!],
-                        { styleId, format: "html", htmlContainer: "strip" },
+                        {
+                            styleId,
+                            format: "html",
+                            htmlContainer: "strip",
+                            htmlVariableSpans: true,
+                        },
                     );
                     const attachments = await db.items
                         .where([
@@ -229,6 +235,14 @@ export class CslRenderWorkerService {
                             row.key,
                         ),
                         bibliographyHtml: bibliographyHtml[0],
+                        doi:
+                            typeof row.csljson?.DOI === "string"
+                                ? row.csljson.DOI
+                                : getField(row.raw.data, "DOI"),
+                        url:
+                            typeof row.csljson?.URL === "string"
+                                ? row.csljson.URL
+                                : getField(row.raw.data, "url"),
                         attachmentKey: pdf?.key,
                     });
                 }

@@ -23,6 +23,8 @@ export interface RenderOptions {
 	 * "[1] entry" for numbered styles.
 	 */
 	htmlContainer?: "keep" | "strip";
+	/** HTML only: mark title, DOI and URL variables for interactive consumers. */
+	htmlVariableSpans?: boolean;
 }
 
 /** Extra per-cite properties accepted by BibliographyContext.addCitation. */

@@ -12,7 +12,7 @@ const STYLE = `<?xml version="1.0" encoding="utf-8"?>
 <citation><layout prefix="(" suffix=")" delimiter="; "><group delimiter=", ">
 <names variable="author"><name form="short"/></names><date variable="issued"><date-part name="year"/></date>
 <text variable="locator" prefix="p. "/></group></layout></citation>
-<bibliography><layout><names variable="author" suffix=". "><name initialize-with=". "/></names><date variable="issued" prefix="(" suffix="). "><date-part name="year"/></date><text variable="title" font-style="italic" suffix=". "/><text variable="container-title"/></layout></bibliography></style>`;
+<bibliography><layout><names variable="author" suffix=". "><name initialize-with=". "/></names><date variable="issued" prefix="(" suffix="). "><date-part name="year"/></date><text variable="title" font-style="italic" suffix=". "/><text variable="container-title"/><text variable="DOI" prefix=". https://doi.org/"/><text variable="URL" prefix=". "/></layout></bibliography></style>`;
 const SOURCE =
     "# Citation preview\n\nEvidence [@zfPreviewSmith, p. 5].\n\nCluster [@zfPreviewSmith; @zfPreviewJones, pp. 8–9].\n\nUnknown [@zfPreviewMissing].\n\n`[@zfPreviewSmith]` and \\[@zfPreviewSmith].\n\nSimple [@zfPreviewSmith].\n\nEnd.\n";
 const PATH = "ZF Pandoc UI test.md";
@@ -150,6 +150,11 @@ test(
                                     title: `Reference ${author}: Writing with evidence in scientific research`,
                                     "container-title":
                                         "A ZotFlow preview example",
+                                    ...(author === "Smith"
+                                        ? { DOI: "10.1234/zotflow-preview" }
+                                        : {
+                                              URL: "https://example.org/zotflow-reference",
+                                          }),
                                     author: [{ family: author }],
                                     issued: { "date-parts": [[2024]] },
                                 },
@@ -422,6 +427,14 @@ test(
                     .count(),
                 3,
             );
+            const titleStyle = await popover
+                .locator('[data-csl-variable="title"]')
+                .evaluate((el) => ({
+                    weight: getComputedStyle(el).fontWeight,
+                    style: getComputedStyle(el).fontStyle,
+                }));
+            assert.ok(Number(titleStyle.weight) >= 600);
+            assert.equal(titleStyle.style, "italic");
             // Intercept OS-facing APIs: test the trusted clicks and exact
             // payloads without replacing the user's clipboard or opening Zotero.
             await page.evaluate(() => {
@@ -458,6 +471,27 @@ test(
                 await page.evaluate(() => window.__zfCitationActions.copied),
                 ["zfPreviewSmith"],
             );
+            const doiLink = popover.locator(
+                "a.zotflow-citation-reference-link",
+            );
+            assert.equal(
+                await doiLink.getAttribute("href"),
+                "https://doi.org/10.1234/zotflow-preview",
+            );
+            await doiLink.click();
+            assert.deepEqual(
+                await page.evaluate(() => window.__zfCitationActions.opened),
+                [
+                    [
+                        "https://doi.org/10.1234/zotflow-preview",
+                        "_blank",
+                        "noopener,noreferrer",
+                    ],
+                ],
+            );
+            await page.evaluate(() => {
+                window.__zfCitationActions.opened.length = 0;
+            });
             await page.screenshot({
                 path: ".obsidian-test/pandoc-reading.png",
                 animations: "disabled",
@@ -536,6 +570,20 @@ test(
                 await popover.locator(".zotflow-citation-reference").count(),
                 2,
             );
+            const urlLink = popover.locator(
+                'a[href="https://example.org/zotflow-reference"]',
+            );
+            await urlLink.click();
+            assert.deepEqual(
+                await page.evaluate(() =>
+                    window.__zfCitationActions.opened.at(-1),
+                ),
+                [
+                    "https://example.org/zotflow-reference",
+                    "_blank",
+                    "noopener,noreferrer",
+                ],
+            );
             await page.screenshot({
                 path: ".obsidian-test/pandoc-cluster-light.png",
                 animations: "disabled",
@@ -604,6 +652,10 @@ test(
             await firstLink.press("ArrowDown");
             await popover.waitFor({ state: "visible" });
             await popover
+                .getByRole("group", {
+                    name: "Actions for zfPreviewSmith",
+                    exact: true,
+                })
                 .getByRole("button", { name: "Open source note" })
                 .click();
             await page.waitForFunction(

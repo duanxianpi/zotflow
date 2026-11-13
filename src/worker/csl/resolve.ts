@@ -94,7 +94,8 @@ export class StyleResolver {
 			styleXml: chain.independentXml,
 			lang,
 			requestedId,
-			engineKey: `${styleKey}|${lang}`,
+			engineKey: `${styleKey}|${lang}${opts.format === "html" && opts.htmlVariableSpans ? "|variables" : ""}`,
+			htmlVariableSpans: opts.format === "html" && opts.htmlVariableSpans,
 			localeLookup: (l: string) => this.locales.getSync(l),
 		};
 	}

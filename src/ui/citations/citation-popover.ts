@@ -2,6 +2,7 @@ import { HoverPopover, sanitizeHTMLToDom, setIcon, setTooltip } from "obsidian";
 import type { HoverParent } from "obsidian";
 import type { CitationReference } from "types/pandoc-citation";
 import { fireAndForgetIn } from "utils/fire-and-forget";
+import { decorateReferenceDetails } from "ui/citations/reference-details";
 
 const ff = fireAndForgetIn("CitationPopover");
 
@@ -9,6 +10,7 @@ export interface CitationPopoverActions {
     open(reference: CitationReference, pdf: boolean): void;
     copyKey(reference: CitationReference): Promise<boolean>;
     openInZotero(reference: CitationReference): void;
+    openUrl(url: string): void;
     dismiss(restoreFocus: boolean): void;
 }
 
@@ -134,7 +136,14 @@ export class CitationPopover extends HoverPopover {
                 bibliography.appendChild(
                     sanitizeHTMLToDom(ref.bibliographyHtml),
                 );
-            else bibliography.setText(ref.bibliography);
+            else
+                bibliography.createSpan({
+                    text: ref.bibliography,
+                    attr: { "data-csl-variable": "title" },
+                });
+            decorateReferenceDetails(bibliography, ref, (url) =>
+                actions.openUrl(url),
+            );
         }
         this.registerDomEvent(this.hoverEl, "keydown", (event) => {
             if (event.key !== "Escape") return;

@@ -105,11 +105,65 @@ describe("Pandoc citation resolution and rendering", () => {
             expect(results[0]?.references[0]?.bibliographyHtml).toContain(
                 "Title smith",
             );
+            expect(results[0]?.references[0]?.bibliographyHtml).toContain(
+                'data-csl-variable="title"',
+            );
             expect(fetch).not.toHaveBeenCalled();
         } finally {
             fetch.mockRestore();
             worker.dispose();
         }
+    });
+
+    test("semantic HTML preserves CSL casing and leaves ordinary exports unmarked", async () => {
+        const worker = new CslRenderWorkerService(DEFAULT_SETTINGS);
+        const style = STYLE.replace(
+            'variable="title"',
+            'variable="title" text-case="title"',
+        );
+        const items = [
+            { id: "test", type: "article-journal", title: "a study of cement" },
+        ];
+        const decorated = await worker.renderBibliography(items, {
+            styleXml: style,
+            format: "html",
+            htmlVariableSpans: true,
+        });
+        expect(decorated[0]).toContain(
+            '<span data-csl-variable="title">A Study of Cement</span>',
+        );
+        const ordinary = await worker.renderBibliography(items, {
+            styleXml: style,
+            format: "html",
+        });
+        expect(ordinary[0]).toContain("A Study of Cement");
+        expect(ordinary[0]).not.toContain("data-csl-variable");
+        worker.dispose();
+    });
+
+    test("marks DOI and URL fields without dropping their reference text", async () => {
+        const worker = new CslRenderWorkerService(DEFAULT_SETTINGS);
+        const style = STYLE.replace(
+            '<text variable="title"/>',
+            '<text variable="title"/><text variable="DOI" prefix=". https://doi.org/"/><text variable="URL" prefix=". "/>',
+        );
+        const result = await worker.renderBibliography(
+            [
+                {
+                    id: "links",
+                    type: "article-journal",
+                    title: "Reference",
+                    DOI: "10.1234/example",
+                    URL: "https://example.org/reference",
+                },
+            ],
+            { styleXml: style, format: "html", htmlVariableSpans: true },
+        );
+        expect(result[0]).toContain('data-csl-variable="DOI"');
+        expect(result[0]).toContain('data-csl-variable="URL"');
+        expect(result[0]).toContain("10.1234/example");
+        expect(result[0]).toContain("https://example.org/reference");
+        worker.dispose();
     });
 
     test("numbering uses the whole document, including repeated citations", async () => {
