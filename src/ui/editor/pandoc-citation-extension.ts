@@ -6,6 +6,7 @@ import {
 } from "@codemirror/view";
 import { StateEffect } from "@codemirror/state";
 import { editorLivePreviewField } from "obsidian";
+import { findPandocCitations } from "utils/pandoc-citation";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
 import type {
@@ -53,6 +54,7 @@ export function pandocCitationExtension(
 
             constructor(private view: EditorView) {
                 this.live = !!view.state.field(editorLivePreviewField, false);
+                this.updateDocument();
                 this.unsubscribe = renderer.changed.subscribe(() =>
                     this.request(),
                 );
@@ -64,12 +66,46 @@ export function pandocCitationExtension(
                     editorLivePreviewField,
                     false,
                 );
-                if (update.docChanged || live !== this.live) {
-                    this.live = live;
-                    this.result = { clusters: [], rendered: [] };
+                const modeChanged = live !== this.live;
+                this.live = live;
+                const citationsChanged =
+                    update.docChanged && this.updateDocument();
+                if (citationsChanged || modeChanged) {
                     this.request();
                 }
                 this.build();
+            }
+
+            /** Rebase citation ranges synchronously, retaining the rendered
+             * data of unchanged clusters while any changed ones are resolved.
+             * Ordinary prose edits need no worker/CSL round trip at all.
+             */
+            private updateDocument(): boolean {
+                const clusters = findPandocCitations(
+                    this.view.state.doc.toString(),
+                );
+                const previous = this.result;
+                const changed =
+                    clusters.length !== previous.clusters.length ||
+                    clusters.some(
+                        (cluster, i) =>
+                            cluster.raw !== previous.clusters[i]?.raw,
+                    );
+                const byRaw = new Map(
+                    previous.clusters.map((cluster, i) => [
+                        cluster.raw,
+                        previous.rendered[i] ?? null,
+                    ]),
+                );
+                this.result = {
+                    clusters,
+                    rendered: changed
+                        ? clusters.map(
+                              (cluster) => byRaw.get(cluster.raw) ?? null,
+                          )
+                        : previous.rendered,
+                };
+                return changed;
             }
 
             private request(): void {
@@ -82,7 +118,13 @@ export function pandocCitationExtension(
                     this.timer = undefined;
                     void renderer.render(source).then((result) => {
                         if (!this.alive || revision !== this.revision) return;
-                        this.result = result;
+                        // Prose may have moved the ranges since this request
+                        // began. A changed citation sequence would have bumped
+                        // revision, so these results still match the live ranges.
+                        this.result = {
+                            clusters: this.result.clusters,
+                            rendered: result.rendered,
+                        };
                         this.view.dispatch({
                             effects: refreshCitations.of(null),
                         });

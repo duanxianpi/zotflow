@@ -245,6 +245,99 @@ test(
                     "(Smith, 2024)",
                 ],
             );
+            // Typing ordinary prose must preserve the existing citation DOM,
+            // including edits on the same line and offsets before a citation.
+            await page.evaluate(() => {
+                app.workspace.activeLeaf.view.editor.setCursor({
+                    line: 2,
+                    ch: 0,
+                });
+                window.__zfTypingRoots = [
+                    ...document.querySelectorAll(
+                        ".workspace-leaf.mod-active .cm-content .zotflow-pandoc-citation",
+                    ),
+                ];
+            });
+            for (const letter of "abc") {
+                await page.keyboard.type(letter);
+                assert.equal(
+                    await widgets.count(),
+                    3,
+                    "A prose keystroke must not expose raw citation syntax",
+                );
+                assert.ok(
+                    await page.evaluate(() =>
+                        window.__zfTypingRoots.every(
+                            (node) => node.isConnected,
+                        ),
+                    ),
+                    "Typing must reuse existing citation widgets",
+                );
+            }
+            await page.evaluate(() => {
+                const editor = app.workspace.activeLeaf.view.editor;
+                editor.setCursor({ line: 2, ch: editor.getLine(2).length });
+            });
+            for (const letter of "xyz") {
+                await page.keyboard.type(letter);
+                assert.equal(await widgets.count(), 3);
+                assert.ok(
+                    await page.evaluate(() =>
+                        window.__zfTypingRoots.every(
+                            (node) => node.isConnected,
+                        ),
+                    ),
+                );
+            }
+            await page.evaluate((source) => {
+                delete window.__zfTypingRoots;
+                app.workspace.activeLeaf.view.editor.setValue(source);
+                app.workspace.activeLeaf.view.editor.setCursor({
+                    line: 14,
+                    ch: 0,
+                });
+            }, SOURCE);
+            await page.waitForFunction(
+                () =>
+                    document.querySelectorAll(
+                        ".workspace-leaf.mod-active .cm-content .zotflow-pandoc-citation",
+                    ).length === 3,
+            );
+            // Editing one citation reveals that citation alone; other clusters
+            // stay rendered while the changed key is resolved asynchronously.
+            await page.evaluate(() => {
+                app.workspace.activeLeaf.view.editor.setCursor({
+                    line: 2,
+                    ch: 15,
+                });
+                window.__zfTypingRoots = [
+                    ...document.querySelectorAll(
+                        ".workspace-leaf.mod-active .cm-content .zotflow-pandoc-citation",
+                    ),
+                ];
+            });
+            assert.equal(await widgets.count(), 2);
+            await page.keyboard.type("x");
+            assert.equal(await widgets.count(), 2);
+            assert.ok(
+                await page.evaluate(() =>
+                    window.__zfTypingRoots.every((node) => node.isConnected),
+                ),
+            );
+            await page.evaluate((source) => {
+                delete window.__zfTypingRoots;
+                app.workspace.activeLeaf.view.editor.setValue(source);
+                app.workspace.activeLeaf.view.editor.setCursor({
+                    line: 14,
+                    ch: 0,
+                });
+            }, SOURCE);
+            await page.waitForFunction(
+                () =>
+                    document.querySelectorAll(
+                        ".workspace-leaf.mod-active .cm-content .zotflow-pandoc-citation",
+                    ).length === 3,
+            );
             const popover = page.locator(".zotflow-citation-popover");
             await widgets.first().hover();
             await popover
