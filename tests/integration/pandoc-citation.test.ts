@@ -36,6 +36,25 @@ async function seed(key: string, libraryID = 1) {
 }
 
 describe("Pandoc citation resolution and rendering", () => {
+    test("Zotero targets distinguish personal and group libraries", async () => {
+        const worker = new CslRenderWorkerService(DEFAULT_SETTINGS);
+        await worker.registerCustomStyle("test", STYLE);
+        await seed("smith");
+        const groupItem = await seed("smith", 2);
+        groupItem.raw.library.type = "group";
+        const { db } = await import("db/db");
+        await db.items.put(groupItem);
+        const clusters = findPandocCitations("[@smith]");
+        expect(
+            (await worker.renderPandocCitations(clusters, [1], "test"))[0]
+                ?.references[0]?.zoteroUri,
+        ).toBe("zotero://select/library/items/SMITH");
+        expect(
+            (await worker.renderPandocCitations(clusters, [2], "test"))[0]
+                ?.references[0]?.zoteroUri,
+        ).toBe("zotero://select/groups/2/items/SMITH");
+        worker.dispose();
+    });
     test("renders cluster-specific locators, bibliography details and PDF targets offline", async () => {
         const worker = new CslRenderWorkerService(DEFAULT_SETTINGS);
         await worker.registerCustomStyle("test", STYLE);

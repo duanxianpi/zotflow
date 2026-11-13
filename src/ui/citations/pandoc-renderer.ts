@@ -185,9 +185,13 @@ export class PandocCitationRenderer extends Component {
                 this,
                 anchor,
                 citation.references,
-                (ref, pdf) =>
-                    ff(this.open(ref, pdf), "Could not open citation"),
-                (restore) => this.dismissPopover(restore),
+                {
+                    open: (ref, pdf) =>
+                        ff(this.open(ref, pdf), "Could not open citation"),
+                    copyKey: (ref) => this.copyKey(ref, anchor.doc),
+                    openInZotero: (ref) => this.openInZotero(ref, anchor.doc),
+                    dismiss: (restore) => this.dismissPopover(restore),
+                },
             );
             this.hoverPopover = popover;
         }
@@ -238,6 +242,43 @@ export class PandocCitationRenderer extends Component {
             services.notificationService.notify(
                 "error",
                 "Could not open this reference.",
+            );
+        }
+    }
+
+    private async copyKey(
+        ref: CitationReference,
+        doc: Document,
+    ): Promise<boolean> {
+        try {
+            await doc.win.navigator.clipboard.writeText(ref.citekey);
+            return true;
+        } catch (error) {
+            services.logService.error(
+                "Could not copy citation key",
+                "PandocCitationRenderer",
+                error,
+            );
+            services.notificationService.notify(
+                "error",
+                "Could not copy the citation key.",
+            );
+            return false;
+        }
+    }
+
+    private openInZotero(ref: CitationReference, doc: Document): void {
+        try {
+            doc.win.open(ref.zoteroUri, "_blank", "noopener,noreferrer");
+        } catch (error) {
+            services.logService.error(
+                "Could not open item in Zotero",
+                "PandocCitationRenderer",
+                error,
+            );
+            services.notificationService.notify(
+                "error",
+                "Could not open this item in Zotero.",
             );
         }
     }

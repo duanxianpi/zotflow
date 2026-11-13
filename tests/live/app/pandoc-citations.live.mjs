@@ -420,12 +420,61 @@ test(
                 await popover
                     .locator(".zotflow-citation-actions button")
                     .count(),
-                2,
+                3,
+            );
+            // Intercept OS-facing APIs: test the trusted clicks and exact
+            // payloads without replacing the user's clipboard or opening Zotero.
+            await page.evaluate(() => {
+                const probe = (window.__zfCitationActions = {
+                    copied: [],
+                    opened: [],
+                    clipboardDescriptor: Object.getOwnPropertyDescriptor(
+                        navigator.clipboard,
+                        "writeText",
+                    ),
+                    originalOpen: window.open,
+                });
+                Object.defineProperty(navigator.clipboard, "writeText", {
+                    configurable: true,
+                    value: async (text) => {
+                        probe.copied.push(text);
+                    },
+                });
+                window.open = (...args) => {
+                    probe.opened.push(args);
+                    return null;
+                };
+            });
+            await popover
+                .getByRole("button", { name: "Copy citation key", exact: true })
+                .click();
+            await popover
+                .getByRole("button", {
+                    name: "Citation key copied",
+                    exact: true,
+                })
+                .waitFor();
+            assert.deepEqual(
+                await page.evaluate(() => window.__zfCitationActions.copied),
+                ["zfPreviewSmith"],
             );
             await page.screenshot({
                 path: ".obsidian-test/pandoc-reading.png",
                 animations: "disabled",
             });
+            await popover
+                .getByRole("button", { name: "Open in Zotero", exact: true })
+                .click();
+            assert.deepEqual(
+                await page.evaluate(() => window.__zfCitationActions.opened),
+                [
+                    [
+                        "zotero://select/library/items/ZFPAND01",
+                        "_blank",
+                        "noopener,noreferrer",
+                    ],
+                ],
+            );
             // One work, one title, with both navigation actions even when the
             // citation cluster repeats it. This is not deduplication by title:
             // distinct Zotero works must remain distinct.
@@ -471,7 +520,7 @@ test(
                 await page.evaluate(() =>
                     document.activeElement?.getAttribute("aria-label"),
                 ),
-                "Open source note",
+                "Copy citation key",
             );
             await page.keyboard.press("Escape");
             await popover.waitFor({ state: "detached" });
@@ -641,6 +690,19 @@ test(
             );
             await page.evaluate(() => app.plugins.enablePlugin("zotflow"));
         } finally {
+            await page.evaluate(() => {
+                const probe = window.__zfCitationActions;
+                if (!probe) return;
+                window.open = probe.originalOpen;
+                if (probe.clipboardDescriptor)
+                    Object.defineProperty(
+                        navigator.clipboard,
+                        "writeText",
+                        probe.clipboardDescriptor,
+                    );
+                else delete navigator.clipboard.writeText;
+                delete window.__zfCitationActions;
+            });
             if (settings)
                 await page.evaluate(
                     async ({ settings, library, path }) => {

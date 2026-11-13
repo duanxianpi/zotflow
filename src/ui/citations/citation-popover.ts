@@ -1,6 +1,16 @@
 import { HoverPopover, sanitizeHTMLToDom, setIcon, setTooltip } from "obsidian";
 import type { HoverParent } from "obsidian";
 import type { CitationReference } from "types/pandoc-citation";
+import { fireAndForgetIn } from "utils/fire-and-forget";
+
+const ff = fireAndForgetIn("CitationPopover");
+
+export interface CitationPopoverActions {
+    open(reference: CitationReference, pdf: boolean): void;
+    copyKey(reference: CitationReference): Promise<boolean>;
+    openInZotero(reference: CitationReference): void;
+    dismiss(restoreFocus: boolean): void;
+}
 
 /** Native positioning and dismissal, with one compact reference block per work.
  * ZotLit's citation popover is the visual reference: readable bibliography
@@ -11,8 +21,7 @@ export class CitationPopover extends HoverPopover {
         parent: HoverParent,
         readonly anchor: HTMLElement,
         references: CitationReference[],
-        open: (reference: CitationReference, pdf: boolean) => void,
-        dismiss: (restoreFocus: boolean) => void,
+        actions: CitationPopoverActions,
     ) {
         super(parent, anchor, 300);
         this.hoverEl.addClass("zotflow-citation-popover");
@@ -44,22 +53,20 @@ export class CitationPopover extends HoverPopover {
                 cls: "zotflow-citation-reference",
             });
             const header = entry.createDiv({ cls: "zotflow-citation-header" });
-            header.createSpan({
+            const keyGroup = header.createDiv({
+                cls: "zotflow-citation-key-group",
+            });
+            keyGroup.createSpan({
                 cls: "zotflow-citation-key",
                 text: `@${ref.citekey}`,
             });
-            if (ref.page)
-                header.createSpan({
-                    cls: "zotflow-citation-locator",
-                    text: `p. ${ref.page}`,
-                });
-            const actions = header.createDiv({
-                cls: "zotflow-citation-actions",
-            });
-            actions.setAttribute("role", "group");
-            actions.setAttribute("aria-label", `Actions for ${ref.citekey}`);
-            const addAction = (icon: string, label: string, pdf: boolean) => {
-                const button = actions.createEl("button", {
+            const addAction = (
+                container: HTMLElement,
+                icon: string,
+                label: string,
+                action: (button: HTMLButtonElement) => void,
+            ) => {
+                const button = container.createEl("button", {
                     cls: "clickable-icon zotflow-citation-action",
                     attr: { type: "button", "aria-label": label },
                 });
@@ -68,17 +75,56 @@ export class CitationPopover extends HoverPopover {
                 button.addEventListener("click", (event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    dismiss(false);
-                    open(ref, pdf);
+                    action(button);
                 });
+                return button;
             };
-            addAction("file-text", "Open source note", false);
+            addAction(keyGroup, "copy", "Copy citation key", (button) => {
+                ff(
+                    (async () => {
+                        if (
+                            !(await actions.copyKey(ref)) ||
+                            !button.isConnected
+                        )
+                            return;
+                        setIcon(button, "check");
+                        button.setAttribute(
+                            "aria-label",
+                            "Citation key copied",
+                        );
+                        button.addClass("zotflow-citation-action-copied");
+                    })(),
+                    "Could not copy citation key",
+                );
+            });
+            if (ref.page)
+                header.createSpan({
+                    cls: "zotflow-citation-locator",
+                    text: `p. ${ref.page}`,
+                });
+            const navigation = header.createDiv({
+                cls: "zotflow-citation-actions",
+            });
+            navigation.setAttribute("role", "group");
+            navigation.setAttribute("aria-label", `Actions for ${ref.citekey}`);
+            addAction(navigation, "file-text", "Open source note", () => {
+                actions.dismiss(false);
+                actions.open(ref, false);
+            });
             if (ref.attachmentKey)
                 addAction(
+                    navigation,
                     "file-symlink",
                     ref.page ? `Open PDF at page ${ref.page}` : "Open PDF",
-                    true,
+                    () => {
+                        actions.dismiss(false);
+                        actions.open(ref, true);
+                    },
                 );
+            addAction(navigation, "external-link", "Open in Zotero", () => {
+                actions.dismiss(false);
+                actions.openInZotero(ref);
+            });
             const bibliography = entry.createDiv({
                 cls: "zotflow-citation-bibliography",
             });
@@ -94,7 +140,7 @@ export class CitationPopover extends HoverPopover {
             if (event.key !== "Escape") return;
             event.preventDefault();
             event.stopPropagation();
-            dismiss(true);
+            actions.dismiss(true);
         });
         this.registerDomEvent(this.hoverEl, "focusout", (event) => {
             if (
@@ -106,7 +152,7 @@ export class CitationPopover extends HoverPopover {
             this.transition();
         });
         const observer = new MutationObserver(() => {
-            if (!anchor.isConnected) dismiss(false);
+            if (!anchor.isConnected) actions.dismiss(false);
         });
         observer.observe(anchor.doc.body, { childList: true, subtree: true });
         this.register(() => observer.disconnect());

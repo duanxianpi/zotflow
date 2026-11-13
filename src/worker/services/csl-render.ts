@@ -9,6 +9,7 @@ import type {
 import { proxiedFetch } from "worker/proxied-fetch";
 import { CslRenderService } from "worker/csl";
 import { ZotFlowError, ZotFlowErrorCode } from "utils/error";
+import { zoteroLibraryPrefix, zoteroSelectItemUri } from "utils/zotero-uri";
 
 import type {
     BibliographyContext,
@@ -220,6 +221,13 @@ export class CslRenderWorkerService {
                         key: row.key,
                         citekey: row.citationKey || row.key,
                         bibliography: bibliography[0] || row.title || row.key,
+                        zoteroUri: zoteroSelectItemUri(
+                            zoteroLibraryPrefix(
+                                row.raw.library.type === "group",
+                                row.libraryID,
+                            ),
+                            row.key,
+                        ),
                         bibliographyHtml: bibliographyHtml[0],
                         attachmentKey: pdf?.key,
                     });

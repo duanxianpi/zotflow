@@ -18,6 +18,8 @@ export interface CitationReference {
     key: string;
     citekey: string;
     bibliography: string;
+    /** Native Zotero item target, including the personal/group library path. */
+    zoteroUri: string;
     /** CSL formatting, sanitized before inserting into the hover card. */
     bibliographyHtml?: string;
     /** Page label, not a zero-based PDF index. */

@@ -3867,8 +3867,15 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
     line-height: 1.4;
 }
 
-.zotflow-citation-key {
+.zotflow-citation-key-group {
+    display: flex;
+    align-items: center;
     flex: 1;
+    min-width: 0;
+    gap: var(--size-2-1);
+}
+
+.zotflow-citation-key {
     min-width: 0;
     color: var(--text-muted);
     font-family: var(--font-monospace);
@@ -3890,7 +3897,7 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
     flex-shrink: 0;
 }
 
-.zotflow-citation-actions .zotflow-citation-action {
+.zotflow-citation-header .zotflow-citation-action {
     --icon-size: var(--icon-s);
     width: 26px;
     height: 26px;
@@ -3901,12 +3908,17 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
     color: var(--text-muted);
     box-shadow: none;
     cursor: var(--cursor-link);
+    flex-shrink: 0;
 }
 
-.zotflow-citation-actions .zotflow-citation-action:hover,
-.zotflow-citation-actions .zotflow-citation-action:focus-visible {
+.zotflow-citation-header .zotflow-citation-action:hover,
+.zotflow-citation-header .zotflow-citation-action:focus-visible {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
+}
+
+.zotflow-citation-header .zotflow-citation-action-copied {
+    color: var(--text-success);
 }
 
 .zotflow-citation-bibliography {
@@ -3923,7 +3935,7 @@ body.zotflow-hide-region-markers .cm-zotflow-meta-line:not(.cm-active) {
 }
 
 @media (pointer: coarse) {
-    .zotflow-citation-actions .zotflow-citation-action {
+    .zotflow-citation-header .zotflow-citation-action {
         width: 36px;
         height: 36px;
     }

@@ -71,6 +71,8 @@ Bracketed Pandoc citations also display in **Live Preview and Reading View** usi
 
 The reference popover follows your Obsidian theme and keeps CSL typography, including italics. Its icon actions have descriptive tooltips. With a citation focused, press **↓** to reach its actions and **Escape** to close the preview.
 
+Use the copy icon beside the citation key to copy the bare key, or **Open in Zotero** to select the item in Zotero Desktop. The source-note and PDF icons remain on the same reference card.
+
 Toggle this under **Citation → Preview Pandoc Citations**, and choose the style under **CSL → Default Style**. Sync your items and install the style first: preview uses cached CSL metadata and resources without downloading while you type. Unknown or duplicate citation keys, missing CSL metadata/styles, code, links, math, and comments remain unchanged. This preview supports bracketed in-text citations; it does not build Pandoc footnotes or implement narrative `@key` citations. Quarto/Pandoc remains responsible for final manuscript rendering.
 
 ![Citations](assets/citations.gif)
