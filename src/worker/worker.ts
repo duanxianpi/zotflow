@@ -282,7 +282,7 @@ const exposedApi: WorkerAPI = {
             _convert = new ConvertService();
             finishStage("Create document and conversion services");
 
-            _cslRender = new CslRenderWorkerService(settings);
+            _cslRender = new CslRenderWorkerService(settings, parentHost);
             finishStage("Create CSL service");
 
             _template = new LibraryTemplateService(

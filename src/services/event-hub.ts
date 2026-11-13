@@ -8,6 +8,8 @@ import type { ITaskInfo } from "types/tasks";
  * no service; emitters and subscribers find it through the ServiceLocator.
  */
 export class EventHub {
+    /** CSL resources changed; refresh visible citation previews. */
+    public readonly cslChanged = new EventBus<[]>();
     /** Fires when an annotation is created/updated/deleted (from editor or reader). */
     public readonly annotationChanged = new EventBus<
         [libraryID: number, annotationKey: string, parentItemKey: string]
@@ -74,6 +76,7 @@ export type EventArgs<K extends keyof EventHub> =
  * rest originate on the main thread.
  */
 export type WorkerEventName =
+    | "cslChanged"
     | "annotationChanged"
     | "noteChangedByEditor"
     | "noteChangedByNoteView"

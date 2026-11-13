@@ -55,6 +55,8 @@ export class ZoteroReaderView extends ItemView {
     private keyInfo: IDBZoteroKey;
 
     private bridge?: IframeReaderBridge;
+    /** Links can navigate before loadDocument has even created its bridge. */
+    private pendingNavigation?: ReaderNavigation;
     private colorScheme: ColorScheme = "light"; // Default to light
     private unsubscribeSyncFinished?: () => void;
     private unsubscribeAnnotationChanged?: () => void;
@@ -584,6 +586,11 @@ export class ZoteroReaderView extends ItemView {
             });
             readerInitialized = true;
             if (superseded()) return;
+            if (this.pendingNavigation) {
+                const navigation = this.pendingNavigation;
+                this.pendingNavigation = undefined;
+                this.readerNavigate(navigation);
+            }
 
             // Subscribe to sync events for live annotation updates
             this.subscribeToSyncEvents();
@@ -619,7 +626,10 @@ export class ZoteroReaderView extends ItemView {
     }
 
     readerNavigate(navigationInfo: ReaderNavigation) {
-        if (!this.bridge) return;
+        if (!this.bridge || !ACTIVE_BRIDGE_STATES.has(this.bridge.state)) {
+            this.pendingNavigation = navigationInfo;
+            return;
+        }
 
         ff(
             this.bridge.navigate(navigationInfo),
@@ -646,6 +656,7 @@ export class ZoteroReaderView extends ItemView {
      */
     private async teardownReader(): Promise<void> {
         this.documentGeneration++;
+        this.pendingNavigation = undefined;
         this.unsubscribeSyncFinished?.();
         this.unsubscribeAnnotationChanged?.();
         this.unsubscribeSyncFinished = undefined;

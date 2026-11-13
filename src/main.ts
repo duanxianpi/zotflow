@@ -56,6 +56,8 @@ import {
 import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "ui/note-editor/view";
 import { ZotFlowRegionDecorationExtension } from "ui/editor/zotflow-region-decoration-extension";
 import { CitationSuggest } from "ui/editor/citation-suggest";
+import { PandocCitationRenderer } from "ui/citations/pandoc-renderer";
+import { pandocCitationExtension } from "ui/editor/pandoc-citation-extension";
 import { fireAndForgetIn } from "utils/fire-and-forget";
 import { focusReaderLeaf } from "utils/reader-leaf-navigation";
 
@@ -71,6 +73,7 @@ export default class ZotFlow extends Plugin {
     cslFolder: CslFolderService;
     private zotFlowSettingTab: ZotFlowSettingTab | undefined;
     private citationSuggest: CitationSuggest;
+    private pandocCitations: PandocCitationRenderer;
     private sourceNoteActionElements = new WeakMap<MarkdownView, HTMLElement>();
 
     async onload() {
@@ -218,6 +221,9 @@ export default class ZotFlow extends Plugin {
         );
 
         // Register citation suggest
+        this.pandocCitations = this.addChild(new PandocCitationRenderer(this));
+        this.registerEditorExtension(pandocCitationExtension(this.pandocCitations));
+        this.registerMarkdownPostProcessor((el, ctx) => this.pandocCitations.postProcess(el, ctx));
         this.citationSuggest = new CitationSuggest();
         this.registerEditorSuggest(this.citationSuggest);
         finishStage("Register editor extensions and citation handlers");
@@ -703,6 +709,7 @@ export default class ZotFlow extends Plugin {
         services.updateSettings(this.settings);
 
         this.applyEditableRegionMarkerVisibility();
+        this.pandocCitations?.refresh();
     }
 
     /**
