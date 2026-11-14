@@ -70,6 +70,8 @@ export interface ZotFlowSettings {
     alwaysOpenChildNoteInEditor: boolean;
     defaultCitationFormat: CitationFormat;
     citationTrigger: string;
+    /** Display bracketed Pandoc citations without changing Markdown source. */
+    renderPandocCitations: boolean;
     citationPandocTemplate: string;
     citationFootnoteRefTemplate: string;
     citationFootnoteTemplate: string;
@@ -149,6 +151,7 @@ export const DEFAULT_SETTINGS: ZotFlowSettings = {
     alwaysOpenChildNoteInEditor: false,
     defaultCitationFormat: "footnote",
     citationTrigger: "@@",
+    renderPandocCitations: true,
     citationPandocTemplate: "",
     citationFootnoteRefTemplate: "",
     citationFootnoteTemplate: "",

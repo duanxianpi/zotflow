@@ -23,6 +23,7 @@ import {
 } from "utils/credentials";
 import { ZOTERO_READER_VIEW_TYPE, ZoteroReaderView } from "./ui/reader/view";
 import { TREE_VIEW_TYPE, ZotFlowTreeView } from "./ui/tree-view/view";
+import { restoreTreeLeaf } from "ui/tree-view/restore-leaf";
 import { services } from "./services/services";
 import { errorMessage as describeError } from "utils/error";
 import { ZotFlowLockExtension } from "ui/editor/zotflow-lock-extension";
@@ -56,6 +57,8 @@ import {
 import { NOTE_EDITOR_VIEW_TYPE, NoteEditorView } from "ui/note-editor/view";
 import { ZotFlowRegionDecorationExtension } from "ui/editor/zotflow-region-decoration-extension";
 import { CitationSuggest } from "ui/editor/citation-suggest";
+import { PandocCitationRenderer } from "ui/citations/pandoc-renderer";
+import { pandocCitationExtension } from "ui/editor/pandoc-citation-extension";
 import { fireAndForgetIn } from "utils/fire-and-forget";
 import { focusReaderLeaf } from "utils/reader-leaf-navigation";
 
@@ -71,7 +74,9 @@ export default class ZotFlow extends Plugin {
     cslFolder: CslFolderService;
     private zotFlowSettingTab: ZotFlowSettingTab | undefined;
     private citationSuggest: CitationSuggest;
+    private pandocCitations: PandocCitationRenderer;
     private sourceNoteActionElements = new WeakMap<MarkdownView, HTMLElement>();
+    private treeLeafRestore: Promise<WorkspaceLeaf | null> | undefined;
 
     async onload() {
         const startupStarted = performance.now();
@@ -218,6 +223,9 @@ export default class ZotFlow extends Plugin {
         );
 
         // Register citation suggest
+        this.pandocCitations = this.addChild(new PandocCitationRenderer(this));
+        this.registerEditorExtension(pandocCitationExtension(this.pandocCitations));
+        this.registerMarkdownPostProcessor((el, ctx) => this.pandocCitations.postProcess(el, ctx));
         this.citationSuggest = new CitationSuggest();
         this.registerEditorSuggest(this.citationSuggest);
         finishStage("Register editor extensions and citation handlers");
@@ -625,25 +633,18 @@ export default class ZotFlow extends Plugin {
 
     async registerTreeView(active = false) {
         const { workspace } = this.app;
-
-        let leaf: WorkspaceLeaf | null = null;
-        const leaves = workspace.getLeavesOfType(TREE_VIEW_TYPE);
-
-        if (leaves.length > 0) {
-            const existingLeaf = leaves[0];
-            if (existingLeaf) leaf = existingLeaf;
-        } else {
-            const leftLeaf = workspace.getLeftLeaf(false);
-            if (leftLeaf) {
-                leaf = leftLeaf;
-                await leaf.setViewState({
-                    type: TREE_VIEW_TYPE,
-                    active,
-                });
-            }
+        this.treeLeafRestore ??= restoreTreeLeaf(
+            workspace,
+            TREE_VIEW_TYPE,
+            (view) => view instanceof ZotFlowTreeView,
+        );
+        let leaf: WorkspaceLeaf | null;
+        try {
+            leaf = await this.treeLeafRestore;
+        } finally {
+            this.treeLeafRestore = undefined;
         }
-
-        if (leaf && active) void workspace.revealLeaf(leaf);
+        if (leaf && active) await workspace.revealLeaf(leaf);
     }
 
     async loadSettings() {
@@ -703,6 +704,7 @@ export default class ZotFlow extends Plugin {
         services.updateSettings(this.settings);
 
         this.applyEditableRegionMarkerVisibility();
+        this.pandocCitations?.refresh();
     }
 
     /**

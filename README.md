@@ -67,6 +67,18 @@ Have PDFs or EPUBs that aren't in Zotero? Open them with the same reader. Annota
 
 Insert citations as **Pandoc** (`[@key]`), **Wikilink** (`[[Source/@key|Author (year)]]`), **Footnote**, or raw **citekey** — via drag-and-drop from the tree view, autocomplete with a trigger string (`@@`), or copy-from-reader hotkeys. Include annotation context (page numbers, quoted text) automatically.
 
+Bracketed Pandoc citations also display in **Live Preview and Reading View** using your default CSL style, while the Markdown stays unchanged. Hover or focus a citation for reference details and buttons to open its source note or PDF. Page locators such as `[@key, p. 5]` open the PDF at that page label; clusters such as `[@key1; @key2, pp. 8–9]` keep a locator per reference. Selecting a citation in the editor reveals the original syntax. Source mode always shows the Markdown.
+
+The reference popover follows your Obsidian theme and keeps CSL typography, including italics. Its icon actions have descriptive tooltips. With a citation focused, press **↓** to reach its actions and **Escape** to close the preview.
+
+Use the copy icon beside the citation key to copy that work's full Pandoc citation, including its page or chapter locator (for example, `[@key, pp. 5–7]` or `[@key, chap. 2]`), or **Open in Zotero** to select the item in Zotero Desktop. The source-note and PDF icons remain on the same reference card.
+
+The preview toggle appears directly below **Default Citation Format**, and is shown only when that format is **Pandoc**.
+
+Reference titles are bold and italic in the popup. DOI and URL fields are clickable; when the CSL style omits both, the popup adds a DOI link, or the item's URL when no valid DOI is available. These display enhancements do not change exported CSL references.
+
+Toggle this under **Citation → Preview Pandoc Citations**, and choose the style under **CSL → Default Style**. Sync your items and install the style first: preview uses cached CSL metadata and resources without downloading while you type. Unknown or duplicate citation keys, missing CSL metadata/styles, code, links, math, and comments remain unchanged. This preview supports bracketed in-text citations; it does not build Pandoc footnotes or implement narrative `@key` citations. Quarto/Pandoc remains responsible for final manuscript rendering.
+
 ![Citations](assets/citations.gif)
 
 ### 🌳 Zotero Tree View & Search Modal

@@ -8,7 +8,7 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
@@ -49,8 +49,8 @@ describe("loadConfig", () => {
             ZF_OBSIDIAN_PATH: "/opt/obsidian",
             ZOTFLOW_TEST_API_KEY: "k",
         });
-        assert.equal(config.vaultPath, "/tmp/v");
-        assert.equal(config.profileDir, "/tmp/p");
+        assert.equal(config.vaultPath, resolve(REPO_ROOT, "/tmp/v"));
+        assert.equal(config.profileDir, resolve(REPO_ROOT, "/tmp/p"));
         assert.equal(config.port, 9999);
         assert.equal(config.obsidianPath, "/opt/obsidian");
         assert.equal(config.apiKey, "k");

@@ -15,6 +15,7 @@ export interface ResolvedResources {
 	engineKey: string;
 	/** Synchronous locale lookup; must at least resolve en-US. */
 	localeLookup: (lang: string) => string | null;
+	htmlVariableSpans?: boolean;
 }
 
 /**
@@ -47,6 +48,17 @@ export class EngineHost {
 				return lookup(lang) ?? (lookup("en-US") as string);
 			},
 		};
+		if (resolved.htmlVariableSpans) {
+			sys.variableWrapper = (params, pre, value, post) => {
+				const variables = typeof params === "object" && params !== null &&
+					"variableNames" in params && Array.isArray(params.variableNames)
+					? params.variableNames : [];
+				const variable = ["title", "DOI", "URL"].find((name) => variables.includes(name));
+				return variable
+					? `${pre}<span data-csl-variable="${variable}">${value}</span>${post}`
+					: pre + value + post;
+			};
+		}
 		this.engine = new CSL.Engine(sys, resolved.styleXml, resolved.lang, true);
 	}
 

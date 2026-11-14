@@ -158,6 +158,26 @@ export class CslRenderService {
 		}
 	}
 
+	/** Render independent in-text clusters against one document-wide registry.
+	 * This shares numbering and author/year disambiguation without inventing
+	 * footnote history for bracketed Pandoc citations.
+	 */
+	async renderCitationGroups(
+		items: CSLItem[],
+		groups: { ids: string[]; props: CiteProps[] }[],
+		opts: RenderOptions
+	): Promise<string[]> {
+		const { host } = await this.acquireHost(opts);
+		try {
+			host.setItems(items);
+			return groups.map((group) => renderCitationCluster(
+				host, group.ids, opts.format ?? this.defaultFormat, group.props
+			));
+		} finally {
+			this.pool.release(host);
+		}
+	}
+
 	async createContext(opts: RenderOptions): Promise<BibliographyContext> {
 		const { host } = await this.acquireHost(opts);
 		return new BibliographyContextImpl(host, this.pool, {
