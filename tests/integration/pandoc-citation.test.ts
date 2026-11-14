@@ -89,6 +89,7 @@ describe("Pandoc citation resolution and rendering", () => {
                     libraryID: 1,
                     key: "SMITH",
                     citekey: "smith",
+                    pandocCitation: "[@smith, p. 5]",
                     bibliography: "Title smith",
                     attachmentKey: "PDF",
                     page: "5",
@@ -97,6 +98,7 @@ describe("Pandoc citation resolution and rendering", () => {
                     libraryID: 1,
                     key: "JONES",
                     citekey: "jones",
+                    pandocCitation: "[@jones, pp. 8–9]",
                     bibliography: "Title jones",
                     attachmentKey: undefined,
                     page: "8",
@@ -113,6 +115,25 @@ describe("Pandoc citation resolution and rendering", () => {
             fetch.mockRestore();
             worker.dispose();
         }
+    });
+
+    test("copy payload preserves page ranges, chapters, prefixes and author suppression", async () => {
+        const worker = new CslRenderWorkerService(DEFAULT_SETTINGS);
+        await worker.registerCustomStyle("test", STYLE);
+        await seed("smith");
+        await seed("jones");
+        const result = await worker.renderPandocCitations(
+            findPandocCitations(
+                "[see @smith, pp. 5–7; -@jones, chap. 2, for details]",
+            ),
+            [1],
+            "test",
+        );
+        expect(result[0]?.references.map((ref) => ref.pandocCitation)).toEqual([
+            "[see @smith, pp. 5–7]",
+            "[-@jones, chap. 2, for details]",
+        ]);
+        worker.dispose();
     });
 
     test("semantic HTML preserves CSL casing and leaves ordinary exports unmarked", async () => {

@@ -18,6 +18,8 @@ export interface CitationReference {
     key: string;
     citekey: string;
     bibliography: string;
+    /** Original bracketed citation for this work, preserving its locator. */
+    pandocCitation: string;
     /** Native Zotero item target, including the personal/group library path. */
     zoteroUri: string;
     doi?: string;

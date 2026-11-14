@@ -14,11 +14,6 @@ export class CitationSection {
                 cls: "zotflow-settings-citation",
                 items: [
                     {
-                        name: "Preview Pandoc Citations",
-                        desc: "Display [@citekey] citations in Live Preview and Reading View using the default CSL style. Focus a citation for reference details and source note/PDF links. Select it in the editor to edit the original syntax. Requires synced CSL metadata and an installed style.",
-                        control: { type: "toggle", key: "renderPandocCitations" },
-                    },
-                    {
                         name: "Default Citation Format",
                         desc: "Format used when inserting a citation with Enter (no modifier key).",
                         control: {
@@ -29,6 +24,17 @@ export class CitationSection {
                                 footnote: "Footnote",
                                 wikilink: "Wikilink",
                             },
+                        },
+                    },
+                    {
+                        name: "Preview Pandoc Citations",
+                        desc: "Display [@citekey] citations in Live Preview and Reading View using the default CSL style. Focus a citation for reference details and source note/PDF links. Select it in the editor to edit the original syntax. Requires synced CSL metadata and an installed style.",
+                        visible: () =>
+                            this.plugin.settings.defaultCitationFormat ===
+                            "pandoc",
+                        control: {
+                            type: "toggle",
+                            key: "renderPandocCitations",
                         },
                     },
                     {

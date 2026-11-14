@@ -459,17 +459,20 @@ test(
                 };
             });
             await popover
-                .getByRole("button", { name: "Copy citation key", exact: true })
+                .getByRole("button", {
+                    name: "Copy Pandoc citation",
+                    exact: true,
+                })
                 .click();
             await popover
                 .getByRole("button", {
-                    name: "Citation key copied",
+                    name: "Pandoc citation copied",
                     exact: true,
                 })
                 .waitFor();
             assert.deepEqual(
                 await page.evaluate(() => window.__zfCitationActions.copied),
-                ["zfPreviewSmith"],
+                ["[@zfPreviewSmith, p. 5]"],
             );
             const doiLink = popover.locator(
                 "a.zotflow-citation-reference-link",
@@ -518,7 +521,13 @@ test(
                 const reference = result.rendered[0].references[0];
                 const test = renderer.createElement(document, {
                     text: "Combined reference test",
-                    references: [reference, reference],
+                    references: [
+                        reference,
+                        {
+                            ...reference,
+                            pandocCitation: "[@zfPreviewSmith, chap. 2]",
+                        },
+                    ],
                 });
                 test.id = "zf-combined-reference-test";
                 document.body.appendChild(test);
@@ -540,6 +549,18 @@ test(
                     .count(),
                 1,
             );
+            await popover
+                .getByRole("button", {
+                    name: "Copy Pandoc citation",
+                    exact: true,
+                })
+                .click();
+            assert.equal(
+                await page.evaluate(() =>
+                    window.__zfCitationActions.copied.at(-1),
+                ),
+                "[@zfPreviewSmith, p. 5; @zfPreviewSmith, chap. 2]",
+            );
             await page.keyboard.press("Escape");
             await page.evaluate(() =>
                 document.getElementById("zf-combined-reference-test")?.remove(),
@@ -554,7 +575,7 @@ test(
                 await page.evaluate(() =>
                     document.activeElement?.getAttribute("aria-label"),
                 ),
-                "Copy citation key",
+                "Copy Pandoc citation",
             );
             await page.keyboard.press("Escape");
             await popover.waitFor({ state: "detached" });

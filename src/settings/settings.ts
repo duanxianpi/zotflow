@@ -78,6 +78,7 @@ export class ZotFlowSettingTab extends PluginSettingTab {
 
         Reflect.set(this.plugin.settings, key, value);
         await this.plugin.saveSettings();
+        if (key === "defaultCitationFormat") this.refreshDomState();
     }
 
     refreshFromSettings(): void {

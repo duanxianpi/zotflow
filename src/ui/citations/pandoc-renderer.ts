@@ -188,7 +188,7 @@ export class PandocCitationRenderer extends Component {
                 {
                     open: (ref, pdf) =>
                         ff(this.open(ref, pdf), "Could not open citation"),
-                    copyKey: (ref) => this.copyKey(ref, anchor.doc),
+                    copyCitation: (ref) => this.copyCitation(ref, anchor.doc),
                     openInZotero: (ref) => this.openInZotero(ref, anchor.doc),
                     openUrl: (url) => this.openUrl(url, anchor.doc),
                     dismiss: (restore) => this.dismissPopover(restore),
@@ -247,22 +247,22 @@ export class PandocCitationRenderer extends Component {
         }
     }
 
-    private async copyKey(
+    private async copyCitation(
         ref: CitationReference,
         doc: Document,
     ): Promise<boolean> {
         try {
-            await doc.win.navigator.clipboard.writeText(ref.citekey);
+            await doc.win.navigator.clipboard.writeText(ref.pandocCitation);
             return true;
         } catch (error) {
             services.logService.error(
-                "Could not copy citation key",
+                "Could not copy Pandoc citation",
                 "PandocCitationRenderer",
                 error,
             );
             services.notificationService.notify(
                 "error",
-                "Could not copy the citation key.",
+                "Could not copy this Pandoc citation.",
             );
             return false;
         }

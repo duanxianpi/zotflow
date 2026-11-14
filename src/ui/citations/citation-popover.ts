@@ -8,7 +8,7 @@ const ff = fireAndForgetIn("CitationPopover");
 
 export interface CitationPopoverActions {
     open(reference: CitationReference, pdf: boolean): void;
-    copyKey(reference: CitationReference): Promise<boolean>;
+    copyCitation(reference: CitationReference): Promise<boolean>;
     openInZotero(reference: CitationReference): void;
     openUrl(url: string): void;
     dismiss(restoreFocus: boolean): void;
@@ -46,6 +46,10 @@ export class CitationPopover extends HoverPopover {
                           attachmentKey:
                               existing.attachmentKey ?? ref.attachmentKey,
                           page: existing.page ?? ref.page,
+                          pandocCitation:
+                              existing.pandocCitation === ref.pandocCitation
+                                  ? existing.pandocCitation
+                                  : `[${existing.pandocCitation.slice(1, -1)}; ${ref.pandocCitation.slice(1, -1)}]`,
                       }
                     : ref,
             );
@@ -81,22 +85,22 @@ export class CitationPopover extends HoverPopover {
                 });
                 return button;
             };
-            addAction(keyGroup, "copy", "Copy citation key", (button) => {
+            addAction(keyGroup, "copy", "Copy Pandoc citation", (button) => {
                 ff(
                     (async () => {
                         if (
-                            !(await actions.copyKey(ref)) ||
+                            !(await actions.copyCitation(ref)) ||
                             !button.isConnected
                         )
                             return;
                         setIcon(button, "check");
                         button.setAttribute(
                             "aria-label",
-                            "Citation key copied",
+                            "Pandoc citation copied",
                         );
                         button.addClass("zotflow-citation-action-copied");
                     })(),
-                    "Could not copy citation key",
+                    "Could not copy Pandoc citation",
                 );
             });
             if (ref.page)

@@ -189,7 +189,10 @@ export class CslRenderWorkerService {
                 groups,
                 { styleId, format: "text" },
             );
-            const refs = new Map<string, CitationReference>();
+            const refs = new Map<
+                string,
+                Omit<CitationReference, "pandocCitation">
+            >();
             for (const rows of resolved) {
                 for (const row of rows ?? []) {
                     const id = `${row.libraryID}/${row.key}`;
@@ -248,12 +251,19 @@ export class CslRenderWorkerService {
                 }
             }
             let index = 0;
+            const sourceCites = clusters.map((cluster) =>
+                cluster.raw
+                    .slice(1, -1)
+                    .split(";")
+                    .map((cite) => `[${cite.trim()}]`),
+            );
             return resolved.map((rows, i) =>
                 rows
                     ? {
                           text: texts[index++]!,
                           references: rows.map((row, j) => ({
                               ...refs.get(`${row.libraryID}/${row.key}`)!,
+                              pandocCitation: sourceCites[i]![j]!,
                               page:
                                   clusters[i]!.cites[j]!.label === "page"
                                       ? clusters[i]!.cites[j]!.locator?.split(
